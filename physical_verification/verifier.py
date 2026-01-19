@@ -4,8 +4,10 @@ from scipy.spatial import ConvexHull
 from typing import List, Dict, Set
 try:
     from .models import Brick, BrickPlan, VerificationResult, Evidence
+    from .part_library import get_part_dims, get_part_description, get_part_geometry
 except ImportError:
     from models import Brick, BrickPlan, VerificationResult, Evidence
+    from part_library import get_part_dims, get_part_description, get_part_geometry
 
 class PhysicalVerifier:
     def __init__(self, plan: BrickPlan):
@@ -37,6 +39,7 @@ class PhysicalVerifier:
         intersect_z = max(0, min(b1.z + b1.height, b2.z + b2.height) - max(b1.z, b2.z))
         
         # If significant volume intersection, they are connected
+        # If significant volume intersection, they are connected
         if intersect_x > TOL and intersect_y > TOL and intersect_z > TOL:
              return True
 
@@ -60,35 +63,17 @@ class PhysicalVerifier:
              if (y_overlap_end - y_overlap_start) > TOL:
                  # Touching in X?
                  x_touch = (abs((b1.x + b1.width) - b2.x) < TOL) or (abs((b2.x + b2.width) - b1.x) < TOL)
-                 if x_touch: return True
-                    
-        # 3. Snap Tolerance (Magnet Mode for imperfect LDraw)
-        # If Horizontal Overlap is significant (> 0.5 * min_area), allow Vertical Gap up to 1.0 Brick
-        dx = min(b1.x + b1.width, b2.x + b2.width) - max(b1.x, b2.x)
-        dy = min(b1.y + b1.depth, b2.y + b2.depth) - max(b1.y, b2.y)
-        
-        if dx > 0.05 and dy > 0.05:
-            overlap_area = dx * dy
-            min_area = min(b1.width * b1.depth, b2.width * b2.depth)
-            
-            # If overlap area is significant (e.g. > 10% of smaller brick or absolute > 0.5 stud)
-            if overlap_area > 0.5:
-                # Check Vertical Gap
-                gap = min(abs(b1.z - (b2.z + b2.height)), abs(b2.z - (b1.z + b1.height)))
-                if gap < 0.1: # Strict tolerance: Must be very close (was 1.0 which allowed huge gaps)
-                    # [DEBUG] 로그 출력: 왜 연결되었다고 판단했는지
-                    if gap > 0.001: 
-                        print(f"[DEBUG-CONNECT] B1({b1.id}) & B2({b2.id}) CONNECTED via Snap! Gap={gap:.4f}, Area={overlap_area:.2f}")
-                    return True
+                 if x_touch: 
+                     return True
 
-        # Check Y-touch (touching on Front/Back faces)
-        # Overlap in X?
-        x_overlap_start = max(b1.x, b2.x)
-        x_overlap_end = min(b1.x + b1.width, b2.x + b2.width)
-        if (x_overlap_end - x_overlap_start) > TOL:
-            # Touching in Y?
-            if (abs((b1.y + b1.depth) - b2.y) < TOL) or (abs((b2.y + b2.depth) - b1.y) < TOL):
-                return True
+             # Check Y-touch (touching on Front/Back faces)
+             # Overlap in X?
+             x_overlap_start = max(b1.x, b2.x)
+             x_overlap_end = min(b1.x + b1.width, b2.x + b2.width)
+             if (x_overlap_end - x_overlap_start) > TOL:
+                # Touching in Y?
+                if (abs((b1.y + b1.depth) - b2.y) < TOL) or (abs((b2.y + b2.depth) - b1.y) < TOL):
+                    return True
                      
         return False
 
@@ -352,6 +337,12 @@ class PhysicalVerifier:
         # 3. Stability (Global Gravity)
         self.verify_stability(result)
 
+        # 4. Connection Strength & Overhang (Optional warnings)
+        self.verify_connection_strength(result, strict_mode=(mode == "KIDS"))
+        self.verify_overhang(result, mode=mode)
+
+        return result
+
     def verify_collision(self, result: VerificationResult):
         """
         Checks if bricks are intersecting significantly (impossible physics).
@@ -375,7 +366,15 @@ class PhysicalVerifier:
                 iz = min(b1.z + b1.height, b2.z + b2.height) - max(b1.z, b2.z)
                 
                 if ix > 0.05 and iy > 0.05 and iz > 0.05:
-                    intersect_vol = ix * iy * iz
+                    # Stud-Aware Calculation:
+                    # In LDraw, a stud is 4 LDU high. Model height is in units of 24 LDU.
+                    # 4/24 = 0.1666... 
+                    # We subtract the stud height from the vertical intersection ONLY if it's a vertical stack.
+                    # If they overlap by more than a stud height vertically, it's a real collision.
+                    
+                    adjusted_iz = max(0, iz - 0.17) # Subtract stud height (approx 0.17)
+                    intersect_vol = ix * iy * adjusted_iz
+                    
                     vol1 = b1.width * b1.depth * b1.height
                     vol2 = b2.width * b2.depth * b2.height
                     
@@ -383,16 +382,37 @@ class PhysicalVerifier:
                     min_vol = min(vol1, vol2)
                     ratio = intersect_vol / min_vol if min_vol > 0 else 0
                     
-                    # Threshold: 15% overlap allowed (for studs/imperfections)
-                    if ratio > 0.15: 
+                    # Smart Keyword-based Relaxation
+                    desc1 = get_part_description(b1.id)
+                    desc2 = get_part_description(b2.id)
+                    
+                    # Keywords that imply mechanical overlap (Pins, Axles inside holes, etc)
+                    mech_keywords = [
+                        "wheel", "tyre", "tire", "rim", 
+                        "hinge", "plate modified", "holder", 
+                        "clip", "propeller", "rotor", "fan",
+                        "technic pin", "axle", "cylinder", 
+                        "gear", "turntable", "steering",
+                        "minifig", "helmet", "hair", "head", "hat", "cap" # Wearables
+                    ]
+                    
+                    is_mech = False
+                    for kw in mech_keywords:
+                        if kw in desc1.lower() or kw in desc2.lower():
+                            is_mech = True
+                            break
+                    
+                    allowed_ratio = 0.10 # Default 10%
+                    if is_mech:
+                        allowed_ratio = 0.85 # Allow 85% overlap for mechanical fits
+                        
+                    if ratio > allowed_ratio: 
                          collision_count += 1
-                         msg = f"Collision detected between {b1.id} and {b2.id} (Overlap: {ratio*100:.1f}%)"
+                         msg = f"Collision detected between {b1.id} ({desc1}) and {b2.id} ({desc2}) (Overlap: {ratio*100:.1f}%)"
                          # Limit evidences to avoid spamming
-                         if collision_count <= 5: 
+                         if collision_count <= 20: 
                              result.add_hard_fail(Evidence("COLLISION", "CRITICAL", [b1.id, b2.id], msg))
         
         if collision_count > 0:
             msg = f"Found {collision_count} heavy collisions. Model is physically impossible."
             result.add_hard_fail(Evidence("COLLISION", "CRITICAL", [], msg))
-        
-
