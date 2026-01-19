@@ -1,86 +1,46 @@
 import sys
 import os
 
-# Ensure modules can be loaded
-# Ensure modules can be loaded (Robust against running from different dirs)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 현재 경로를 파이썬 경로에 추가
+sys.path.append(os.getcwd())
 
-from ldr_loader import LdrLoader
-from verifier import PhysicalVerifier
-from models import VerificationResult, Evidence
+from physical_verification.ldr_loader import LdrLoader
+from physical_verification.verifier import PhysicalVerifier
 
-def debug_ldr(target_file="shark.ldr"):
-    # Build absolute path if needed, or stick to relative if running from root
-    # default to current dir -> shark.ldr
-    file_path = os.path.abspath(target_file)
-    
-    print(f"Loading {file_path}...")
-    loader = LdrLoader()
-    if not os.path.exists(file_path):
-        print(f"Error: File not found at {file_path}")
+def run_debug(target_file):
+    if not os.path.exists(target_file):
+        print(f"❌ 에러: 파일을 찾을 수 없습니다: {target_file}")
         return
 
-    plan = loader.load_from_file(file_path)
-    print(f"Loaded {len(plan.bricks)} bricks.")
+    print(f"🚀 {target_file} 물리 검증 시작...")
+    
+    # 1. LDR 로드
+    loader = LdrLoader()
+    try:
+        plan = loader.load_from_file(target_file)
+        print(f"✅ 로드 완료: 브릭 {len(plan.bricks)}개")
+    except Exception as e:
+        print(f"❌ 로드 실패: {e}")
+        return
 
+    # 2. 검증 실행
     verifier = PhysicalVerifier(plan)
+    result = verifier.run_all_checks()
 
-    print("\n--- [DEBUG] Loaded Bricks Coordinates ---")
-    all_bricks = plan.get_all_bricks()
-    # Sort by Z (Height) to see layers
-    all_bricks.sort(key=lambda b: b.z)
-    
-    # Show first 50 bricks to check dimensions (especially height)
-    for b in all_bricks[:50]: 
-         print(f"ID: {b.id}, Pos: ({b.x:.2f}, {b.y:.2f}, {b.z:.2f}), Size: {b.width:.2f}x{b.depth:.2f}x{b.height:.2f}")
-    print("... (showing first 50 only) ...")
-    print("-----------------------------------------\n")
-    
-    print(f"Graph Nodes: {verifier.graph.number_of_nodes()}")
-    print(f"Graph Edges: {verifier.graph.number_of_edges()}")
-    
-    # Print edges
-    # print("Edges found:")
-    # for u, v in verifier.graph.edges():
-    #     print(f"  {u} -- {v}")
+    # 3. 결과 출력
+    print("\n" + "="*30)
+    print(f"📊 검증 결과: {'✅ PASS' if result.is_valid else '❌ FAIL'}")
+    print(f"💯 최종 점수: {result.score} / 100")
+    print("="*30)
 
-    # 2. Check Floating
-    result = VerificationResult()
-    verifier.verify_floating(result)
-    
-    if not result.is_valid:
-        print("\n[FAIL] Floating Check Failed! (Issues Detected)")
+    if result.evidence:
+        print("\n🔍 상세 감점 내역:")
         for ev in result.evidence:
-            print(f"  [{ev.type}] {ev.message}")
-            # print(f"  Floating Bricks: {ev.brick_ids}")
-            
-            # Print details of floating bricks
-            # for bid in ev.brick_ids:
-            #     b = plan.bricks[bid]
-            #     print(f"    Brick {bid}: z={b.z:.2f}, h={b.height}, (x={b.x:.2f}, y={b.y:.2f})")
+             print(f"  [{ev.type}] ({ev.severity}) - {ev.message}")
     else:
-        print("\n[PASS] Floating Check Passed. (Structure is contiguous)")
-
-    # 3. Collision Check (New)
-    print("\n[3] Running Collision Check...")
-    verifier.verify_collision(result)
-    if not result.is_valid:
-        # Check if any collision errors exist
-        collisions = [e for e in result.evidence if e.type == "COLLISION"]
-        if collisions:
-            print(f"\n[FAIL] Found {len(collisions)} Collisions!")
-            for ev in collisions:
-                 print(f"  {ev.message}")
-    else:
-        print("[PASS] No Collisions detected.")
-        
-    # 4. Stability (Optional)
-    # verifier.verify_stability(result)
+        print("\n✨ 특이사항 없음: 완벽한 구조입니다.")
 
 if __name__ == "__main__":
-    # You can change this to "green_supercar.ldr" or any other file
-    target = "shark.ldr"
-    if len(sys.argv) > 1:
-        target = sys.argv[1]
-        
-    debug_ldr(target)
+    # 실행 인자가 없으면 기본으로 car.ldr 테스트
+    target = sys.argv[1] if len(sys.argv) > 1 else "ldr/car.ldr"
+    run_debug(target)

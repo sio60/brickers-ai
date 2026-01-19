@@ -6,3 +6,5 @@ outputs/
 models/
 checkpoints/
 .cache/
+debug_*.py
+ldr/*.ldr
