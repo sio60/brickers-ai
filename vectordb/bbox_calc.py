@@ -8,9 +8,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from pymongo import UpdateOne
 from pymongo.collection import Collection
-
-from ai import config
-from ai.db import get_db
+import config
+from db import get_db
 from datetime import datetime
 
 

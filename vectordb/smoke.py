@@ -1,6 +1,6 @@
 import random
 import config
-from ai.db import get_parts_collection
+from db import get_parts_collection
 from vectordb.search import parts_vector_search
 
 

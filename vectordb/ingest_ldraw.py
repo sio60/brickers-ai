@@ -11,14 +11,14 @@ from typing import Dict, List, Optional, Tuple, Set
 from pymongo import UpdateOne, ASCENDING
 from pymongo.collection import Collection
 
-from ai import config
-from ai.db import get_db
+import config
+from db import get_db
 
 # ✅ bbox 계산 모듈 import
-from ai.vectordb.bbox_calc import update_all_parts_bbox
+from vectordb.bbox_calc import update_all_parts_bbox
 
 # ✅ embedding 계산 모듈 import
-from ai.vectordb.embedder import update_all_parts_embeddings
+from vectordb.embedder import update_all_parts_embeddings
 
 
 # =========================
