@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from pathlib import Path
 
 # ✅ 실행 위치와 상관없이 ai/.env 로드
 BASE_DIR = Path(__file__).resolve().parent
@@ -55,3 +56,13 @@ def vector_ready() -> bool:
 def kids_render_ready() -> bool:
     """Kids 렌더 기능 사용 가능 여부"""
     return bool(GEMINI_API_KEY.strip())
+
+################################
+# LEGO Units (LDraw LDU)
+################################
+STUD_PITCH_LDU = 20.0
+PLATE_HEIGHT_LDU = 8.0
+BRICK_HEIGHT_LDU = 24.0
+RENDER_FRAME_PAD_LDU = 10.0
+
+LDRAW_BASE_DIR = Path(r"C:\complete\ldraw")

@@ -11,3 +11,5 @@ python-multipart
 numpy
 scipy
 networkx
+fpdf2
+matplotlib

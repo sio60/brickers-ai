@@ -14,7 +14,7 @@ from ai.db import get_db
 from datetime import datetime
 
 
-LDRAW_BASE = Path(r"C:\complete\ldraw")
+LDRAW_BASE = Path(config.LDRAW_BASE_DIR)
 PARTS_COLLECTION = config.PARTS_COLLECTION
 ALIASES_COLLECTION = "ldraw_aliases"
 
@@ -397,3 +397,78 @@ def update_all_parts_bbox(
         col.bulk_write(ops, ordered=False)
 
     return {"scanned": scanned, "updated": updated, "skipped": skipped}
+
+def get_bbox_doc_by_part_file(
+    parts_col: Collection,
+    part_file: str,
+    aliases_col: Optional[Collection] = None,
+) -> Optional[Dict]:
+    """
+    renderer/validator 공용 bbox 조회.
+    - part_file: "3001.dat" / "parts/3001.dat" / "s/xxxx.dat" 등 들어와도 됨
+    - 반환: {"min":[...],"max":[...],"size":[...]} 형태 bbox doc
+    """
+    pf = _ensure_dat_ext(part_file)
+
+    # 1) direct match (canonicalFile/partFile/name)
+    doc = parts_col.find_one(
+        {"$or": [{"canonicalFile": pf}, {"partFile": pf}, {"name": pf}]},
+        {"_id": 0, "bbox": 1},
+    )
+    if doc and doc.get("bbox"):
+        return doc["bbox"]
+
+    # 2) alias match (선택)
+    if aliases_col is not None:
+        a = aliases_col.find_one(
+            {"$or": [{"fromFile": pf}, {"from": pf}, {"alias": pf}, {"partFile": pf}, {"name": pf}]},
+            {"_id": 0, "toFile": 1, "to": 1, "canonicalFile": 1},
+        )
+        if a:
+            to_pf = _ensure_dat_ext(a.get("toFile") or a.get("to") or a.get("canonicalFile") or "")
+            if to_pf:
+                doc2 = parts_col.find_one(
+                    {"$or": [{"canonicalFile": to_pf}, {"partFile": to_pf}, {"name": to_pf}]},
+                    {"_id": 0, "bbox": 1},
+                )
+                if doc2 and doc2.get("bbox"):
+                    return doc2["bbox"]
+
+    return None
+
+
+def bbox_tuple_from_doc(bbox: Dict) -> Optional[Tuple[Tuple[float,float,float], Tuple[float,float,float], Tuple[float,float,float]]]:
+    """
+    bbox doc -> (min,max,size) 튜플로 정규화.
+    - size 없으면 min/max로 계산
+    - min 없고 size만 있으면 min=(0,0,0)
+    """
+    mn = bbox.get("min")
+    mx = bbox.get("max")
+    sz = bbox.get("size")
+
+    def _is_vec3(v): return isinstance(v, list) and len(v) == 3
+
+    try:
+        mn_t = (float(mn[0]), float(mn[1]), float(mn[2])) if _is_vec3(mn) else None
+        mx_t = (float(mx[0]), float(mx[1]), float(mx[2])) if _is_vec3(mx) else None
+        sz_t = (float(sz[0]), float(sz[1]), float(sz[2])) if _is_vec3(sz) else None
+
+        if sz_t is None and mn_t is not None and mx_t is not None:
+            sz_t = (mx_t[0]-mn_t[0], mx_t[1]-mn_t[1], mx_t[2]-mn_t[2])
+
+        if mn_t is None and sz_t is not None:
+            mn_t = (0.0, 0.0, 0.0)
+
+        if mx_t is None and mn_t is not None and sz_t is not None:
+            mx_t = (mn_t[0]+sz_t[0], mn_t[1]+sz_t[1], mn_t[2]+sz_t[2])
+
+        if mn_t is None or mx_t is None or sz_t is None:
+            return None
+
+        if sz_t[0] <= 0 or sz_t[1] <= 0 or sz_t[2] <= 0:
+            return None
+
+        return mn_t, mx_t, sz_t
+    except Exception:
+        return None
