@@ -471,3 +471,6 @@ def bbox_tuple_from_doc(bbox: Dict) -> Optional[Tuple[Tuple[float,float,float], 
         return mn_t, mx_t, sz_t
     except Exception:
         return None
+
+if __name__ == "__main__":
+    print(update_all_parts_bbox(only_missing_or_changed=True))

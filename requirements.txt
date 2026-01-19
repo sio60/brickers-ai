@@ -13,3 +13,7 @@ scipy
 networkx
 fpdf2
 matplotlib
+pymupdf
+reportlab
+httpx
+pillow

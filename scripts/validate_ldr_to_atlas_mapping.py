@@ -90,27 +90,40 @@ def atlas_lookup_part(part_file: str):
 # Main
 # ----------------------------
 def main():
-    # ✅ scripts/validate_ldr_to_atlas_mapping.py 기준
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ldr", type=str, default="", help="Path to .ldr file (relative or absolute)")
+    args = ap.parse_args()
+
     # project_root = scripts 폴더의 부모
     script_dir = Path(__file__).resolve().parent
     project_root = script_dir.parent
 
-    # ✅ car.ldr 위치 자동 탐색: (1) project_root/car.ldr, (2) project_root/ldr/car.ldr
-    candidates = [
-        project_root / "car.ldr",
-        project_root / "ldr" / "car.ldr",
-    ]
-
+    # ✅ 1) 사용자가 --ldr로 넣으면 그걸 최우선 사용
     ldr_path = None
-    for p in candidates:
-        if p.exists():
-            ldr_path = p
-            break
+    if args.ldr:
+        p = Path(args.ldr)
+        if not p.is_absolute():
+            p = (project_root / p).resolve()
+        if not p.exists():
+            raise FileNotFoundError(f"LDR not found: {p}")
+        ldr_path = p
+    else:
+        # ✅ 2) 기존 자동 탐색(디폴트)
+        candidates = [
+            project_root / "car.ldr",
+            project_root / "ldr" / "car.ldr",
+        ]
+        for p in candidates:
+            if p.exists():
+                ldr_path = p
+                break
 
-    if ldr_path is None:
-        raise FileNotFoundError(
-            "car.ldr not found. Tried:\n" + "\n".join(str(p) for p in candidates)
-        )
+        if ldr_path is None:
+            raise FileNotFoundError(
+                "LDR not found. Use --ldr.\nTried:\n" + "\n".join(str(p) for p in candidates)
+            )
 
     print("[INFO] Using LDR:", ldr_path)
 

@@ -6,8 +6,7 @@ from typing import Dict, List, Optional, Tuple, Set
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from ai.vectordb.bbox_calc import get_bbox_doc_by_part_file, bbox_tuple_from_doc
-
+from vectordb.bbox_calc import get_bbox_doc_by_part_file, bbox_tuple_from_doc
 import config
 
 
@@ -158,10 +157,23 @@ def render_ldr_to_png_matplotlib(
     for inst in instances:
         pf = inst.part_file
         if pf not in bbox_cache:
-            b = get_bbox_doc_by_part_file(parts_col, pf)
+            # ✅ aliases 컬렉션 가져오기 (있으면)
+            aliases_col = parts_col.database.get_collection("ldraw_aliases")
+
+            # ✅ bbox 조회 (canonical + alias 포함)
+            bbox_doc = get_bbox_doc_by_part_file(
+                parts_col,
+                pf,
+                aliases_col=aliases_col,
+            )
+
+            # ✅ bbox doc → (min, max, size) 튜플 정규화
+            b = bbox_tuple_from_doc(bbox_doc) if bbox_doc else None
+
+            # ✅ 최후 fallback (config 기반)
             if b is None:
-                # ✅ config 기반 fallback (하드코딩 제거)
                 b = _fallback_bbox_ldu()
+
             bbox_cache[pf] = b
 
         (mnx, mny, mnz), (_, _, _), (sx, sy, sz) = bbox_cache[pf]

@@ -24,7 +24,7 @@ def _step_index(p: Path) -> int:
     return 10**9
 
 
-def main(ldr_dir: str, out_dir: str, dpi: int = 180):
+def main(ldr_dir: str | None, ldr_file: str | None, out_dir: str, dpi: int = 180):
     load_dotenv()
     uri = os.getenv("MONGODB_URI")
     if not uri:
@@ -34,35 +34,45 @@ def main(ldr_dir: str, out_dir: str, dpi: int = 180):
     db = client["brickers"]
     parts_col = db["ldraw_parts"]
 
-    in_dir = Path(ldr_dir)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    ldr_files = list(in_dir.glob("*.ldr"))
-    if not ldr_files:
-        raise RuntimeError(f"No .ldr files in {in_dir}")
+    # ✅ (1) 단일 파일 모드
+    if ldr_file:
+        p = Path(ldr_file)
+        if not p.exists():
+            raise FileNotFoundError(p)
 
-    # ✅ step 번호 기준으로 정렬 (문자열 정렬로 10이 2 앞에 오는 문제 방지)
-    ldr_files = sorted(ldr_files, key=_step_index)
-
-    prev = None
-    for i, p in enumerate(ldr_files):
         png_path = out / f"{p.stem}.png"
-
-        # ✅ step 강조: 두 번째 스텝부터 이전 누적 LDR을 prev로 넘김
-        prev_ldr = prev if prev is not None else None
-
         render_ldr_to_png_matplotlib(
             ldr_path=p,
             output_path=png_path,
             parts_col=parts_col,
-            prev_ldr_path=prev_ldr,  # ✅ 핵심
+            prev_ldr_path=None,
             dpi=dpi,
         )
-
         print("[OK]", png_path)
+        return
 
-        # ✅ 다음 스텝을 위한 prev 갱신
+    # ✅ (2) 폴더 모드 (기존 그대로)
+    in_dir = Path(ldr_dir)
+    ldr_files = list(in_dir.glob("*.ldr"))
+    if not ldr_files:
+        raise RuntimeError(f"No .ldr files in {in_dir}")
+
+    ldr_files = sorted(ldr_files, key=_step_index)
+
+    prev = None
+    for p in ldr_files:
+        png_path = out / f"{p.stem}.png"
+        render_ldr_to_png_matplotlib(
+            ldr_path=p,
+            output_path=png_path,
+            parts_col=parts_col,
+            prev_ldr_path=prev,
+            dpi=dpi,
+        )
+        print("[OK]", png_path)
         prev = p
 
 
@@ -70,9 +80,13 @@ if __name__ == "__main__":
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ldrDir", required=True, help="directory containing *_step_XX.ldr files")
+    ap.add_argument("--ldrDir", help="directory containing *_step_XX.ldr files")
+    ap.add_argument("--ldr", help="single .ldr file")
     ap.add_argument("--outDir", default="out/steps_png")
     ap.add_argument("--dpi", type=int, default=180)
     args = ap.parse_args()
 
-    main(args.ldrDir, args.outDir, dpi=args.dpi)
+    if not args.ldr and not args.ldrDir:
+        raise SystemExit("Need --ldr or --ldrDir")
+
+    main(args.ldrDir, args.ldr, args.outDir, dpi=args.dpi)

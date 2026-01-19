@@ -1,18 +1,39 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
-# ✅ ai. 접두사 제거 (같은 repo 루트 기준 import)
 import config
 from db import get_db, get_parts_collection
 from vectordb.seed import seed_dummy_parts
 from vectordb.search import parts_vector_search
-from ldr.import_to_mongo import import_ldr_bom, import_car_ldr
+from ldr.import_to_mongo import import_ldr_bom_with_steps, import_car_ldr
 
 # ✅ kids router
 from route import kids_render
 
+# ✅ instructions routers
+from route.instructions_pdf import router as instructions_router
+from route.instructions_upload import router as instructions_upload_router
+
+
 app = FastAPI(title="Brickers AI API", version="0.1.0")
+
+# ✅ (선택) CORS 필요하면 개발단에선 일단 열어두기
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=getattr(config, "CORS_ORIGINS", ["*"]),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ✅ uploads 폴더를 정적 서빙 (로컬 CDN 역할)
+# uploads/instructions/... 를 /static/instructions/... 로 접근 가능하게
+app.mount("/static", StaticFiles(directory="uploads"), name="static")
+
+api = APIRouter(prefix="/api/v1")
 
 
 class VectorSearchRequest(BaseModel):
@@ -27,33 +48,36 @@ class LdrImportRequest(BaseModel):
     ldr_path: Optional[str] = None  # 없으면 car.ldr 기본 사용
 
 
-@app.get("/health")
+@api.get("/health", tags=["system"])
 def health():
     return {"status": "ok", "env": getattr(config, "ENV", "unknown")}
 
 
-@app.post("/ldr/import")
+@api.get("/mongo/ping", tags=["system"])
+def mongo_ping():
+    db = get_db()
+    return {
+        "db": getattr(config, "MONGODB_DB", "unknown"),
+        "collections": db.list_collection_names()
+    }
+
+
+@api.post("/ldr/import", tags=["ldr"])
 def api_ldr_import(req: LdrImportRequest):
     if req.ldr_path:
-        result = import_ldr_bom(job_id=req.job_id, ldr_path=req.ldr_path)
+        result = import_ldr_bom_with_steps(job_id=req.job_id, ldr_path=req.ldr_path)
     else:
         result = import_car_ldr(job_id=req.job_id)
     return {"ok": True, **result}
 
 
-@app.get("/mongo/ping")
-def mongo_ping():
-    db = get_db()
-    return {"db": getattr(config, "MONGODB_DB", "unknown"), "collections": db.list_collection_names()}
-
-
-@app.post("/vectordb/seed")
+@api.post("/vectordb/seed", tags=["vectordb"])
 def api_seed():
     n = seed_dummy_parts(overwrite=True)
     return {"inserted": n}
 
 
-@app.post("/vectordb/parts/search")
+@api.post("/vectordb/parts/search", tags=["vectordb"])
 def api_search(req: VectorSearchRequest):
     dims = getattr(config, "EMBEDDING_DIMS", None)
     if dims is not None and len(req.query_vector) != dims:
@@ -75,5 +99,12 @@ def api_search(req: VectorSearchRequest):
     return {"count": len(hits), "items": hits}
 
 
-# ✅ kids router 연결
-app.include_router(kids_render.router)
+# ✅ 메인 api 라우터 등록
+app.include_router(api)
+
+# ✅ kids 라우터
+app.include_router(kids_render.router, prefix="/api/v1/kids", tags=["kids"])
+
+# ✅ instructions 라우터들 (prefix는 라우터 파일 안에서 /api/instructions 로 잡혀있음)
+app.include_router(instructions_router)
+app.include_router(instructions_upload_router)
