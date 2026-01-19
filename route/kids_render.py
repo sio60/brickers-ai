@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import Response
 # ✅ service logic import
-from ai.service.nano_banana import render_one_image
+from service.nano_banana import render_one_image
 
 router = APIRouter(prefix="/v1/kids", tags=["kids"])
 

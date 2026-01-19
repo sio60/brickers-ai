@@ -2,15 +2,15 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
-# ✅ 패키지 기준 import 통일
-from ai import config
-from ai.db import get_db, get_parts_collection
-from ai.vectordb.seed import seed_dummy_parts
-from ai.vectordb.search import parts_vector_search
-from ai.ldr.import_to_mongo import import_ldr_bom, import_car_ldr
+# ✅ ai. 접두사 제거 (같은 repo 루트 기준 import)
+import config
+from db import get_db, get_parts_collection
+from vectordb.seed import seed_dummy_parts
+from vectordb.search import parts_vector_search
+from ldr.import_to_mongo import import_ldr_bom, import_car_ldr
 
-# ✅ 라우터 (kids)
-from ai.route import kids_render
+# ✅ kids router
+from route import kids_render
 
 app = FastAPI(title="Brickers AI API", version="0.1.0")
 
@@ -29,7 +29,7 @@ class LdrImportRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "env": config.ENV}
+    return {"status": "ok", "env": getattr(config, "ENV", "unknown")}
 
 
 @app.post("/ldr/import")
@@ -44,7 +44,7 @@ def api_ldr_import(req: LdrImportRequest):
 @app.get("/mongo/ping")
 def mongo_ping():
     db = get_db()
-    return {"db": config.MONGODB_DB, "collections": db.list_collection_names()}
+    return {"db": getattr(config, "MONGODB_DB", "unknown"), "collections": db.list_collection_names()}
 
 
 @app.post("/vectordb/seed")
@@ -55,10 +55,11 @@ def api_seed():
 
 @app.post("/vectordb/parts/search")
 def api_search(req: VectorSearchRequest):
-    if len(req.query_vector) != config.EMBEDDING_DIMS:
+    dims = getattr(config, "EMBEDDING_DIMS", None)
+    if dims is not None and len(req.query_vector) != dims:
         raise HTTPException(
             status_code=400,
-            detail=f"query_vector must be length {config.EMBEDDING_DIMS}, got {len(req.query_vector)}",
+            detail=f"query_vector must be length {dims}, got {len(req.query_vector)}",
         )
 
     col = get_parts_collection()

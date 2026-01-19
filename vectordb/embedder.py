@@ -9,10 +9,8 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 from pymongo import UpdateOne
 from pymongo.collection import Collection
-
-from ai import config
-from ai.db import get_db
-
+import config
+from db import get_db
 
 # =========================
 # Config

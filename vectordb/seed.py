@@ -1,6 +1,6 @@
 import random
-from ai.db import get_parts_collection
-from ai import config
+from db import get_parts_collection
+import config
 
 
 def rand_vec(dims: int):
