@@ -30,6 +30,13 @@ HF_EMBED_MODEL = os.getenv("HF_EMBED_MODEL", "intfloat/multilingual-e5-small")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 NANO_BANANA_MODEL = os.getenv("NANO_BANANA_MODEL", "gemini-2.5-flash-image")
 
+################################
+# Local Base URL (for static files)
+################################
+API_PUBLIC_BASE_URL = os.getenv("API_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+
+
+
 
 def require_env(name: str) -> str:
     """

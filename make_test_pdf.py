@@ -3,7 +3,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 
 PDF_PATH = "test_image_embed.pdf"
-IMG_PATH = "pyramid_step_04.png"  # 여기에 진짜 png/jpg 경로 넣기
+IMG_PATH = "test.png"  # 여기에 진짜 png/jpg 경로 넣기
 
 c = canvas.Canvas(PDF_PATH, pagesize=A4)
 w, h = A4

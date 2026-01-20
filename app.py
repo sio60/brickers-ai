@@ -20,7 +20,7 @@ from route.instructions_upload import router as instructions_upload_router
 
 app = FastAPI(title="Brickers AI API", version="0.1.0")
 
-# ✅ (선택) CORS 필요하면 개발단에선 일단 열어두기
+# ✅ CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=getattr(config, "CORS_ORIGINS", ["*"]),
@@ -29,9 +29,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ uploads 폴더를 정적 서빙 (로컬 CDN 역할)
-# uploads/instructions/... 를 /static/instructions/... 로 접근 가능하게
-app.mount("/static", StaticFiles(directory="uploads"), name="static")
+# ✅ 정적 서빙 (로컬 CDN)
+# 업로드가 uploads/instructions/... 에 저장한다고 했으니
+# 프론트/서버에서 http://localhost:8000/static/instructions/<file> 로 접근 가능해야 함.
+
+# [선택 A] 지금 방식 유지: uploads 전체를 /static 으로 노출
+# app.mount("/static", StaticFiles(directory="uploads"), name="static")
+
+# ✅ [추천 B] instructions만 노출 (더 안전/명확)
+app.mount(
+    "/static/instructions",
+    StaticFiles(directory="uploads/instructions"),
+    name="instructions_static",
+)
 
 api = APIRouter(prefix="/api/v1")
 
@@ -105,6 +115,7 @@ app.include_router(api)
 # ✅ kids 라우터
 app.include_router(kids_render.router, prefix="/api/v1/kids", tags=["kids"])
 
-# ✅ instructions 라우터들 (prefix는 라우터 파일 안에서 /api/instructions 로 잡혀있음)
+# ✅ instructions 라우터들
+# (라우터 파일 내부 prefix="/api/instructions" 이므로 프론트는 /api/instructions/...로 호출)
 app.include_router(instructions_router)
 app.include_router(instructions_upload_router)

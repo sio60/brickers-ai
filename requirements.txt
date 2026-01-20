@@ -17,3 +17,4 @@ pymupdf
 reportlab
 httpx
 pillow
+python-multipart
