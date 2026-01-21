@@ -4,22 +4,11 @@ import re
 import sys
 from pathlib import Path
 
-# from . import db  # DB Removed
-import json
-import os
-
-# Dummy fallback for DB parts since we are using local files mostly
-# or relying on default dimensions in ldr_loader.py
-
-def get_part_dims(part_id: str):
-    # For now, return None to let ldr_loader USE DEFAULTS
-    # Or implement a simple lookup if needed.
-    # In ldr_loader.py: if not dims: Use default 1x1x1
-    return None
-
-def get_part_geometry(part_id: str):
-    # This was used to get mesh data.
-    return None 
+# Import DB module from the same directory
+try:
+    from . import db
+except ImportError:
+    import db
 
 # Global cache for part dimensions
 DIMENSION_CACHE = {}
@@ -145,12 +134,23 @@ def get_part_dims(part_id: str):
         return DIMENSION_CACHE[clean_id]
     
     # 2. Query MongoDB
-    # 2. Query MongoDB - REMOVED for standalone
-    # try:
-    #     coll = db.get_parts_collection()
-    #     # ...
-    # except Exception as e:
-    #     print(f"[ERROR] DB Metadata Read Error: {e}")
+    try:
+        coll = db.get_parts_collection()
+        query = {
+            "$or": [
+                {"partFile": f"{clean_id}.dat"},
+                {"filename": f"{clean_id}.dat"},
+                {"partPath": {"$regex": f"/{clean_id}\.dat$", "$options": "i"}}
+            ]
+        }
+        doc = coll.find_one(query)
+        if doc and "bbox" in doc:
+            b_min, b_max = doc["bbox"]["min"], doc["bbox"]["max"]
+            result = (b_min[0], b_min[1], b_min[2], b_max[0], b_max[1], b_max[2])
+            DIMENSION_CACHE[clean_id] = result
+            return result
+    except Exception as e:
+        print(f"[ERROR] DB Metadata Read Error: {e}")
 
     # 3. Fallback
     # print(f"[Fallback] Parsing local file for {clean_id}")
@@ -195,7 +195,7 @@ def get_part_metadata_from_db(part_id: str):
                 {"partFile": f"{clean_id}.dat"},
                 {"filename": f"{clean_id}.dat"},
                 {"partFile": clean_id}, 
-                {"partPath": {"$regex": rf"/{clean_id}\.dat$", "$options": "i"}}
+                {"partPath": {"$regex": f"/{clean_id}\.dat$", "$options": "i"}}
             ]
         }
         doc = coll.find_one(query)

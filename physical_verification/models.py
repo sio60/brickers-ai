@@ -11,10 +11,6 @@ class Brick:
     width: float
     depth: float
     height: float
-    # Original LDraw Data (for Mesh Verification)
-    matrix: Optional[np.ndarray] = None # Rotation Matrix (3x3)
-    origin: Optional[np.ndarray] = None # Original LDraw Position (x,y,z)
-    part_file: Optional[str] = None     # Original Filename (e.g. "3001.dat")
     mass: float = 1.0
     
     @property
