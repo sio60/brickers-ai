@@ -114,7 +114,10 @@ class LdrLoader:
                         z=model_min_z,
                         width=final_width,
                         depth=final_depth,
-                        height=final_height
+                        height=final_height,
+                        matrix=rot_matrix,
+                        origin=np.array([ldraw_x, ldraw_y, ldraw_z]),
+                        part_file=part_id
                     )
                     bricks.append(brick)
         
