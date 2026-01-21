@@ -64,6 +64,87 @@ def get_rotation_matrix(rotation: int) -> List[int]:
 
 
 # ============================================
+# 바운딩 박스 계산
+# ============================================
+
+@dataclass
+class BBox:
+    """3D 바운딩 박스"""
+    min_x: float
+    max_x: float
+    min_y: float
+    max_y: float
+    min_z: float
+    max_z: float
+
+    def intersects(self, other: 'BBox', tolerance: float = 0.1) -> bool:
+        """다른 바운딩 박스와 겹치는지 확인 (tolerance: 허용 오차)"""
+        return (
+            self.min_x < other.max_x - tolerance and
+            self.max_x > other.min_x + tolerance and
+            self.min_y < other.max_y - tolerance and
+            self.max_y > other.min_y + tolerance and
+            self.min_z < other.max_z - tolerance and
+            self.max_z > other.min_z + tolerance
+        )
+
+    def is_supported_by(self, other: 'BBox', tolerance: float = 2.0) -> bool:
+        """다른 박스 위에 올라가 있는지 확인 (Y축 기준)"""
+        # 이 브릭의 바닥(max_y)이 다른 브릭의 상단(min_y)과 닿아있고
+        # X, Z가 겹치는 영역이 있어야 함
+        y_contact = abs(self.max_y - other.min_y) < tolerance
+        x_overlap = self.min_x < other.max_x and self.max_x > other.min_x
+        z_overlap = self.min_z < other.max_z and self.max_z > other.min_z
+        return y_contact and x_overlap and z_overlap
+
+
+def get_rotated_size(size: List[float], rotation: int) -> List[float]:
+    """회전 적용 후 크기 반환 (Y축 회전)"""
+    sx, sy, sz = size
+    if rotation == 0 or rotation == 180:
+        return [sx, sy, sz]
+    elif rotation == 90 or rotation == 270:
+        return [sz, sy, sx]  # X와 Z 교환
+    return [sx, sy, sz]
+
+
+def get_brick_bbox(brick: PlacedBrick, parts_db: Dict) -> Optional[BBox]:
+    """브릭의 실제 바운딩 박스 계산"""
+    part_info = parts_db.get(brick.part_id)
+    if not part_info:
+        return None
+
+    # bbox 정보가 있어야 함
+    bbox_size = part_info.get('bbox', part_info.get('size'))
+    if not bbox_size:
+        return None
+
+    # 리스트 형태로 변환
+    if isinstance(bbox_size, dict):
+        bbox_size = bbox_size.get('size', [40, 24, 40])
+    if not isinstance(bbox_size, list) or len(bbox_size) < 3:
+        bbox_size = [40, 24, 40]  # 기본값
+
+    # 회전 적용
+    size = get_rotated_size(bbox_size, brick.rotation)
+    half_x, half_z = size[0] / 2, size[2] / 2
+    height = size[1]
+
+    # LDraw 좌표계: -Y가 위쪽
+    # position은 브릭의 기준점 (보통 상단 중앙)
+    x, y, z = brick.position.x, brick.position.y, brick.position.z
+
+    return BBox(
+        min_x=x - half_x,
+        max_x=x + half_x,
+        min_y=y,              # 상단 (LDraw에서 작은 Y가 위)
+        max_y=y + height,     # 하단
+        min_z=z - half_z,
+        max_z=z + half_z
+    )
+
+
+# ============================================
 # L1 검증 (스키마/타입)
 # ============================================
 
@@ -165,6 +246,134 @@ def validate_model(model: BrickModel, parts_db: Dict) -> List[str]:
 
 
 # ============================================
+# L2 검증 (물리: 충돌, 부유)
+# ============================================
+
+@dataclass
+class L2ValidationResult:
+    """L2 검증 결과"""
+    collisions: List[tuple]      # [(brick1_id, brick2_id), ...]
+    floating_bricks: List[str]   # [brick_id, ...]
+    warnings: List[str]          # 경고 메시지
+
+
+def check_collisions(bricks: List[PlacedBrick], parts_db: Dict) -> List[tuple]:
+    """
+    브릭 간 충돌 검사
+
+    Returns:
+        충돌하는 브릭 쌍 리스트 [(id1, id2), ...]
+    """
+    collisions = []
+    bboxes = []
+
+    # 모든 브릭의 바운딩 박스 계산
+    for brick in bricks:
+        bbox = get_brick_bbox(brick, parts_db)
+        if bbox:
+            bboxes.append((brick.id, bbox))
+
+    # 모든 쌍에 대해 충돌 검사
+    for i in range(len(bboxes)):
+        for j in range(i + 1, len(bboxes)):
+            id1, bbox1 = bboxes[i]
+            id2, bbox2 = bboxes[j]
+            if bbox1.intersects(bbox2):
+                collisions.append((id1, id2))
+
+    return collisions
+
+
+def check_floating(bricks: List[PlacedBrick], parts_db: Dict, ground_y: float = 0) -> List[str]:
+    """
+    부유 브릭 검사 (공중에 떠있는 브릭)
+
+    Args:
+        bricks: 브릭 리스트
+        parts_db: 파츠 DB
+        ground_y: 바닥 Y좌표 (기본값 0)
+
+    Returns:
+        부유 중인 브릭 ID 리스트
+    """
+    floating = []
+    bboxes = {}
+
+    # 모든 브릭의 바운딩 박스 계산
+    for brick in bricks:
+        bbox = get_brick_bbox(brick, parts_db)
+        if bbox:
+            bboxes[brick.id] = bbox
+
+    # 각 브릭이 지지대를 가지고 있는지 확인
+    for brick in bricks:
+        bbox = bboxes.get(brick.id)
+        if not bbox:
+            continue
+
+        # 바닥에 닿아있는지 확인 (LDraw: Y가 클수록 아래)
+        on_ground = bbox.max_y >= ground_y - 2  # 허용 오차 2 LDU
+
+        if on_ground:
+            continue
+
+        # 다른 브릭 위에 있는지 확인
+        supported = False
+        for other_id, other_bbox in bboxes.items():
+            if other_id == brick.id:
+                continue
+            if bbox.is_supported_by(other_bbox):
+                supported = True
+                break
+
+        if not supported:
+            floating.append(brick.id)
+
+    return floating
+
+
+def validate_physics(
+    model: BrickModel,
+    parts_db: Dict,
+    check_collision: bool = True,
+    check_float: bool = True
+) -> L2ValidationResult:
+    """
+    L2 물리 검증 (충돌 + 부유)
+
+    Args:
+        model: 검증할 모델
+        parts_db: 파츠 DB (bbox 정보 포함)
+        check_collision: 충돌 검사 여부
+        check_float: 부유 검사 여부
+
+    Returns:
+        L2ValidationResult
+    """
+    collisions = []
+    floating_bricks = []
+    warnings = []
+
+    # 충돌 검사
+    if check_collision:
+        collisions = check_collisions(model.bricks, parts_db)
+        if collisions:
+            warnings.append(f"[L2] {len(collisions)}개 충돌 발견")
+
+    # 부유 검사
+    if check_float:
+        floating_bricks = check_floating(model.bricks, parts_db)
+        if floating_bricks:
+            warnings.append(f"[L2] {len(floating_bricks)}개 부유 브릭 발견")
+
+    return L2ValidationResult(
+        collisions=collisions,
+        floating_bricks=floating_bricks,
+        warnings=warnings
+    )
+
+
+# ============================================
 # LDR 변환 함수
 # ============================================
 
@@ -204,6 +413,7 @@ def model_to_ldr(
     model: BrickModel,
     parts_db: Dict,
     skip_validation: bool = False,
+    skip_physics: bool = False,
     step_mode: str = STEP_MODE_NONE
 ) -> str:
     """
@@ -211,8 +421,9 @@ def model_to_ldr(
 
     Args:
         model: 변환할 브릭 모델
-        parts_db: 파츠 데이터베이스
-        skip_validation: True면 검증 스킵 (디버깅용, 기본값 False)
+        parts_db: 파츠 데이터베이스 (bbox 정보 포함 권장)
+        skip_validation: True면 L1 검증 스킵 (디버깅용, 기본값 False)
+        skip_physics: True면 L2 물리 검증 스킵 (기본값 False)
         step_mode: STEP 출력 모드
             - 'none': STEP 없음 (기본값)
             - 'layer': 레이어마다 0 STEP 추가
@@ -231,6 +442,26 @@ def model_to_ldr(
         errors = validate_model(model, parts_db)
         if errors:
             raise ValidationError(errors)
+
+    # L2 물리 검증 (충돌, 부유) - 경고만 출력, 에러 아님
+    l2_warnings = []
+    if not skip_physics:
+        physics_result = validate_physics(model, parts_db)
+        if physics_result.collisions:
+            l2_warnings.append(f"[L2 Warning] {len(physics_result.collisions)}개 충돌 발견")
+            for c in physics_result.collisions[:3]:
+                l2_warnings.append(f"  - {c[0]} <-> {c[1]}")
+            if len(physics_result.collisions) > 3:
+                l2_warnings.append(f"  ... 외 {len(physics_result.collisions) - 3}개")
+        if physics_result.floating_bricks:
+            l2_warnings.append(f"[L2 Warning] {len(physics_result.floating_bricks)}개 부유 브릭 발견")
+            for f in physics_result.floating_bricks[:3]:
+                l2_warnings.append(f"  - {f}")
+            if len(physics_result.floating_bricks) > 3:
+                l2_warnings.append(f"  ... 외 {len(physics_result.floating_bricks) - 3}개")
+        # 경고 출력 (에러 아님)
+        for w in l2_warnings:
+            print(w)
 
     lines = []
 
@@ -337,9 +568,211 @@ def parse_brick_model(json_data: dict) -> BrickModel:
 
 
 # ============================================
+# LDR 파서 (LDR → BrickModel)
+# ============================================
+
+def matrix_to_rotation(matrix: List[float]) -> int:
+    """
+    회전 행렬을 각도(0, 90, 180, 270)로 변환
+
+    가장 가까운 표준 회전 각도로 근사
+    """
+    # 표준 회전 행렬들
+    standard_matrices = {
+        0:   [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        90:  [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        180: [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        270: [0, 0, 1, 0, 1, 0, -1, 0, 0],
+    }
+
+    # 가장 가까운 행렬 찾기
+    best_match = 0
+    best_diff = float('inf')
+
+    for angle, std_matrix in standard_matrices.items():
+        diff = sum(abs(a - b) for a, b in zip(matrix, std_matrix))
+        if diff < best_diff:
+            best_diff = diff
+            best_match = angle
+
+    return best_match
+
+
+def parse_ldr_line(line: str) -> Optional[dict]:
+    """
+    LDR Line Type 1 파싱
+
+    형식: 1 <색상> <x> <y> <z> <a> <b> <c> <d> <e> <f> <g> <h> <i> <파일명>
+
+    Returns:
+        파싱된 정보 딕셔너리 또는 None
+    """
+    line = line.strip()
+    if not line or line.startswith('0'):
+        return None
+
+    parts = line.split()
+    if len(parts) < 15 or parts[0] != '1':
+        return None
+
+    try:
+        color = int(parts[1])
+        x = float(parts[2])
+        y = float(parts[3])
+        z = float(parts[4])
+
+        # 회전 행렬 (9개 값)
+        matrix = [float(parts[i]) for i in range(5, 14)]
+
+        # 파츠 파일명
+        part_file = parts[14]
+
+        # part_id 추출 (확장자 제거)
+        part_id = part_file.replace('.dat', '').replace('.DAT', '')
+
+        return {
+            'color': color,
+            'x': x,
+            'y': y,
+            'z': z,
+            'matrix': matrix,
+            'rotation': matrix_to_rotation(matrix),
+            'part_file': part_file,
+            'part_id': part_id,
+        }
+    except (ValueError, IndexError):
+        return None
+
+
+def parse_ldr_file(filepath: str) -> dict:
+    """
+    LDR 파일을 파싱하여 딕셔너리로 반환
+
+    Returns:
+        {
+            'name': 모델 이름,
+            'bricks': [파싱된 브릭 정보 리스트],
+            'comments': [주석 리스트],
+        }
+    """
+    result = {
+        'name': '',
+        'bricks': [],
+        'comments': [],
+    }
+
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            line = line.strip()
+
+            # 주석 (Line Type 0)
+            if line.startswith('0 '):
+                comment = line[2:]
+                result['comments'].append(comment)
+                # 첫 번째 주석을 이름으로
+                if not result['name'] and not comment.startswith('!'):
+                    result['name'] = comment
+
+            # 파츠 (Line Type 1)
+            elif line.startswith('1 '):
+                parsed = parse_ldr_line(line)
+                if parsed:
+                    result['bricks'].append(parsed)
+
+    return result
+
+
+def ldr_to_brick_model(
+    filepath: str,
+    model_id: Optional[str] = None,
+    mode: str = 'pro'
+) -> BrickModel:
+    """
+    LDR 파일을 BrickModel로 변환
+
+    Args:
+        filepath: LDR 파일 경로
+        model_id: 모델 ID (없으면 파일명 사용)
+        mode: 'pro' 또는 'kids'
+
+    Returns:
+        BrickModel 객체
+    """
+    from pathlib import Path
+
+    parsed = parse_ldr_file(filepath)
+
+    if not model_id:
+        model_id = Path(filepath).stem
+
+    bricks = []
+    for i, b in enumerate(parsed['bricks']):
+        brick = PlacedBrick(
+            id=f"b{i+1:03d}",
+            part_id=b['part_id'].lower(),
+            position=Vector3(x=b['x'], y=b['y'], z=b['z']),
+            rotation=b['rotation'],
+            color_code=b['color'],
+            layer=0  # LDR에서는 레이어 정보 없음, 나중에 Y좌표로 계산 가능
+        )
+        bricks.append(brick)
+
+    # Y좌표로 레이어 자동 계산
+    if bricks:
+        # Y좌표 기준 정렬 (LDraw: 작은 Y가 위)
+        y_values = sorted(set(b.position.y for b in bricks))
+        y_to_layer = {y: i for i, y in enumerate(y_values)}
+        for brick in bricks:
+            brick.layer = y_to_layer[brick.position.y]
+
+    return BrickModel(
+        model_id=model_id,
+        name=parsed['name'] or model_id,
+        mode=mode,
+        bricks=bricks
+    )
+
+
+def change_colors(model: BrickModel, color_map: Dict[int, int]) -> BrickModel:
+    """
+    BrickModel의 색상 변경
+
+    Args:
+        model: 원본 모델
+        color_map: {원본색상: 새색상} 매핑
+
+    Returns:
+        색상이 변경된 새 BrickModel
+    """
+    new_bricks = []
+    for brick in model.bricks:
+        new_color = color_map.get(brick.color_code, brick.color_code)
+        new_brick = PlacedBrick(
+            id=brick.id,
+            part_id=brick.part_id,
+            position=brick.position,
+            rotation=brick.rotation,
+            color_code=new_color,
+            layer=brick.layer
+        )
+        new_bricks.append(new_brick)
+
+    return BrickModel(
+        model_id=model.model_id,
+        name=model.name,
+        mode=model.mode,
+        bricks=new_bricks,
+        target_age=model.target_age,
+        created_at=model.created_at
+    )
+
+
+# ============================================
 # 메인 실행
 # ============================================
 
 if __name__ == "__main__":
     print("LDR Converter 모듈 로드 완료")
-    print("사용법: from ldr_converter import model_to_ldr, load_parts_db")
+    print("사용법:")
+    print("  from ldr_converter import model_to_ldr, load_parts_db")
+    print("  from ldr_converter import ldr_to_brick_model, change_colors")
