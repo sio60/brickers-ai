@@ -1,23 +1,27 @@
+from __future__ import annotations
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
-# ✅ ai. 접두사 제거 (같은 repo 루트 기준 import)
 import config
 from db import get_db, get_parts_collection
 from vectordb.seed import seed_dummy_parts
 from vectordb.search import parts_vector_search
 from ldr.import_to_mongo import import_ldr_bom, import_car_ldr
+
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
 # ✅ kids router
 from route import kids_render
-from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="Brickers AI API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Vite dev
+        "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
@@ -25,7 +29,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/generated", StaticFiles(directory="public/generated"), name="generated")
+# ✅ 핵심: kids_render의 GENERATED_DIR을 그대로 /api/generated 로 공개
+app.mount(
+    "/api/generated",
+    StaticFiles(directory=str(kids_render.GENERATED_DIR)),
+    name="api_generated",
+)
+
+# (선택) 호환용
+app.mount(
+    "/generated",
+    StaticFiles(directory=str(kids_render.GENERATED_DIR)),
+    name="generated",
+)
+
+
 class VectorSearchRequest(BaseModel):
     query_vector: List[float] = Field(...)
     limit: int = 10
@@ -35,7 +53,7 @@ class VectorSearchRequest(BaseModel):
 
 class LdrImportRequest(BaseModel):
     job_id: str
-    ldr_path: Optional[str] = None  # 없으면 car.ldr 기본 사용
+    ldr_path: Optional[str] = None
 
 
 @app.get("/health")
