@@ -21,7 +21,7 @@ class LdrLoader:
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith('0'): # Comment
+                if not line or line.startswith('0'): # 주석(Comment)
                     continue
                     
                 parts = line.split()
@@ -29,19 +29,19 @@ class LdrLoader:
                 
                 line_type = parts[0]
                 
-                # Line Type 1: Sub-file reference (The Brick)
-                # Format: 1 <colour> x y z a b c d e f g h <file>
+                # 라인 타입 1: 서브 파일 참조 (브릭)
+                # 형식: 1 <색상> x y z a b c d e f g h <파일>
                 if line_type == '1':
-                    # Parse basic info
-                    # color = parts[1] # Not used for physics yet
+                    # 기본 정보 파싱
+                    # color = parts[1] # 물리 연산에는 아직 사용되지 않음
                     
-                    # LDraw Coordinates: x, y, z
-                    # LDraw Y is Vertical (Down is positive). X, Z are horizontal plane.
+                    # LDraw 좌표: x, y, z
+                    # LDraw Y는 수직(아래쪽이 양수). X, Z는 수평면.
                     ldraw_x = float(parts[2])
                     ldraw_y = float(parts[3])
                     ldraw_z = float(parts[4])
                     
-                    # Rotation Matrix (a b c / d e f / g h i)
+                    # 회전 행렬 (a b c / d e f / g h i)
                     # a=5, b=6, c=7, d=8, e=9, f=10, g=11, h=12, i=13
                     rot_matrix = np.array([
                         [float(parts[5]), float(parts[6]), float(parts[7])],
@@ -53,14 +53,14 @@ class LdrLoader:
                     
                     dims = get_part_dims(part_id)
                     if not dims:
-                        # Use default 1x1x1 (20x24x20 LDU, origin top-center-ish)
+                        # 기본값 1x1x1 사용 (20x24x20 LDU, 원점은 상단 중앙 부근)
                         dims = (-10.0, 0.0, -10.0, 10.0, 24.0, 10.0)
 
-                    # Unpack 6-tuple from part_library
+                    # part_library에서 6-튜플 언팩
                     min_x_ldu, min_y_ldu, min_z_ldu, max_x_ldu, max_y_ldu, max_z_ldu = dims
 
-                    # 1. Define corners in Part's Local Space
-                    # LDraw Axes: X=Right, Y=Down, Z=Forward
+                    # 1. 부품의 로컬 공간에서 모서리 정의
+                    # LDraw 축: X=오른쪽, Y=아래, Z=전방
                     corners = [
                         np.array([min_x_ldu, min_y_ldu, min_z_ldu]),
                         np.array([min_x_ldu, min_y_ldu, max_z_ldu]),
@@ -72,17 +72,17 @@ class LdrLoader:
                         np.array([max_x_ldu, max_y_ldu, max_z_ldu]),
                     ]
                     
-                    # 2. Transform corners to Global LDraw Space (Rotate + Translate)
+                    # 2. 모서리를 글로벌 LDraw 공간으로 변환 (회전 + 이동)
                     final_corners_ldraw = []
                     pos_vec = np.array([ldraw_x, ldraw_y, ldraw_z])
                     
                     for c in corners:
-                         # Apply Rotation (Matrix * Vector)
+                         # 회전 적용 (행렬 * 벡터)
                          rc = rot_matrix.dot(c)
-                         # Apply Translation
+                         # 이동 적용
                          final_corners_ldraw.append(rc + pos_vec)
 
-                    # 3. Find Global Extents
+                    # 3. 글로벌 범위(Extents) 찾기
                     g_min_x = min(c[0] for c in final_corners_ldraw)
                     g_max_x = max(c[0] for c in final_corners_ldraw)
                     g_min_y = min(c[1] for c in final_corners_ldraw)
@@ -90,10 +90,10 @@ class LdrLoader:
                     g_min_z = min(c[2] for c in final_corners_ldraw)
                     g_max_z = max(c[2] for c in final_corners_ldraw)
                     
-                    # 4. Convert to Model System
-                    # LDraw X -> Model X (1/20)
-                    # LDraw Z -> Model Y (Depth) (1/20)
-                    # LDraw Y -> Model Z (Height) (-1/24)
+                    # 4. 모델 시스템으로 변환
+                    # LDraw X -> 모델 X (1/20)
+                    # LDraw Z -> 모델 Y (깊이) (1/20)
+                    # LDraw Y -> 모델 Z (높이) (-1/24)
                     
                     model_min_x = g_min_x / 20.0
                     model_max_x = g_max_x / 20.0
@@ -101,7 +101,7 @@ class LdrLoader:
                     model_min_y = g_min_z / 20.0
                     model_max_y = g_max_z / 20.0
                     
-                    model_min_z = -g_max_y / 24.0 # Inverted
+                    model_min_z = -g_max_y / 24.0 # 반전됨
                     model_max_z = -g_min_y / 24.0
                     
                     final_width = model_max_x - model_min_x
@@ -122,7 +122,7 @@ class LdrLoader:
                     )
                     bricks.append(brick)
         
-        # Z-Normalization: Shift model to sit on Ground (Z=0)
+        # Z-정규화: 모델이 지면(Z=0)에 놓이도록 이동
         if bricks:
             min_model_z = min(b.z for b in bricks)
             if min_model_z > 0.001 or min_model_z < -0.001:
@@ -131,4 +131,3 @@ class LdrLoader:
                     b.z -= min_model_z
                     
         return BrickPlan(bricks)
-

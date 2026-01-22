@@ -15,27 +15,27 @@ from write_ldr import write_ldr
 # 1. 내장 색상 팔레트 & 변환 함수
 # -----------------------------------------------------------------------------
 LDRAW_RGB = {
-    0:  (33, 33, 33),     # Black
-    1:  (0, 85, 191),     # Blue
-    2:  (0, 133, 43),     # Green
-    3:  (0, 155, 155),    # Dark Turquoise
-    4:  (196, 0, 38),     # Red
-    5:  (205, 98, 152),   # Dark Pink
-    6:  (92, 46, 0),      # Brown
-    7:  (156, 156, 156),  # Light Gray
-    8:  (99, 99, 99),     # Dark Gray
-    9:  (107, 171, 220),  # Light Blue
-    10: (97, 189, 67),    # Bright Green
-    11: (0, 174, 239),    # Bright Light Blue-ish
-    14: (245, 205, 47),   # Yellow
-    15: (255, 255, 255),  # White
-    19: (173, 169, 142),  # Tan
-    25: (245, 245, 245),  # Very Light Gray-ish
-    27: (0, 0, 0),        # Black (alt)
-    28: (0, 143, 155),    # Dark Teal-ish
-    70: (105, 64, 39),    # Reddish Brown-ish
-    71: (160, 165, 169),  # Light Bluish Gray
-    72: (108, 110, 107),  # Dark Bluish Gray
+    0:  (33, 33, 33),     # 검정 (Black)
+    1:  (0, 85, 191),     # 파랑 (Blue)
+    2:  (0, 133, 43),     # 초록 (Green)
+    3:  (0, 155, 155),    # 어두운 청록 (Dark Turquoise)
+    4:  (196, 0, 38),     # 빨강 (Red)
+    5:  (205, 98, 152),   # 어두운 분홍 (Dark Pink)
+    6:  (92, 46, 0),      # 갈색 (Brown)
+    7:  (156, 156, 156),  # 밝은 회색 (Light Gray)
+    8:  (99, 99, 99),     # 어두운 회색 (Dark Gray)
+    9:  (107, 171, 220),  # 밝은 파랑 (Light Blue)
+    10: (97, 189, 67),    # 밝은 초록 (Bright Green)
+    11: (0, 174, 239),    # 밝은 하늘색 (Bright Light Blue-ish)
+    14: (245, 205, 47),   # 노랑 (Yellow)
+    15: (255, 255, 255),  # 흰색 (White)
+    19: (173, 169, 142),  # 황갈색 (Tan)
+    25: (245, 245, 245),  # 아주 밝은 회색 (Very Light Gray-ish)
+    27: (0, 0, 0),        # 검정 (Black - 대체)
+    28: (0, 143, 155),    # 어두운 청록 (Dark Teal-ish)
+    70: (105, 64, 39),    # 적갈색 (Reddish Brown-ish)
+    71: (160, 165, 169),  # 밝은 청회색 (Light Bluish Gray)
+    72: (108, 110, 107),  # 어두운 청회색 (Dark Bluish Gray)
 }
 
 def rgb_to_ldraw_id(rgb: np.ndarray) -> int:
@@ -65,7 +65,7 @@ def load_glb_meshes(glb_path: str) -> List[trimesh.Trimesh]:
 
     meshes = [m for m in meshes if len(m.vertices) > 0 and len(m.faces) > 0]
     if not meshes:
-        raise RuntimeError(f"Failed to load meshes from {glb_path}")
+        raise RuntimeError(f"{glb_path}에서 메쉬를 로드하지 못했습니다.")
     return meshes
 
 
@@ -96,7 +96,7 @@ def preprocess_meshes(
     size = bounds[1] - bounds[0]
     max_xz = max(float(size[0]), float(size[2]))
     if max_xz <= 1e-9:
-        raise ValueError("Mesh bounds too small / invalid")
+        raise ValueError("메쉬 경계가 너무 작거나 유효하지 않습니다.")
 
     scale = float(target_studs) / max_xz
     for m in meshes2:
@@ -119,7 +119,7 @@ def preprocess_meshes(
 # -----------------------------------------------------------------------------
 def voxelize(mesh: trimesh.Trimesh, *, fill: bool) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Returns: idx(indices), pts(centers), origin(calculated)
+    반환값: idx(인덱스), pts(중심점), origin(계산된 원점)
     """
     vg = mesh.voxelized(pitch=1.0)
     if fill:
@@ -129,9 +129,9 @@ def voxelize(mesh: trimesh.Trimesh, *, fill: bool) -> Tuple[np.ndarray, np.ndarr
     pts = vg.points 
     
     if idx is None or len(idx) == 0:
-        raise RuntimeError("Voxelization produced 0 voxels.")
+        raise RuntimeError("복셀화 결과 복셀이 0개입니다.")
         
-    # Origin 역산
+    # 원점 역산
     origin = pts[0] - (idx[0] + 0.5)
     
     return idx.astype(np.int32), pts.astype(np.float32), origin
@@ -316,11 +316,11 @@ def build_under_budget(
     best_parts = None
     best_target = None
 
-    # 1. Budget 만족하는 최대 크기 찾기
+    # 1. 예산(Budget)을 만족하는 최대 크기 찾기
     while target >= min_target:
         parts, t = try_build(meshes, target=target, **kwargs)
         pc = len(parts)
-        print(f"[TRY] target={t} -> parts={pc}")
+        print(f"[TRY] 목표={t} -> 부품수={pc}")
 
         if pc <= budget:
             best_parts = parts
@@ -339,7 +339,7 @@ def build_under_budget(
     if hi_parts is None:
         return best_parts, best_target
 
-    # 2. Binary Search
+    # 2. 이진 탐색 (Binary Search)
     lo = best_target
     hi = hi_target
     best = (best_parts, best_target)
@@ -350,7 +350,7 @@ def build_under_budget(
             break
         parts_mid, tmid = try_build(meshes, target=mid, **kwargs)
         pc = len(parts_mid)
-        print(f"[SEARCH] target={tmid} -> parts={pc}")
+        print(f"[SEARCH] 목표={tmid} -> 부품수={pc}")
         if pc <= budget:
             best = (parts_mid, tmid)
             lo = mid
@@ -365,40 +365,40 @@ def build_under_budget(
 # -----------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("glb", help="input .glb path")
-    ap.add_argument("--out", default="out/result.ldr")
+    ap.add_argument("glb", help="입력 .glb 파일 경로")
+    ap.add_argument("--out", default="out/result.ldr", help="출력 .ldr 파일 경로")
 
-    ap.add_argument("--target", type=int, default=60)
+    ap.add_argument("--target", type=int, default=60, help="목표 스터드 크기")
     
     # [설정] 기본 5 studs
-    ap.add_argument("--min-target", type=int, default=5)
+    ap.add_argument("--min-target", type=int, default=5, help="최소 목표 스터드")
     
     # [설정] 기본 100개 이하
-    ap.add_argument("--budget", type=int, default=100)
+    ap.add_argument("--budget", type=int, default=100, help="최대 허용 부품 수 (예산)")
     
-    ap.add_argument("--shrink", type=float, default=0.85)
-    ap.add_argument("--search-iters", type=int, default=6)
+    ap.add_argument("--shrink", type=float, default=0.85, help="크기 축소 비율")
+    ap.add_argument("--search-iters", type=int, default=6, help="이진 탐색 반복 횟수")
 
-    ap.add_argument("--flipx180", action="store_true")
-    ap.add_argument("--flipy180", action="store_true")
-    ap.add_argument("--flipz180", action="store_true")
+    ap.add_argument("--flipx180", action="store_true", help="X축 180도 회전")
+    ap.add_argument("--flipy180", action="store_true", help="Y축 180도 회전")
+    ap.add_argument("--flipz180", action="store_true", help="Z축 180도 회전")
 
-    ap.add_argument("--kind", choices=["brick", "plate"], default="brick")
-    ap.add_argument("--plates-per-voxel", type=int, default=3)
-    ap.add_argument("--no-interlock", action="store_true")
-    ap.add_argument("--max-area", type=int, default=20)
+    ap.add_argument("--kind", choices=["brick", "plate"], default="brick", help="브릭 종류 (brick/plate)")
+    ap.add_argument("--plates-per-voxel", type=int, default=3, help="복셀당 플레이트 적층 수")
+    ap.add_argument("--no-interlock", action="store_true", help="인터락(맞물림) 최적화 끄기")
+    ap.add_argument("--max-area", type=int, default=20, help="부품 최대 면적")
 
-    ap.add_argument("--solid", action="store_true", help="Fill internal voxels")
-    ap.add_argument("--keep-floating", action="store_true")
-    ap.add_argument("--step-order", choices=["bottomup", "topdown", "none"], default="bottomup")
+    ap.add_argument("--solid", action="store_true", help="내부 복셀 채우기 (Solid 모드)")
+    ap.add_argument("--keep-floating", action="store_true", help="공중 부양 부품 유지")
+    ap.add_argument("--step-order", choices=["bottomup", "topdown", "none"], default="bottomup", help="조립 단계 순서")
 
-    ap.add_argument("--color", type=int, default=4, help="Solid color ID if mesh color unused")
+    ap.add_argument("--color", type=int, default=4, help="메쉬 색상을 사용하지 않을 경우 적용할 단색 ID")
     
     # [수정됨] 기본이 '색상 적용' 상태임. 끄고 싶으면 --no-color 사용
-    ap.add_argument("--no-color", action="store_true", help="Disable mesh color sampling")
+    ap.add_argument("--no-color", action="store_true", help="메쉬 색상 샘플링 비활성화")
     
-    ap.add_argument("--kids", action="store_true")
-    ap.add_argument("--invert-y", action="store_true", help="Force invert Y axis")
+    ap.add_argument("--kids", action="store_true", help="키즈 모드 (단순화)")
+    ap.add_argument("--invert-y", action="store_true", help="Y축 강제 반전")
 
     args = ap.parse_args()
 
@@ -441,8 +441,8 @@ def main():
         author="glb_to_ldr_quick",
     )
 
-    print(f"[DONE] out={args.out} parts={len(parts)} final_target={final_target} "
-          f"color_mode={'MESH' if use_mesh_color else 'SOLID'}")
+    print(f"[완료] 출력={args.out} 부품수={len(parts)} 최종크기={final_target} "
+          f"색상모드={'MESH' if use_mesh_color else 'SOLID'}")
 
 
 if __name__ == "__main__":

@@ -12,10 +12,10 @@ class Brick:
     width: float
     depth: float
     height: float
-    # Original LDraw Data (for Mesh Verification)
-    matrix: Optional[np.ndarray] = None # Rotation Matrix (3x3)
-    origin: Optional[np.ndarray] = None # Original LDraw Position (x,y,z)
-    part_file: Optional[str] = None     # Original Filename (e.g. "3001.dat")
+    # 원본 LDraw 데이터 (메쉬 검증용)
+    matrix: Optional[np.ndarray] = None # 회전 행렬 (3x3)
+    origin: Optional[np.ndarray] = None # 원본 LDraw 위치 (x,y,z)
+    part_file: Optional[str] = None     # 원본 파일명 (예: "3001.dat")
     mass: float = 1.0
     
     @property
@@ -40,7 +40,7 @@ class Brick:
 
     @property
     def footprint_poly(self) -> List[Tuple[float, float]]:
-        # (x, y) corners for geometric calculations
+        # 기하학적 계산을 위한 (x, y) 모서리 좌표
         return [
             (self.x, self.y),
             (self.x + self.width, self.y),
@@ -50,8 +50,8 @@ class Brick:
 
 @dataclass
 class Evidence:
-    type: str        # 'FLOATING', 'UNSTABLE', 'WEAK_CONNECTION'
-    severity: str    # 'CRITICAL', 'WARNING'
+    type: str        # 'FLOATING' (공중부양), 'UNSTABLE' (불안정), 'WEAK_CONNECTION' (연결 약함)
+    severity: str    # 'CRITICAL' (치명적), 'WARNING' (경고)
     brick_ids: List[str]
     message: str
     layer: Optional[int] = None

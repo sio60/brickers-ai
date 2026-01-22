@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Dict, Tuple, List, Optional, Any
 import numpy as np
 
-# Canonical Orientation:
-# key = (w, l) where w is the longer side in LDraw default orientation (rot=0).
+# 표준 방향 (Canonical Orientation):
+# key = (w, l) 여기서 w는 LDraw 기본 방향(rot=0)에서 더 긴 쪽입니다.
 # pylego3d/optimizer.py
 
 PLATE_PARTS: Dict[Tuple[int, int], str] = {
@@ -76,7 +76,7 @@ def _tile_one_color(
 
     def best_fit_at(x: int, z: int):
         best = None
-        best_key = None  # (cross, area)
+        best_key = None  # (교차, 면적)
         for (a, b) in sizes:
             for (w, l) in ((b, a), (a, b)):
                 if x + w > W or z + l > H:
@@ -108,7 +108,7 @@ def _tile_one_color(
             if bf is None:
                 got = _get_part(kind, 1, 1)
                 if got is None:
-                    raise RuntimeError("Catalog missing 1x1 part.")
+                    raise RuntimeError("카탈로그에 1x1 부품이 없습니다.")
                 part, rot = got
                 w = l = 1
             else:
@@ -139,7 +139,7 @@ def optimize_bricks(
     max_area: Optional[int] = 20,
 ) -> List[Dict[str, Any]]:
     if mode != "voxel":
-        raise ValueError("Only mode='voxel' supported.")
+        raise ValueError("mode='voxel'만 지원됩니다.")
     if not bricks:
         return []
 

@@ -4,7 +4,7 @@ import numpy as np
 import os
 import sys
 
-# Add physical_verification to path
+# physical_verification 경로 추가
 sys.path.append(os.path.join(os.path.dirname(__file__), 'physical_verification'))
 try:
     import part_library
@@ -13,11 +13,11 @@ try:
     from verifier import PhysicalVerifier
     from pybullet_verifier import PyBulletVerifier
 except ImportError as e:
-    print(f"Error importing physical_verification modules: {e}")
+    print(f"physical_verification 모듈 임포트 오류: {e}")
     sys.exit(1)
 
-# LDraw Color ID -> RGB (0-255)
-# Reference: glb_to_ldr_v3.py
+# LDraw 색상 ID -> RGB (0-255)
+# 참고: glb_to_ldr_v3.py
 LDRAW_COLORS = {
     0:  (33, 33, 33),
     1:  (0, 85, 191),
@@ -122,68 +122,68 @@ LDRAW_COLORS = {
 
 def ldr_to_mesh(file_path):
     """
-    Loads an LDR file and converts it to a single Trimesh Scene object.
-    Uses 'part_library' to fetch geometry (DB cached or local file).
+    LDR 파일을 로드하여 단일 Trimesh Scene 객체로 변환합니다.
+    형상 정보를 가져오기 위해 'part_library'를 사용합니다 (DB 캐시 또는 로컬 파일).
     """
     
-    # 1. Check file existence
+    # 1. 파일 존재 확인
     if not os.path.exists(file_path):
-        print(f"File not found: {file_path}")
+        print(f"파일을 찾을 수 없음: {file_path}")
         return None
 
-    print(f"Loading {file_path}...")
+    print(f"{file_path} 로딩 중...")
     
     # ---------------------------------------------------------
-    # [Physical Verification] Run checks first
+    # [물리 검증] 검사 먼저 실행
     # ---------------------------------------------------------
-    print("Running Physical Verification...")
+    print("물리 검증 실행 중...")
     failed_brick_ids = set()
     try:
         loader = LdrLoader()
         plan = loader.load_from_file(file_path)
         
-        # [Legacy Check] Suppressed for now to avoid confusion with PyBullet results
+        # [기존 검사] PyBullet 결과와의 혼동을 피하기 위해 현재 비활성화
         # verifier = PhysicalVerifier(plan)
         # result = verifier.run_all_checks(mode="ADULT") 
         # if not result.is_valid: ... 
         
-        # [PyBullet Check] Precise Mesh Collision
-        print("Running PyBullet Precision Check (GUI Mode)...")
+        # [PyBullet 검사] 정밀 메쉬 충돌
+        print("PyBullet 정밀 검사 실행 (GUI 모드)...")
         pb_verifier = PyBulletVerifier(plan, gui=True)
-        # Tolerance 0 = Maximum sensitivity (any touch is collision)
+        # 허용 오차 0 = 최대 민감도 (닿으면 충돌)
         pb_result = pb_verifier.run_collision_check(tolerance=0) 
         
         if not pb_result.is_valid:
-            print(f"PyBullet Collision Detected!")
+            print(f"PyBullet 충돌 감지됨!")
             for ev in pb_result.evidence:
                 print(f"  [PyBullet] {ev.message}")
                 for bid in ev.brick_ids:
                     failed_brick_ids.add(bid)
                     
-        # [PyBullet Check] Stability (Gravity)
-        print("Running PyBullet Stability Check (Gravity) - 10 seconds...")
+        # [PyBullet 검사] 안정성 (중력)
+        print("PyBullet 안정성 검사 실행 (중력) - 10초...")
         stab_result = pb_verifier.run_stability_check(duration=10.0)
         
         if not stab_result.is_valid:
-             print(f"PyBullet Instability Detected!")
+             print(f"PyBullet 불안정성 감지됨!")
              for ev in stab_result.evidence:
                  print(f"  [Stability] {ev.message}")
                  for bid in ev.brick_ids:
                      failed_brick_ids.add(bid)
 
         if not failed_brick_ids:
-            print("Physical Verification PASSED (All Clear)!")
+            print("물리 검증 통과 (이상 없음)!")
         else:
-             print(f"Total Failed Bricks to Highlight: {len(failed_brick_ids)}")
-             print(f"Failed IDs: {list(failed_brick_ids)[:10]}...")  # Show first 10
+             print(f"하이라이트할 실패 브릭 수: {len(failed_brick_ids)}")
+             print(f"실패 ID: {list(failed_brick_ids)[:10]}...")  # 처음 10개 표시
             
     except Exception as e:
-        print(f"Verification Skipped due to error: {e}")
+        print(f"오류로 인해 검증 건너뜀: {e}")
         import traceback
         traceback.print_exc()
 
     # ---------------------------------------------------------
-    # [Visualization] Build Scene
+    # [시각화] 씬 구성
     # ---------------------------------------------------------
     scene = trimesh.Scene()
     
@@ -199,11 +199,11 @@ def ldr_to_mesh(file_path):
             
             line_type = parts[0]
             
-            # Line Type 1: Sub-file (Part)
+            # 라인 타입 1: 서브 파일 (부품)
             if line_type == '1':
-                # Format: 1 <colour> x y z a b c d e f g h <file>
+                # 형식: 1 <색상> x y z a b c d e f g h <파일>
                 try:
-                    # Parse Position & Rotation
+                    # 위치 및 회전 파싱
                     x, y, z = float(parts[2]), float(parts[3]), float(parts[4])
                     a, b, c = float(parts[5]), float(parts[6]), float(parts[7])
                     d, e, f = float(parts[8]), float(parts[9]), float(parts[10])
@@ -211,27 +211,27 @@ def ldr_to_mesh(file_path):
                     
                     part_id = " ".join(parts[14:]) 
                     
-                    # Mapping ID for Verification
+                    # 검증을 위한 ID 매핑
                     verifier_id = f"{parts[14]}_{brick_counter}"
                     brick_counter += 1
                     
                     # ---------------------------------------------------------
-                    # [Core Logic] Fetch Geometry (Restored)
+                    # [핵심 로직] 형상 가져오기 (복구됨)
                     # ---------------------------------------------------------
                     triangles = part_library.get_part_geometry(part_id)
                     
                     if not triangles:
                         continue
                         
-                    # Convert triangles to Trimesh object
+                    # 삼각형을 Trimesh 객체로 변환
                     vertices = np.array([p for tri in triangles for p in tri])
                     faces = np.arange(len(vertices)).reshape(-1, 3)
                     mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
                     
                     # ---------------------------------------------------------
-                    # [Transform] Apply LDraw Position & Rotation
+                    # [변환] LDraw 위치 및 회전 적용
                     # ---------------------------------------------------------
-                    # 1. LDraw Transform Matrix
+                    # 1. LDraw 변환 행렬
                     ldraw_matrix = np.eye(4)
                     ldraw_matrix[0, :3] = [a, b, c]
                     ldraw_matrix[1, :3] = [d, e, f]
@@ -240,7 +240,7 @@ def ldr_to_mesh(file_path):
                     ldraw_matrix[1, 3] = y
                     ldraw_matrix[2, 3] = z
                     
-                    # 2. Conversion Matrix (LDraw -> Model)
+                    # 2. 변환 행렬 (LDraw -> 모델)
                     scale = 1/20.0
                     conv_matrix = np.array([
                         [scale, 0,     0,     0],
@@ -249,16 +249,16 @@ def ldr_to_mesh(file_path):
                         [0,     0,     0,     1]
                     ])
                     
-                    # Apply transformation
+                    # 변환 적용
                     final_matrix = conv_matrix @ ldraw_matrix
                     mesh.apply_transform(final_matrix)
                     
-                    # Debug matching
+                    # 매칭 디버그
                     if verifier_id in failed_brick_ids:
-                        print(f"!!! MATCH Found: Highlighting Failed Brick: {verifier_id}")
-                        final_color = [255, 0, 0, 255] # RED
+                        print(f"!!! 일치 항목 발견: 실패한 브릭 하이라이트: {verifier_id}")
+                        final_color = [255, 0, 0, 255] # 빨강
                     else:
-                        rgb_or_rgba = LDRAW_COLORS.get(int(parts[1]), (128, 128, 128)) # Normal Color
+                        rgb_or_rgba = LDRAW_COLORS.get(int(parts[1]), (128, 128, 128)) # 일반 색상
                         if len(rgb_or_rgba) == 4:
                              final_color = list(rgb_or_rgba)
                         else:
@@ -269,27 +269,27 @@ def ldr_to_mesh(file_path):
                     scene.add_geometry(mesh)
                     
                 except Exception as e:
-                    print(f"Error parsing line: {line}\n{e}")
+                    print(f"라인 파싱 오류: {line}\n{e}")
                     continue
 
     return scene
 
 if __name__ == "__main__":
-    # Default test target
+    # 기본 테스트 대상
     target_ldr = os.path.join("ldr", "car.ldr")
     
-    # CLI Argument override
+    # CLI 인자 재정의
     if len(sys.argv) > 1:
         target_ldr = sys.argv[1]
         
-    print(f"Target LDR: {target_ldr}")
+    print(f"대상 LDR: {target_ldr}")
     
-    # Run Conversion
+    # 변환 실행
     scene = ldr_to_mesh(target_ldr)
     
     if scene:
-        print("Success! Scene loaded.")
-        print("Opening 3D Viewer...")
+        print("성공! 씬이 로드되었습니다.")
+        print("3D 뷰어 여는 중...")
         scene.show()
     else:
-        print("Failed to load scene.")
+        print("씬 로드 실패.")
