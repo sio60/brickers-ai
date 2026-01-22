@@ -1,3 +1,4 @@
+# 이 파일은 복셀화된 데이터를 실제 레고 브릭으로 최적화하여 배치하는 알고리즘을 구현한 파일입니다.
 # pylego3d/optimizer.py
 from __future__ import annotations
 

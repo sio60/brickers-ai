@@ -1,3 +1,4 @@
+# 이 파일은 물리 검증 결과(불안정성)를 분석하여 자동으로 구조를 보강(기둥 보강, 바닥 보강 등)하는 로직을 담당합니다.
 import networkx as nx
 import numpy as np
 from typing import List, Dict, Tuple, Set, Optional

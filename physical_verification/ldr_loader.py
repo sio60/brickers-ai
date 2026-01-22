@@ -1,3 +1,4 @@
+# 이 파일은 LDraw (.ldr) 파일을 읽어 내부 데이터 구조(BrickPlan)로 변환하는 로더입니다.
 import os
 import numpy as np
 import re

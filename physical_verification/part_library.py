@@ -1,3 +1,4 @@
+# 이 파일은 LDraw 부품의 형상 및 메타데이타를 관리하며 로컬 파일 또는 DB에서 정보를 불러오는 라이브러리입니다.
 import os
 import math
 import re

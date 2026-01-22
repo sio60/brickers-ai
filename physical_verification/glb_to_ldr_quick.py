@@ -1,4 +1,5 @@
-# glb_to_ldr_quick.py
+# 이 파일은 GLB 3D 모델을 LDraw 형식으로 변환하는 메인 스크립트입니다. (복셀화, 최적화 포함)
+
 from __future__ import annotations
 
 import argparse

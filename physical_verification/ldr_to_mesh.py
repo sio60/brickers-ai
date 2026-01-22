@@ -1,3 +1,4 @@
+# 이 파일은 LDraw 파일을 3D 메쉬로 변환하여 시각화하고 PyBullet을 통합하여 물리적 검증을 수행하는 스크립트입니다.
 import trimesh
 import numpy as np
 import os

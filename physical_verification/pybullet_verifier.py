@@ -1,3 +1,4 @@
+# 이 파일은 PyBullet 물리 엔진을 사용하여 레고 모델의 조립 가능성 및 구조적 안정성을 검증하는 핵심 검증기입니다.
 import pybullet as p
 import pybullet_data
 import numpy as np

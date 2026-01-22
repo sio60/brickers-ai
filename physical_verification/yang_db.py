@@ -1,3 +1,4 @@
+# 이 파일은 db.py와 유사하게 MongoDB 연결을 처리하지만 사용자별 설정을 분리하기 위한 대체 DB 파일입니다.
 # 검증할때 mongodb에서 부품 불러오는 파일
 
 from pymongo import MongoClient

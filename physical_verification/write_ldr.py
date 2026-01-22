@@ -1,3 +1,4 @@
+# 이 파일은 처리된 부품 데이터를 표준 LDraw (.ldr) 파일 형식으로 저장하는 유틸리티입니다.
 # pylego3d/write_ldr.py
 from __future__ import annotations
 

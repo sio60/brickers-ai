@@ -1,3 +1,4 @@
+# 이 파일은 레고 브릭의 물리적 특성(스터드/튜브 연결, 질량, 치수 등)을 정의하고 계산하는 모듈입니다.
 """
 LEGO Physics Module - Stud/Tube Connection Logic
 

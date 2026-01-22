@@ -1,3 +1,4 @@
+# 이 파일은 검증 시스템에서 사용되는 핵심 데이터 구조(Brick, VerificationResult 등)를 정의하는 모델 파일입니다.
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Any
 import numpy as np

@@ -1,3 +1,4 @@
+# 이 파일은 전체 파이프라인(GLB 변환 -> 물리 검증 -> 구조 수정 -> 결과 저장)을 순차적으로 실행하는 스크립트입니다.
 import os
 import argparse
 import time
