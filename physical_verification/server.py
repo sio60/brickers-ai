@@ -1,3 +1,10 @@
+# ============================================================================
+# 물리 검증 API 서버 모듈
+# 이 파일은 FastAPI를 사용하여 LDraw(.ldr) 파일의 물리적 검증을 위한
+# API 서버를 구현합니다. 클라이언트로부터 LDR 파일을 업로드받아
+# 로드하고, 해당 파일에 대한 부동(floating) 및 안정성(stability) 검사를
+# 수행한 후, 그 결과를 JSON 형태로 반환하는 엔드포인트를 제공합니다.
+# ============================================================================
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import os
