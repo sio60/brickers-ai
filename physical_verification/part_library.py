@@ -1,3 +1,10 @@
+# ============================================================================
+# LDraw 파트 라이브러리 및 데이터 접근 모듈
+# 이 파일은 LDraw 파트 파일의 경로를 확인하고, 파일을 파싱하여 
+# 파트의 경계 상자(bbox) 및 기하학적 데이터(geometry)를 추출합니다.
+# 또한, MongoDB 데이터베이스에서 파트의 치수, 설명 및 기타 메타데이터를
+# 조회하는 기능을 제공합니다.
+# ============================================================================
 import os
 import math
 import re
@@ -6,9 +13,9 @@ from pathlib import Path
 
 # Import DB module from the same directory
 try:
-    from . import db
+    from . import yang_db as db
 except ImportError:
-    import db
+    import yang_db as db
 
 # Global cache for part dimensions
 DIMENSION_CACHE = {}
@@ -140,7 +147,7 @@ def get_part_dims(part_id: str):
             "$or": [
                 {"partFile": f"{clean_id}.dat"},
                 {"filename": f"{clean_id}.dat"},
-                {"partPath": {"$regex": f"/{clean_id}\.dat$", "$options": "i"}}
+                {"partPath": {"$regex": r"/{clean_id}\.dat$", "$options": "i"}}
             ]
         }
         doc = coll.find_one(query)
@@ -195,7 +202,7 @@ def get_part_metadata_from_db(part_id: str):
                 {"partFile": f"{clean_id}.dat"},
                 {"filename": f"{clean_id}.dat"},
                 {"partFile": clean_id}, 
-                {"partPath": {"$regex": f"/{clean_id}\.dat$", "$options": "i"}}
+                {"partPath": {"$regex": r"/{clean_id}\.dat$", "$options": "i"}}
             ]
         }
         doc = coll.find_one(query)
