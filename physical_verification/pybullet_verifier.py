@@ -476,14 +476,17 @@ class PyBulletVerifier:
                         current_max_drift = dist
                         worst_brick = bid
                 
-                # Debug Output every 60 steps (0.25s) or if drift > 5
-                if step % 60 == 0 or current_max_drift > 5.0:
+                # Debug Output every 60 steps (0.25s) or if drift > 0.1
+                if step % 60 == 0 or current_max_drift > 0.1:
                     # Only print if relevant
-                    if current_max_drift > 1.0:
+                    if current_max_drift > 0.05:
                         print(f"   [Step {step}] Max Drift: {current_max_drift:.2f} (Brick {worst_brick})")
 
-                # Threshold: 20.0 (approx 8mm/2 studs)
-                if current_max_drift > 20.0 and first_failure_id is None:
+                # Threshold: 0.5 (approx 50 LDU = 2.5 studs displacement)
+                # If a brick moves more than 2.5 studs, it's definitely falling.
+                fail_threshold_val = 0.5 
+                
+                if current_max_drift > fail_threshold_val and first_failure_id is None:
                         first_failure_id = worst_brick
                         first_failure_step = step
                         print(f"[Stability] FAILED at step {step} ({step/240:.2f}s): {worst_brick} moved {current_max_drift:.2f}")
@@ -500,7 +503,7 @@ class PyBulletVerifier:
         result.is_valid = not bool(first_failure_id) # Valid only if no bricks fell
         failed_bricks = list() # Use list for compatibility
         max_drift = 0.0
-        drift_threshold = 40.0 # ~16mm
+        drift_threshold = 0.5 # Same threshold for final check
         
         # Add First Failure Evidence if detected
         if first_failure_id:
@@ -535,6 +538,65 @@ class PyBulletVerifier:
         else:
             print(f"[Stability] PASSED. Max drift: {max_drift:.2f}")
             result.score = 100
+        
+        # --- REPORT CARD ---
+        print("\n" + "="*40)
+        print(" 🏭 물리 검증 리포트 (Physics Report)")
+        print("="*40)
+        print(f" - 🧱 총 브릭 수: {len(brick_bodies)}") # Changed self.brick_bodies to brick_bodies
+        print(f" - 🔗 연결 상태: {constraints_count}개 본드 결합 완료") # Changed self.constraints to constraints_count
+        
+        # Re-evaluate floating bricks for report, using ground_threshold from earlier
+        # connected_bricks needs to be derived from constraints
+        connected_brick_ids = set()
+        for brick_id_a, brick_id_b in connections:
+            connected_brick_ids.add(brick_id_a)
+            connected_brick_ids.add(brick_id_b)
+
+        # Assuming 'bricks' is a list of brick IDs from self.plan.get_all_bricks()
+        # And 'brick_bodies' maps brick IDs to PyBullet body IDs
+        # We need brick_plans and brick_ids to get brick positions for floating check
+        # This information is not directly available in this scope.
+        # For now, let's use the 'floating' variable already computed.
+        # If the original 'floating' check was sufficient, we can reuse it.
+        # The original 'floating' check was: floating = find_floating_bricks(bricks)
+        # This 'floating' variable is already available.
+        
+        if floating: # Reusing the 'floating' variable from earlier check
+             print(f" - ⚠️ 위험 요소: Floating Brick {len(floating)}개 발견! (주의)")
+        else:
+             print(f" - ✨ 구조 상태: 모든 브릭이 잘 연결됨")
+             
+        print("-" * 40)
+        print(f" [시뮬레이션 결과]")
+        print(f" - 🕒 진행 시간: {duration:.1f}초")
+        print(f" - 📏 최대 이동(Drift): {max_drift:.2f} (허용치: {drift_threshold})") # Changed threshold to drift_threshold
+        print("-" * 40)
+        
+        if result.score == 100: # Changed score to result.score
+            print(" ✅ 최종 판정: [합격] (SUCCESS)")
+            print("    \"이 모델은 튼튼합니다!\"")
+        else:
+            print(" ❌ 최종 판정: [불합격] (FAIL)")
+            # Find the culprit
+            culprit = "Unknown"
+            for ev in result.evidence:
+                if ev.type == "FIRST_FAILURE" and ev.brick_ids:
+                    culprit = ev.brick_ids[0]
+                    break
+            print(f"    💥 최초 붕괴: {culprit}")
+            
+            # List other victims
+            victims = []
+            for ev in result.evidence:
+                if ev.type == "COLLAPSE_AFTERMATH" and ev.brick_ids:
+                    victims.append(ev.brick_ids[0])
+            
+            if victims:
+                print(f"    📉 추가 붕괴 ({len(victims)}개): {', '.join(victims[:5])}" + (f"...외 {len(victims)-5}개" if len(victims)>5 else ""))
+                
+            print("    \"구조가 불안정하여 무너졌습니다.\"")
+        print("="*40 + "\n")
         
         # If GUI, keep window open to let user see
         if self.gui:

@@ -301,9 +301,9 @@ def find_all_connections(bricks: list) -> List[Tuple[str, str]]:
     for i, brick_a in enumerate(bricks):
         for brick_b in bricks[i+1:]:
             # Print debug info for this pair
-            print(f"\n[DEBUG] Checking pair: {brick_a.id} vs {brick_b.id}")
-            print(f"  A origin: {brick_a.origin}")
-            print(f"  B origin: {brick_b.origin}")
+            # print(f"\n[DEBUG] Checking pair: {brick_a.id} vs {brick_b.id}")
+            # print(f"  A origin: {brick_a.origin}")
+            # print(f"  B origin: {brick_b.origin}")
             
             connected, reason = check_stud_tube_connection_debug(brick_a, brick_b)
             if connected:
@@ -367,6 +367,7 @@ def check_stud_tube_connection_debug(brick_a, brick_b, tolerance: float = 5.0) -
             xz_dist = np.sqrt((stud[0] - tube[0])**2 + (stud[2] - tube[2])**2)
             
             if y_diff < tolerance and xz_dist < tolerance:
+                # print(f"[DEBUG] CONNECTED: {b1['id']} <-> {b2['id']} | A_stud({stud[0]:.1f},{stud[1]:.1f},{stud[2]:.1f})->B_tube({tube[0]:.1f},{tube[1]:.1f},{tube[2]:.1f}) y_diff={y_diff:.1f} xz_dist={xz_dist:.1f}")
                 return True, f"B_stud({stud[0]:.1f},{stud[1]:.1f},{stud[2]:.1f})->A_tube({tube[0]:.1f},{tube[1]:.1f},{tube[2]:.1f}) y_diff={y_diff:.1f} xz_dist={xz_dist:.1f}"
     
     return False, ""

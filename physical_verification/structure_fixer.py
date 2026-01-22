@@ -22,17 +22,18 @@ class StructureFixer:
                 if line.startswith('1 '):
                     parts = line.strip().split()
                     # Basic parsing (color, x, y, z, matrix..., part_id)
-                    # This is a simplified parser - we might need a more robust one or reuse existing
                     color = int(parts[1])
                     x, y, z = float(parts[2]), float(parts[3]), float(parts[4])
-                    part_id = parts[-1]
+                    # Parse rotation matrix (9 values)
+                    matrix = [float(p) for p in parts[5:14]]
+                    part_id = " ".join(parts[14:]) # Handle filenames with spaces if any
                     
                     brick_data = {
                         'id': f"{part_id}_{len(self.bricks)}",
                         'part': part_id,
                         'color': color,
                         'pos': np.array([x, y, z]),
-                        # Matrix parsing omitted for brevity in skeleton
+                        'matrix': matrix
                     }
                     self.bricks.append(brick_data)
 
@@ -63,6 +64,9 @@ class StructureFixer:
     def is_weak_column(self, brick_id: str) -> bool:
         """Check if the brick is part of a fragile vertical column (1x1 stack)."""
         # Traverse up and down
+        current_idx = self._get_idx(brick_id)
+        if current_idx is None: return False
+        
         visited = {brick_id}
         stack_height = 1
         
@@ -70,7 +74,9 @@ class StructureFixer:
         curr = brick_id
         while True:
             neighbors = list(self.graph.neighbors(curr))
-            upper = [n for n in neighbors if self.bricks[self._get_idx(n)]['pos'][1] < self.bricks[self._get_idx(curr)]['pos'][1]] # Y decreases upwards in LDraw
+            # Y decreases upwards in LDraw (neg Y is up). So upper brick has LOWER Y value.
+            curr_y = self.bricks[self._get_idx(curr)]['pos'][1]
+            upper = [n for n in neighbors if self.bricks[self._get_idx(n)]['pos'][1] < curr_y] 
             if not upper: break
             curr = upper[0] # Assume single column
             if curr in visited: break
@@ -81,7 +87,8 @@ class StructureFixer:
         curr = brick_id
         while True:
             neighbors = list(self.graph.neighbors(curr))
-            lower = [n for n in neighbors if self.bricks[self._get_idx(n)]['pos'][1] > self.bricks[self._get_idx(curr)]['pos'][1]]
+            curr_y = self.bricks[self._get_idx(curr)]['pos'][1]
+            lower = [n for n in neighbors if self.bricks[self._get_idx(n)]['pos'][1] > curr_y]
             if not lower: break
             curr = lower[0]
             if curr in visited: break
@@ -92,11 +99,48 @@ class StructureFixer:
 
     def is_single_support(self, brick_id: str) -> bool:
         """Check if the brick is supported by only one connection below."""
+        if not self.graph.has_node(brick_id): return False
         neighbors = list(self.graph.neighbors(brick_id))
         brick_y = self.bricks[self._get_idx(brick_id)]['pos'][1]
-        # Count neighbors below this brick
+        # Count neighbors below this brick (Y value is larger)
         params_below = [n for n in neighbors if self.bricks[self._get_idx(n)]['pos'][1] > brick_y]
         return len(params_below) == 1
+
+    def analyze_failure(self, failure_report: Dict) -> List[Dict]:
+        """Analyze the failure report and suggest fixes."""
+        fixes = []
+        target_id = failure_report.get('first_failure_id')
+        
+        if not target_id:
+            return []
+            
+        print(f"[Fixer] Analyzing failure at {target_id}...")
+        
+        # Check for Weak Column
+        if self.is_weak_column(target_id):
+            print(f"  -> Detected Weak Column pattern.")
+            fixes.append({
+                'type': 'reinforce_column',
+                'target': target_id
+            })
+            
+        # Check for Single Support
+        elif self.is_single_support(target_id):
+            print(f"  -> Detected Single Support pattern.")
+            fixes.append({
+                'type': 'reinforce_base',
+                'target': target_id
+            })
+            
+        # Default fallback (if simply disconnected/floating, maybe add base?)
+        else:
+             print(f"  -> Unknown pattern, trying base reinforcement as fallback.")
+             fixes.append({
+                'type': 'reinforce_base',
+                'target': target_id
+            })
+            
+        return fixes
 
     def apply_fix(self, fix_instruction: Dict) -> bool:
         """Apply a specific fix to the LDR structure."""
@@ -108,30 +152,43 @@ class StructureFixer:
         print(f"[Fixer] Applying {fix_instruction['type']} to {target_id}")
 
         if fix_instruction['type'] == 'reinforce_column':
-            # Add a 1x2 plate next to the target to bond it
-            # Simplified: finding a free spot at x+20 or z+20
+            # Side support (Buttress)
+            # Add a vertical stack next to it to thicken the column
             new_pos = target_brick['pos'].copy()
             new_pos[0] += 20.0 # Shift X by 1 stud
             
             self.bricks.append({
-                'id': f"3024.dat_fix_{len(self.bricks)}",
-                'part': "3024.dat", # 1x1 plate for simplicity, ideally 1x2
-                'color': 5, # Dark Pink for visibility
-                'pos': new_pos
+                'id': f"3001.dat_fix_col_{len(self.bricks)}",
+                'part': "3001.dat", # Use a full brick (2x4) for strong support
+                'color': 5, # Dark Pink
+                'pos': new_pos,
+                'matrix': target_brick['matrix'][:]
             })
             return True
             
         elif fix_instruction['type'] == 'reinforce_base':
-            # Add a larger plate below
-            new_pos = target_brick['pos'].copy()
-            new_pos[1] += 24.0 # One brick height down (or 8 for plate)
+            # "Big Foot" Strategy: Widen the base area
+            # Add 2x4 bricks around the target to create a platform
+            offsets = [
+                (20.0, 0, 0),   # +X
+                (-20.0, 0, 0),  # -X
+                (0, 0, 20.0),   # +Z
+                (0, 0, -20.0)   # -Z
+            ]
             
-            self.bricks.append({
-                'id': f"3020.dat_fix_{len(self.bricks)}",
-                'part': "3020.dat", # 2x4 plate
-                'color': 5,
-                'pos': new_pos
-            })
+            for i, (dx, dy, dz) in enumerate(offsets):
+                new_pos = target_brick['pos'].copy()
+                new_pos[0] += dx
+                new_pos[1] += dy # Same height
+                new_pos[2] += dz
+                
+                self.bricks.append({
+                    'id': f"3020.dat_fix_base_{i}_{len(self.bricks)}",
+                    'part': "3020.dat", # 2x4 Plate
+                    'color': 5, # Dark Pink
+                    'pos': new_pos,
+                    'matrix': target_brick['matrix'][:]
+                })
             return True
 
         return False
@@ -146,6 +203,6 @@ class StructureFixer:
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write("0 Fixed by StructureFixer\n")
             for b in self.bricks:
-                # 1 <color> <x> <y> <z> <matrices> <part>
-                # Using identity matrix for simplicity in this proto
-                f.write(f"1 {b['color']} {b['pos'][0]:.2f} {b['pos'][1]:.2f} {b['pos'][2]:.2f} 1 0 0 0 1 0 0 0 1 {b['part']}\n")
+                # Format: 1 <color> <x> <y> <z> <rotation matrix 9 values> <part>
+                matrix_str = " ".join(f"{v:.6f}" for v in b['matrix'])
+                f.write(f"1 {b['color']} {b['pos'][0]:.2f} {b['pos'][1]:.2f} {b['pos'][2]:.2f} {matrix_str} {b['part']}\n")
