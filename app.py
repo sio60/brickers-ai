@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from __future__ import annotations
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
@@ -9,6 +9,9 @@ from db import get_db, get_parts_collection
 from vectordb.seed import seed_dummy_parts
 from vectordb.search import parts_vector_search
 from ldr.import_to_mongo import import_ldr_bom_with_steps, import_car_ldr
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 # ✅ kids router
 from route import kids_render
@@ -20,10 +23,12 @@ from route.instructions_upload import router as instructions_upload_router
 
 app = FastAPI(title="Brickers AI API", version="0.1.0")
 
-# ✅ CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=getattr(config, "CORS_ORIGINS", ["*"]),
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,6 +49,19 @@ app.mount(
 )
 
 api = APIRouter(prefix="/api/v1")
+# ✅ 핵심: kids_render의 GENERATED_DIR을 그대로 /api/generated 로 공개
+app.mount(
+    "/api/generated",
+    StaticFiles(directory=str(kids_render.GENERATED_DIR)),
+    name="api_generated",
+)
+
+# (선택) 호환용
+app.mount(
+    "/generated",
+    StaticFiles(directory=str(kids_render.GENERATED_DIR)),
+    name="generated",
+)
 
 
 class VectorSearchRequest(BaseModel):
@@ -55,7 +73,7 @@ class VectorSearchRequest(BaseModel):
 
 class LdrImportRequest(BaseModel):
     job_id: str
-    ldr_path: Optional[str] = None  # 없으면 car.ldr 기본 사용
+    ldr_path: Optional[str] = None
 
 
 @api.get("/health", tags=["system"])
