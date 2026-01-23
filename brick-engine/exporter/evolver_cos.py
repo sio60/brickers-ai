@@ -559,24 +559,28 @@ JSON만 출력하세요, 다른 텍스트 없이."""
         margin = self.SYMMETRY_CENTER_MARGIN
         tolerance = self.SYMMETRY_TOLERANCE
 
-        # Y 레이어별 브릭 수 카운트 (희소 레이어 판단용)
-        SPARSE_LAYER_THRESHOLD = 2  # 이 개수 이하면 악센트/장식으로 판단
+        # Y 레이어별 브릭 수 카운트 + 최상단 레이어 판단
+        SPARSE_LAYER_THRESHOLD = 2  # 이 개수 이하면 희소
         y_layer_count = {}
         for b in model.bricks:
-            # Y 좌표를 tolerance 기준으로 그룹화
             y_key = round(b.position.y / tolerance) * tolerance
             y_layer_count[y_key] = y_layer_count.get(y_key, 0) + 1
 
-        def is_sparse_layer(brick):
-            """해당 브릭이 희소 레이어(악센트/장식)에 있는지 확인"""
-            y_key = round(brick.position.y / tolerance) * tolerance
-            return y_layer_count.get(y_key, 0) <= SPARSE_LAYER_THRESHOLD
+        # 최상단 Y 찾기 (LDraw에서 Y가 음수일수록 위)
+        min_y = min(b.position.y for b in model.bricks)
 
-        # X=0 기준 좌우 분류 (희소 레이어 브릭은 제외)
+        def is_accent(brick):
+            """악센트/장식인지 판단: 최상단 + 희소일 때만"""
+            y_key = round(brick.position.y / tolerance) * tolerance
+            is_sparse = y_layer_count.get(y_key, 0) <= SPARSE_LAYER_THRESHOLD
+            is_top = abs(brick.position.y - min_y) < tolerance  # 최상단인지
+            return is_sparse and is_top  # 둘 다 만족해야 악센트
+
+        # X=0 기준 좌우 분류 (악센트 브릭만 제외)
         left_bricks = [b for b in model.bricks
-                       if b.position.x < -margin and not is_sparse_layer(b)]
+                       if b.position.x < -margin and not is_accent(b)]
         right_bricks = [b for b in model.bricks
-                        if b.position.x > margin and not is_sparse_layer(b)]
+                        if b.position.x > margin and not is_accent(b)]
 
         missing = []
 
@@ -1075,14 +1079,17 @@ JSON만 출력하세요."""
                 llm_added = self._fix_from_llm_suggestions(evolved, strategy)
                 added += llm_added
 
-        # 5. 부유 브릭 처리 (LLM 기반 또는 전략 기반)
+        # 5. 부유 브릭 처리 - 비활성화 (경고만 표시)
+        # NOTE: 부유 처리 로직 버그로 인해 임시 비활성화 (2026-01-23)
+        # 브릭 삭제/이상한 위치 추가 문제 발생
         if validation_result.floating_bricks:
-            if OLLAMA_AVAILABLE:
-                # LLM이 삭제/연결 판단
-                added += self._fix_floating_with_llm(evolved, validation_result.floating_bricks, strategy)
-            else:
-                # Fallback: 기존 전략 기반 지지대 추가
-                added += self._fix_floating(evolved, validation_result.floating_bricks, strategy)
+            print(f"  [경고] 부유 브릭 {len(validation_result.floating_bricks)}개 감지 (자동 수정 비활성화)")
+            # if OLLAMA_AVAILABLE:
+            #     # LLM이 삭제/연결 판단
+            #     added += self._fix_floating_with_llm(evolved, validation_result.floating_bricks, strategy)
+            # else:
+            #     # Fallback: 기존 전략 기반 지지대 추가
+            #     added += self._fix_floating(evolved, validation_result.floating_bricks, strategy)
 
         # 6. 보강 후 재검증 (롤백 판단)
         after_validation = validate_physics(evolved, self.parts_db)
