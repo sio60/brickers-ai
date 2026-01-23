@@ -123,10 +123,14 @@ LDRAW_COLORS = {
     484: (179, 62, 0),
 }
 
-def ldr_to_mesh(file_path):
+def ldr_to_mesh(file_path, verify=False):
     """
     Loads an LDR file and converts it to a single Trimesh Scene object.
     Uses 'part_library' to fetch geometry (DB cached or local file).
+    
+    Args:
+        file_path (str): Path to LDR file.
+        verify (bool): If True, runs PyBullet physical verification and highlights unstable bricks.
     """
 
     # 1. Check file existence
@@ -137,53 +141,50 @@ def ldr_to_mesh(file_path):
     print(f"Loading {file_path}...")
 
     # ---------------------------------------------------------
-    # [Physical Verification] Run checks first
+    # [Physical Verification] (Optional via --verify)
     # ---------------------------------------------------------
-    print("Running Physical Verification...")
-    failed_brick_ids = set()
-    try:
-        loader = LdrLoader()
-        plan = loader.load_from_file(file_path)
+    failed_brick_ids = set() # 실패한 브릭 하이라이팅용 (빈 집합)
+    
+    if verify:
+        print("Running Physical Verification (PyBullet)...")
+        try:
+            loader = LdrLoader()
+            plan = loader.load_from_file(file_path)
 
-        # [Legacy Check] Suppressed for now to avoid confusion with PyBullet results
-        # verifier = PhysicalVerifier(plan)
-        # result = verifier.run_all_checks(mode="ADULT") 
-        # if not result.is_valid: ... 
+            # [PyBullet Check] Precise Mesh Collision
+            print("Running PyBullet Precision Check (GUI Mode)...")
+            pb_verifier = PyBulletVerifier(plan, gui=True)
+            # Tolerance 0 = Maximum sensitivity (any touch is collision)
+            pb_result = pb_verifier.run_collision_check(tolerance=0) 
 
-        # [PyBullet Check] Precise Mesh Collision
-        print("Running PyBullet Precision Check (GUI Mode)...")
-        pb_verifier = PyBulletVerifier(plan, gui=True)
-        # Tolerance 0 = Maximum sensitivity (any touch is collision)
-        pb_result = pb_verifier.run_collision_check(tolerance=0) 
+            if not pb_result.is_valid:
+                print(f"PyBullet Collision Detected!")
+                for ev in pb_result.evidence:
+                    print(f"  [PyBullet] {ev.message}")
+                    for bid in ev.brick_ids:
+                        failed_brick_ids.add(bid)
 
-        if not pb_result.is_valid:
-            print(f"PyBullet Collision Detected!")
-            for ev in pb_result.evidence:
-                print(f"  [PyBullet] {ev.message}")
-                for bid in ev.brick_ids:
-                    failed_brick_ids.add(bid)
+            # [PyBullet Check] Stability (Gravity)
+            print("Running PyBullet Stability Check (Gravity) - 2 seconds...")
+            stab_result = pb_verifier.run_stability_check(duration=2.0)
 
-        # [PyBullet Check] Stability (Gravity)
-        print("Running PyBullet Stability Check (Gravity) - 10 seconds...")
-        stab_result = pb_verifier.run_stability_check(duration=10.0)
+            if not stab_result.is_valid:
+                 print(f"PyBullet Instability Detected!")
+                 for ev in stab_result.evidence:
+                     print(f"  [Stability] {ev.message}")
+                     for bid in ev.brick_ids:
+                         failed_brick_ids.add(bid)
 
-        if not stab_result.is_valid:
-             print(f"PyBullet Instability Detected!")
-             for ev in stab_result.evidence:
-                 print(f"  [Stability] {ev.message}")
-                 for bid in ev.brick_ids:
-                     failed_brick_ids.add(bid)
+            if not failed_brick_ids:
+                print("Physical Verification PASSED (All Clear)!")
+            else:
+                 print(f"Total Failed Bricks to Highlight: {len(failed_brick_ids)}")
+                 print(f"Failed IDs: {list(failed_brick_ids)[:10]}...")
 
-        if not failed_brick_ids:
-            print("Physical Verification PASSED (All Clear)!")
-        else:
-             print(f"Total Failed Bricks to Highlight: {len(failed_brick_ids)}")
-             print(f"Failed IDs: {list(failed_brick_ids)[:10]}...")  # Show first 10
-
-    except Exception as e:
-        print(f"Verification Skipped due to error: {e}")
-        import traceback
-        traceback.print_exc()
+        except Exception as e:
+            print(f"Verification Skipped due to error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ---------------------------------------------------------
     # [Visualization] Build Scene
@@ -278,17 +279,25 @@ def ldr_to_mesh(file_path):
     return scene
 
 if __name__ == "__main__":
-    # Default test target
-    target_ldr = os.path.join("ldr", "car.ldr")
-
-    # CLI Argument override
-    if len(sys.argv) > 1:
-        target_ldr = sys.argv[1]
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="LDR to Mesh Converter & Viewer")
+    parser.add_argument("file", help="Path to the LDR file")
+    parser.add_argument("--verify", action="store_true", help="Run physical verification and highlight unstable bricks")
+    
+    args = parser.parse_args()
+    
+    # Check absolute vs relative path
+    target_ldr = args.file
+    if not os.path.exists(target_ldr):
+         # Try relative to project root (if script run from brickers-ai)
+         target_ldr = os.path.join(project_root, args.file)
 
     print(f"Target LDR: {target_ldr}")
+    print(f"Verification Mode: {'ON' if args.verify else 'OFF'}")
 
     # Run Conversion
-    scene = ldr_to_mesh(target_ldr)
+    scene = ldr_to_mesh(target_ldr, verify=args.verify)
 
     if scene:
         print("Success! Scene loaded.")

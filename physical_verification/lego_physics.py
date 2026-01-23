@@ -47,6 +47,10 @@ BRICK_SIZES = {
     "3795.dat": (6, 2, True),   # 2x6 플레이트
     "3034.dat": (8, 2, True),   # 2x8 플레이트
     "3832.dat": (10, 2, True),  # 2x10 플레이트
+    
+    # 추가된 부품 (Stair 모델용)
+    "30072.dat": (12, 6, False), # 12x6 브릭 (가정) - 바닥/플랫폼 역할 추정
+    "2465.dat": (16, 1, False),  # 1x16 브릭
 }
 
 # 실제 질량 계산
@@ -83,15 +87,41 @@ def get_brick_studs_count(part_file: str) -> Tuple[int, int, bool]:
     if part_file in BRICK_SIZES:
         return BRICK_SIZES[part_file]
     
-    # 대체 방법: part ID에서 파싱 시도 (예: "3001" -> 2x4 브릭)
-    # 알려지지 않은 부품에 대한 추론
+    # 기본값
+    # return (2, 4, False)
+
+    # 2. DB / Part Library에서 치수 가져오기
+    try:
+        import part_library
+        bbox = part_library.get_part_dims(part_file)
+        
+        if bbox:
+            min_x, min_y, min_z, max_x, max_y, max_z = bbox
+            width = max_x - min_x
+            height = max_y - min_y
+            depth = max_z - min_z
+            
+            # LDU -> Studs 변환 (20 LDU = 1 Stud)
+            studs_x = max(1, round(width / 20.0))
+            studs_z = max(1, round(depth / 20.0))
+            
+            # 높이 확인 (Plate vs Brick)
+            # Plate: ~8, Brick: ~24
+            is_plate = height < 20.0
+            
+            # 캐싱 (선택 사항)
+            BRICK_SIZES[part_file] = (studs_x, studs_z, is_plate)
+            
+            return (studs_x, studs_z, is_plate)
+            
+    except Exception as e:
+        print(f"[WARN] DB Lookup failed for {part_file}: {e}")
+
+    # 3. 정말 아무것도 안 될 때의 최후의 수단 (Fallback)
     match = re.match(r'^(\d+)\.dat$', part_file)
     if match:
-        part_num = int(match.group(1))
-        # 일반적인 대체: 2x4 브릭으로 가정
-        return (2, 4, False)
-    
-    # 기본 대체값
+         return (2, 4, False) # 2x4 Brick
+         
     return (2, 4, False)
 
 
