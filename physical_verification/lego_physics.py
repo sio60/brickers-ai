@@ -292,7 +292,8 @@ def find_all_connections(bricks: list) -> List[Tuple[str, str]]:
         for brick_b in bricks[i+1:]:
             connected, reason = check_stud_tube_connection_debug(brick_a, brick_b)
             if connected:
-                print(f"[DEBUG] 연결됨: {brick_a.id} <-> {brick_b.id} | {reason}")
+                # 개별 연결 로그 비활성화 (너무 많으면 주석 해제해서 디버그)
+                # print(f"[DEBUG] 연결됨: {brick_a.id} <-> {brick_b.id} | {reason}")
                 connections.append((brick_a.id, brick_b.id))
             else:
                 # 연결되지 않은 이유 디버깅 출력 (필요 시 주석 해제)
