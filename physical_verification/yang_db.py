@@ -15,8 +15,8 @@ def get_client() -> MongoClient:
     global _client
     if _client is None:
         if not config.MONGODB_URI:
-            raise RuntimeError("MONGODB_URI is empty. Check .env")
-        # Set short timeout to fail fast if DB is down/unreachable
+            raise RuntimeError("MONGODB_URI가 비어 있습니다. .env 파일을 확인하세요.")
+        # DB가 다운되었거나 연결할 수 없는 경우 빠르게 실패하도록 짧은 타임아웃 설정
         _client = MongoClient(config.MONGODB_URI, serverSelectionTimeoutMS=2000)
     return _client
 
