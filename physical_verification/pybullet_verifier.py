@@ -21,7 +21,7 @@ except ImportError:
     from part_library import get_part_geometry
 
 class PyBulletVerifier:
-    SCALE = 0.01  # Scale down LDU to manageable range for PyBullet camera
+    SCALE = 0.01  # LDraw 단위를 PyBullet 카메라에서 다루기 쉬운 범위로 축소
     
     def __init__(self, plan: BrickPlan = None, gui: bool = False):
         self.plan = plan
@@ -32,20 +32,20 @@ class PyBulletVerifier:
 
     def _init_simulation(self):
         if self.physicsClient is None:
-            # GUI mode helps debugging, DIRECT is faster
+            # GUI 모드는 디버깅에 도움이 되며, DIRECT 모드는 속도가 더 빠릅니다.
             mode = p.GUI if self.gui else p.DIRECT
             self.physicsClient = p.connect(mode)
             p.setAdditionalSearchPath(pybullet_data.getDataPath())
         
         p.resetSimulation()
-        # Gravity: scaled world means 1 unit = 40mm now. Real gravity is fine.
+        # 중력 설정: 스케일링된 환경이므로 1 유닛은 현재 40mm에 해당함. 실제 중력값 사용.
         p.setGravity(0, 0, -9.8)
         
-        # High quality physics settings
+        # 고품질 물리 설정
         p.setPhysicsEngineParameter(
-            numSolverIterations=100,  # Default is 50, higher = more stable constraints
-            numSubSteps=4,            # More sub-steps per frame
-            erp=0.1,                  # Error Reduction Parameter (keep constraints tight)
+            numSolverIterations=100,  # 기본값 50보다 높게 설정하여 제약 조건의 안정성 확보
+            numSubSteps=4,            # 프레임당 서브스텝 수 증가
+            erp=0.1,                  # 오차 감소 파라미터 (제약 조건을 타이트하게 유지)
             contactERP=0.1
         )
 
@@ -55,43 +55,35 @@ class PyBulletVerifier:
             self.physicsClient = None
 
     def _get_collision_shape(self, part_file: str):
-        """Creates a simplified BOX collision shape for stability."""
-        # Clean filename
+        """안정성을 위해 단순화된 상자(BOX) 모양의 충돌 형상을 생성합니다."""
+        # 파일명 정리
         part_file = part_file.lower().strip()
         
         if part_file in self.cached_shapes:
             return self.cached_shapes[part_file]
 
-        # Get Dimensions from Library
+        # 라이브러리에서 치수 정보 가져오기
         try:
-             # Dynamically import to ensure we have the dict
+             # 필요한 설정값들을 lego_physics에서 가져옴
              from lego_physics import get_brick_studs_count, STUD_SPACING, BRICK_HEIGHT, PLATE_HEIGHT
              studs_x, studs_z, is_plate = get_brick_studs_count(part_file)
              height = PLATE_HEIGHT if is_plate else BRICK_HEIGHT
              
-             # Calculate Half Extents (PyBullet wants half-sizes)
-             # X total = studs_x * 20
-             # Y total = height (24 or 8)
-             # Z total = studs_z * 20
+             # 절반 범위 계산 (PyBullet은 half-extents 요구)
+             # X 전체 = studs_x * 20
+             # Y 전체 = 높이 (24 또는 8)
+             # Z 전체 = studs_z * 20
              
-             # Apply Scale
-             # Shrink by 1% (0.99) to avoid friction rub on vertical neighbors? 
-             # Or just 1.0 since we disable collision on connected?
-             # Let's use 0.99 for safety against horizontal neighbors.
+             # 스케일 적용
+             # 수직 인접 브릭 간의 마찰 간섭을 피하기 위해 1%(0.99) 정도 작게 설정
              
              safe_factor = 0.99
              x_half = (studs_x * STUD_SPACING * self.SCALE * safe_factor) / 2.0
-             y_half = (height * self.SCALE * safe_factor) / 2.0  # LDraw Y is Height
+             y_half = (height * self.SCALE * safe_factor) / 2.0  # LDraw Y는 높이임
              z_half = (studs_z * STUD_SPACING * self.SCALE * safe_factor) / 2.0
              
-             # PyBullet GEOM_BOX takes halfExtents
-             # Note: We swap Y/Z later in placement, but here simpler to just create box
-             # Width(X), Height(Y), Depth(Z) locally
-             # Wait, in LDraw local:
-             # X is Width
-             # Y is Height
-             # Z is Depth
-             # So box extents should be [x, y, z]
+             # PyBullet GEOM_BOX는 halfExtents를 매개변수로 받음
+             # LDraw 로컬 좌표계: X=너비, Y=높이, Z=깊이
              
              colShapeId = p.createCollisionShape(
                  p.GEOM_BOX, 
@@ -108,7 +100,7 @@ class PyBulletVerifier:
             return colShapeId
 
     def load_bricks(self, plan: BrickPlan = None):
-        """Loads bricks into PyBullet as Static Bodies."""
+        """브릭들을 PyBullet에 고정체(Static Bodies)로 로드합니다."""
         if plan:
             self.plan = plan
         
@@ -116,107 +108,106 @@ class PyBulletVerifier:
         
         bricks = self.plan.get_all_bricks()
         
-        # PRE-PASS: Calculate Z positions and find the minimum to offset to ground
-        # In LDraw, Y is down. In PyBullet, Z is up.
-        # LDraw origin for a brick is typically at the TOP surface.
-        # So we need to offset up by brick height so bottom sits on ground.
+        # 사전 처리: Z축 위치를 계산하고 지면에 맞추기 위한 최소 오프셋 찾기
+        # LDraw에서는 Y가 아래 방향입니다. PyBullet에서는 Z가 위 방향입니다.
+        # LDraw에서 브릭의 원점은 보통 상단 표면에 위치합니다.
+        # 따라서 브릭의 아래면이 지면에 닿도록 브릭 높이만큼 위로 오프셋을 주어야 합니다.
         
-        BRICK_HEIGHT_LDU = 24.0  # Standard brick height in LDU
+        BRICK_HEIGHT_LDU = 24.0  # LDU 단위의 표준 브릭 높이
         
-        # Find the lowest point in PyBullet coords (considering brick bottom)
+        # PyBullet 좌표계에서 가장 낮은 점 찾기 (브릭 바닥 기준)
         z_positions = []
         for b in bricks:
             if b.origin is not None:
-                # pb_z = -ldr_y * SCALE, then subtract half height to get bottom
+                # pb_z = -ldr_y * SCALE, 그다음 절반 높이를 빼서 바닥을 구함
                 pb_z = -b.origin[1] * self.SCALE
-                # LDraw origin at top, so bottom is pb_z - height
+                # LDraw 원점은 상단에 있으므로, 바닥은 pb_z - 높이임
                 bottom_z = pb_z - (BRICK_HEIGHT_LDU * self.SCALE)
                 z_positions.append(bottom_z)
         
-        # Offset to lift all bricks so lowest bottom = 0
+        # 가장 낮은 바닥이 0이 되도록 모든 브릭을 들어올리는 오프셋
         if z_positions:
             min_z = min(z_positions)
-            z_offset = -min_z  # How much to add to each Z position
+            z_offset = -min_z  # 각 Z 위치에 더할 값
         else:
             z_offset = 0
             
-        print(f"[PyBullet] Z Offset applied: {z_offset:.4f} (to place model on ground)")
+        print(f"[PyBullet] Z 오프셋 적용됨: {z_offset:.4f} (모델을 지면에 배치하기 위함)")
         
         for b in bricks:
-            # Check if we have original data
+            # 원본 데이터 확인
             if b.part_file is None or b.origin is None or b.matrix is None:
-                print(f"[WARN] Brick {b.id} missing original LDraw data. Skipping PyBullet load.")
+                print(f"[경고] 브릭 {b.id}의 원본 LDraw 데이터가 누락되었습니다. PyBullet 로드를 건너뜁니다.")
                 continue
                 
             shape_id = self._get_collision_shape(b.part_file)
             
-            # Rotation Matrix (3x3) -> Quaternion
-            # b.matrix is 3x3 numpy array
-            # Scipy rotation
+            # 회전 행렬 (3x3) -> 쿼터니언 변환
+            # b.matrix는 3x3 넘파이 배열임
             try:
                 r = R.from_matrix(b.matrix)
-                # PyBullet Order: x, y, z, w
+                # PyBullet 순서: x, y, z, w
                 quat = r.as_quat() 
             except Exception as e:
-                print(f"[ERR] Matrix conversion failed for {b.id}: {e}")
+                print(f"[오류] {b.id}에 대한 행렬 변환 실패: {e}")
                 quat = [0, 0, 0, 1]
 
-            # Create Body with REALISTIC MASS
-            # Calculate actual brick weight based on volume (2x4 brick ≈ 2.3g)
+            # 실제 질량을 사용하여 바디 생성
+            # 부피로부터 실제 브릭 무게 계산 (2x4 브릭 ≈ 2.3g)
             brick_mass = get_brick_mass_kg(b.part_file)
             
-            # Add random color for better visibility
+            # 시각화를 위해 무작위 색상 추가
             import random
             col = [random.random(), random.random(), random.random(), 1.0]
 
-            # Coordinate Transformation: LDraw (X, Y-down, Z) -> PyBullet (X, Z, -Y)
-            # LDraw: Y is vertical (down positive), Z is depth
-            # PyBullet: Z is vertical (up positive), Y is depth
+            # 좌표 변환: LDraw (X, Y-아래, Z) -> PyBullet (X, Z, -Y)
+            # LDraw: Y는 수직(아래가 양수), Z는 깊이
+            # PyBullet: Z는 수직(위가 양수), Y는 깊이
             ldr_x, ldr_y, ldr_z = b.origin[0], b.origin[1], b.origin[2]
             pb_x = ldr_x * self.SCALE
             pb_y = ldr_z * self.SCALE
-            pb_z = -ldr_y * self.SCALE + z_offset  # Apply offset to sit on ground
+            pb_z = -ldr_y * self.SCALE + z_offset  # 지면에 배치하기 위해 오프셋 적용
             
-            # Box Primitive Center Adjustment
-            # LDraw Origin: Top Surface Center (Y=0)
-            # Box Primitive Origin: Geometric Center (Y=Height/2)
+            # 상자 기본도형 중심 조정
+            # LDraw 원점: 상단 표면 중심 (Y=0)
+            # 상자 기본도형 원점: 기하학적 중심 (Y=높이/2)
             # So if we place Box at (0,0,0), its top is at -Height/2, bottom at +Height/2? No.
-            # Box centered at 0 extends from -H/2 to +H/2.
-            # We want Top to be at 0. So Center must be at +H/2.
-            # Wait, LDraw Y-down. 
-            #   Top = Origin Y
-            #   Bottom = Origin Y + Height
-            #   Center = Origin Y + Height/2
+            # 상자가 0에 위치하면 -H/2에서 +H/2까지 뻗습니다.
+            # 우리는 모델 상단이 0에 오길 원하므로, 중심은 +H/2에 있어야 합니다.
+            # LDraw는 Y축이 아래 방향입니다. 
+            #   상단 = 원점 Y
+            #   하단 = 원점 Y + 높이
+            #   중심 = 원점 Y + 높이/2
             
-            # PyBullet Setup:
+            # PyBullet 설정:
             #   pb_x = ldr_x * SCALE
             #   pb_y = ldr_z * SCALE 
-            #   pb_z = -ldr_y * SCALE + z_offset (This puts Origin at correct Z height)
+            #   pb_z = -ldr_y * SCALE + z_offset (원점을 정확한 Z 높이에 둡니다)
             
-            # BUT, p.createMultiBody places the COM/Link Frame.
-            # If our visual/collision shape is a centered box, and we put Body at `pb_z` (which is Top surface in global z),
-            # the box will stick UP half-height and DOWN half-height.
-            # We want the box to extend DOWN from `pb_z`.
-            # So we must shift the Box CENTER down by half-height in PyBullet Z.
-            # PyBullet Z is Up. So "Down" is -Z.
+            # 하지만 p.createMultiBody는 질량중심(COM)이나 링크 프레임을 배치합니다.
+            # 만약 시각/충돌 형상이 중앙 정렬된 상자이고 바디를 pb_z(전역 Z의 상단 표면)에 배치하면,
+            # 상자의 절반은 위로, 절반은 아래로 튀어나오게 됩니다.
+            # 우리는 상자가 pb_z로부터 아래로 뻗어나가길 원하므로,
+            # 상자 중심(Box CENTER)을 PyBullet Z 기준 절반 높이만큼 아래로 내려야 합니다.
+            # PyBullet Z는 위 방향이므로 "아래"는 -Z입니다.
             
             studs_x, studs_z, is_plate = get_brick_studs_count(b.part_file)
             height_val = PLATE_HEIGHT if is_plate else BRICK_HEIGHT
             half_h_scaled = (height_val * self.SCALE) / 2.0
             
-            # Shift Z down by half height so the "Top" of the box aligns with the Body Origin
+            # 상자의 "상단"이 바디 원점과 정렬되도록 Z를 절반 높이만큼 내립니다.
             pb_z -= half_h_scaled
             
-            # Coordinate Transformation: LDraw (X, Y-down, Z) -> PyBullet (X, Z, -Y)
-            # We already computed base (pb_x, pb_y)
-            # Rotation is tricky. 
-            # LDraw Matrix rotates vectors. 
-            # LDraw (1,0,0) -> X, (0,1,0) -> Down, (0,0,1) -> Z
-            # Our Box is defined in Local axes X=width, Y=height, Z=depth.
-            # We need to map Local Y (height) to Global Down (-Z).
-            # And Local X/Z to Global X/Y.
+            # 좌표 변환: LDraw (X, Y-아래, Z) -> PyBullet (X, Z, -Y)
+            # 이미 기본 pb_x, pb_y를 계산했습니다.
+            # 회전은 까다롭습니다. 
+            # LDraw 매트릭스는 벡터를 회전시킵니다.
+            # LDraw (1,0,0) -> X, (0,1,0) -> 아래, (0,0,1) -> Z
+            # 우리의 상자는 로컬 축 X=너비, Y=높이, Z=깊이로 정의됩니다.
+            # 로컬 Y(높이)를 글로벌 아래(-Z)로 매핑해야 합니다.
+            # 그리고 로컬 X/Z를 글로벌 X/Y로 매핑합니다.
             
-            # Just relying on standard coordinate conversion logic:
+            # 표준 좌표 변환 로직에 의존합니다:
             coord_convert = R.from_euler('x', -90, degrees=True)
             try:
                 brick_rotation = R.from_matrix(b.matrix)
@@ -226,7 +217,7 @@ class PyBulletVerifier:
                 quat = coord_convert.as_quat()
             
             body_id = p.createMultiBody(
-                baseMass=brick_mass,  # Realistic mass (2x4 ≈ 0.0023kg)
+                baseMass=brick_mass,  # 실제 질량 (2x4 ≈ 0.0023kg)
                 baseCollisionShapeIndex=shape_id,
                 baseVisualShapeIndex=-1, 
                 basePosition=[pb_x, pb_y, pb_z],
@@ -236,7 +227,7 @@ class PyBulletVerifier:
             
             self.brick_bodies[b.id] = body_id
             
-        # 3. Auto-Camera Setup - ZOOM WAY OUT
+        # 3. 자동 카메라 설정 - 줌 아웃
         if self.gui and bricks:
             all_pos = [b.origin for b in bricks if b.origin is not None]
             if all_pos:
@@ -246,8 +237,8 @@ class PyBulletVerifier:
                 center = (min_b + max_b) / 2.0
                 extent = np.linalg.norm(max_b - min_b)
                 
-                # Distance: zoom out far enough to see everything
-                cam_dist = max(extent * 3.0, 10.0)  # At least 10 units back
+                # 거리: 모든 것을 볼 수 있을 만큼 멀리 줌 아웃함
+                cam_dist = max(extent * 3.0, 10.0)  # 최소 10 유닛 뒤로
                 p.resetDebugVisualizerCamera(
                     cameraDistance=cam_dist, 
                     cameraYaw=45, 
@@ -394,32 +385,31 @@ class PyBulletVerifier:
             body_a = id_to_body[brick_id_a]
             body_b = id_to_body[brick_id_b]
             
-            # Calculate relative transform to preserve initial offset
-            # We want to lock A to B in their CURRENT relative position.
-            # Pivot at Center of A (Local A = [0,0,0])
-            # We need Center of A expressed in Local B.
+            # 초기 오프셋 보존을 위한 상대적 변환(Relative Transform) 계산
+            # 현재의 상대적 위치에서 A와 B를 고정(Lock)함.
+            # A의 중심(로컬 A = [0,0,0])을 기준으로 피벗 설정.
+            # 로컬 B 좌표계에서 본 A의 중심 위치가 필요함.
             
             pos_a, orn_a = p.getBasePositionAndOrientation(body_a)
             pos_b, orn_b = p.getBasePositionAndOrientation(body_b)
             
-            # Transform P_a into B's local frame
-            # Local_Pos = Rotate_Inv(World_Pos - Body_Pos)
+            # P_a를 B의 로컬 프레임으로 변환
+            # 로컬 위치 = 회전_역행렬(전역_위치 - 바디_위치)
             
-            # Inverse of B's rotation
-            inv_orn_b = p.invertTransform([0,0,0], orn_b)[1] # Only care about rotation inverse
+            # B의 역회전 구하기
+            inv_orn_b = p.invertTransform([0,0,0], orn_b)[1] # 오직 역회전 정보만 사용
             
-            # Vector from B to A
+            # B에서 A로 향하는 벡터
             diff_pos = np.array(pos_a) - np.array(pos_b)
             
-            # Rotate into B's frame
-            # p.multiplyTransforms is easy way
-            # But diff_pos is a vector.
-            # Using multiplyTransforms:
+            # B의 프레임으로 회전
+            # multiplyTransforms가 쉬운 방법이지만 diff_pos는 벡터임.
+            # multiplyTransforms 사용 시:
             # T_world_to_b = (pos_b, orn_b)^-1
             # P_a_in_b = T_world_to_b * P_a
             
-            # Use PyBullet helper:
-            # invertTransform returns (invPos, invOrn)
+            # PyBullet 헬퍼 사용:
+            # invertTransform은 (invPos, invOrn)을 반환함
             invPosB, invOrnB = p.invertTransform(pos_b, orn_b)
             localPosA_in_B, localOrnA_in_B = p.multiplyTransforms(invPosB, invOrnB, pos_a, orn_a)
             
@@ -430,13 +420,13 @@ class PyBulletVerifier:
                 childLinkIndex=-1,
                 jointType=p.JOINT_FIXED,
                 jointAxis=[0, 0, 0],
-                parentFramePosition=[0, 0, 0],     # Pivot on A center
-                childFramePosition=localPosA_in_B, # Pivot relative to B
-                parentFrameOrientation=[0,0,0,1],  # Identity (keep A aligned with itself)
-                childFrameOrientation=localOrnA_in_B # A's relative orientation in B
+                parentFramePosition=[0, 0, 0],     # A 중심을 피벗으로 설정
+                childFramePosition=localPosA_in_B, # B에 대한 상대적 피벗 위치
+                parentFrameOrientation=[0,0,0,1],  # 단위 행렬 (A의 정렬 유지)
+                childFrameOrientation=localOrnA_in_B # B 내에서의 A의 상대적 방향
             )
-            # IMPORTANT: Disable collision between connected bricks!
-            # LDraw geometry overlaps (studs inside tubes), causing physics explosions if not disabled.
+            # 중요: 연결된 브릭 간의 충돌 감지 비활성화!
+            # LDraw 지오메트리는 겹치는 부분이 있어(스터드가 튜브 안으로 들어감), 비활성화하지 않으면 물리 엔진이 폭발할 수 있음.
             p.setCollisionFilterPair(body_a, body_b, -1, -1, enableCollision=0)
             constraints_count += 1
         
@@ -452,24 +442,24 @@ class PyBulletVerifier:
                     message=f"Brick {fid} is not connected to any structure"
                 ))
         
-        print(f"[Stability] Created {constraints_count} constraints (Stud-Tube connections).")
+        print(f"[안정성] {constraints_count}개의 제약 조건(스터드-튜브 연결)이 생성되었습니다.")
         
-        # 4. Run Simulation
+        # 4. 시뮬레이션 실행
         steps = int(240 * duration)
-        print(f"[Stability] Simulating {duration}s ({steps} steps)...")
+        print(f"[안정성] {duration}초 간 시뮬레이션 진행 중 ({steps} 스텝)...")
         
         first_failure_id = None
         first_failure_step = -1
         
-        # Real-time monitoring loop
-        frame_skip = 10 if not self.gui else 1 # Check less often in Headless for speed, every frame in GUI? No, 10 is fine.
+        # 실시간 모니터링 루프
+        frame_skip = 10 if not self.gui else 1 # 헤드리스 모드에서는 속도를 위해 10프레임마다 확인, GUI 모드는 매 프레임 확인
         
-        print(f"[Stability] Starting simulation loop for {steps} steps...")
+        print(f"[안정성] {steps} 스텝에 대한 시뮬레이션 루프 시작...")
         
         for step in range(steps):
             p.stepSimulation()
             
-            # Check for failure every few steps
+            # 몇 단계마다 붕괴 여부 확인
             if step % 10 == 0:
                 current_max_drift = 0.0
                 worst_brick = None
@@ -483,42 +473,41 @@ class PyBulletVerifier:
                         current_max_drift = dist
                         worst_brick = bid
                 
-                # Debug Output every 60 steps (0.25s) or if drift > 0.1
+                # 60스텝(0.25초)마다 또는 이동 거리가 0.1 이상일 때 디버그 출력
                 if step % 60 == 0 or current_max_drift > 0.1:
-                    # Only print if relevant
+                    # 유의미한 이동이 있을 때만 출력
                     if current_max_drift > 0.05:
-                        print(f"   [Step {step}] Max Drift: {current_max_drift:.2f} (Brick {worst_brick})")
+                        print(f"   [스텝 {step}] 최대 이동: {current_max_drift:.2f} (브릭 {worst_brick})")
 
-                # Threshold: 0.5 (approx 50 LDU = 2.5 studs displacement)
-                # If a brick moves more than 2.5 studs, it's definitely falling.
+                # 임계값: 0.5 (약 50 LDU = 2.5 스터드 변위)
+                # 브릭이 2.5 스터드 이상 움직였다면 확실히 떨어지는 것으로 간주함
                 fail_threshold_val = 0.5 
                 
                 if current_max_drift > fail_threshold_val and first_failure_id is None:
                         first_failure_id = worst_brick
                         first_failure_step = step
-                        print(f"[Stability] FAILED at step {step} ({step/240:.2f}s): {worst_brick} moved {current_max_drift:.2f}")
-                        # break # Don't break immediately, let it fall a bit more to see aftermath?
-                        # Actually for pipeline speed, break is better.
+                        print(f"[안정성] 실패 감지 - 스텝 {step} ({step/240:.2f}초): {worst_brick}이 {current_max_drift:.2f}만큼 이동함")
+                        # 즉시 중단하여 파이프라인 속도 향상
                         break
             
             if self.gui:
                 import time
                 time.sleep(1./240.)
                 
-        # 5. Check Displacement & Report
-        # (result initialization moved to start)
-        result.is_valid = not bool(first_failure_id) # Valid only if no bricks fell
-        failed_bricks = list() # Use list for compatibility
+        # 5. 변위 확인 및 리포트
+        # (결과 객체 초기화는 시작 부분에서 수행됨)
+        result.is_valid = not bool(first_failure_id) # 브릭이 떨어지지 않은 경우에만 유효
+        failed_bricks = list() # 호환성을 위해 리스트 사용
         max_drift = 0.0
-        drift_threshold = 0.5 # Same threshold for final check
+        drift_threshold = 0.5 # 최종 확인을 위한 동일 임계값
         
-        # Add First Failure Evidence if detected
+        # 최초 실패 증거 추가
         if first_failure_id:
             result.evidence.append(Evidence(
                 type="FIRST_FAILURE",
                 severity="CRITICAL",
                 brick_ids=[first_failure_id],
-                message=f"Structural collapse started at {first_failure_id} (t={first_failure_step/240:.2f}s)"
+                message=f"구조적 붕괴가 {first_failure_id}에서 시작됨 (t={first_failure_step/240:.2f}초)"
             ))
         
         for bid, body_id in brick_bodies.items():
@@ -529,71 +518,66 @@ class PyBulletVerifier:
             
             if dist > drift_threshold:
                 failed_bricks.append(bid)
-                # Only add detail evidence if it's NOT the first failure (to avoid dupes)
+                # 중복 방지를 위해 최초 실패가 아닌 경우에만 상세 증거 추가
                 if bid != first_failure_id:
                     result.evidence.append(Evidence(
                         type="COLLAPSE_AFTERMATH",
                         severity="ERROR",
                         brick_ids=[bid],
-                        message=f"Brick moved {dist:.1f} units after collapse started"
+                        message=f"붕괴 시작 후 브릭이 {dist:.1f} 유닛만큼 이동함"
                     ))
 
         if failed_bricks:
             result.is_valid = False
             result.score = 0
-            print(f"[Stability] FAILED. Max drift: {max_drift:.2f}")
+            print(f"[안정성] 검증 실패. 최대 변위: {max_drift:.2f}")
         else:
-            print(f"[Stability] PASSED. Max drift: {max_drift:.2f}")
+            print(f"[안정성] 검증 통과. 최대 변위: {max_drift:.2f}")
             result.score = 100
         
-        # --- REPORT CARD ---
+        # --- 결과 리포트 (REPORT CARD) ---
         print("\n" + "="*40)
         print(" 🏭 물리 검증 리포트 (Physics Report)")
         print("="*40)
-        print(f" - 🧱 총 브릭 수: {len(brick_bodies)}") # Changed self.brick_bodies to brick_bodies
-        print(f" - 🔗 연결 상태: {constraints_count}개 본드 결합 완료") # Changed self.constraints to constraints_count
+        print(f" - 🧱 총 브릭 수: {len(brick_bodies)}") 
+        print(f" - 🔗 연결 상태: {constraints_count}개 본드 결합 완료") 
         
-        # Re-evaluate floating bricks for report, using ground_threshold from earlier
-        # connected_bricks needs to be derived from constraints
+        # 리포트를 위해 부동 브릭 재평가 (앞서 계산된 ground_threshold 사용)
         connected_brick_ids = set()
         for brick_id_a, brick_id_b in connections:
             connected_brick_ids.add(brick_id_a)
             connected_brick_ids.add(brick_id_b)
 
-        # Assuming 'bricks' is a list of brick IDs from self.plan.get_all_bricks()
-        # And 'brick_bodies' maps brick IDs to PyBullet body IDs
-        # We need brick_plans and brick_ids to get brick positions for floating check
-        # This information is not directly available in this scope.
-        # For now, let's use the 'floating' variable already computed.
-        # If the original 'floating' check was sufficient, we can reuse it.
-        # The original 'floating' check was: floating = find_floating_bricks(bricks)
-        # This 'floating' variable is already available.
+        # 'bricks'는 self.plan.get_all_bricks()로부터 얻은 브릭 객체들의 리스트임
+        # 'brick_bodies'는 브릭 ID를 PyBullet 바디 ID에 매핑함
+        # 부동 브릭 확인을 위해 브릭 위치 정보가 필요하며, 
+        # 현재 스코프에서는 앞서 계산된 'floating' 변수를 재사용함.
         
-        if floating: # Reusing the 'floating' variable from earlier check
-             print(f" - ⚠️ 위험 요소: Floating Brick {len(floating)}개 발견! (주의)")
+        if floating: # 이전 체크에서 계산된 'floating' 변수 재사용
+             print(f" - ⚠️ 위험 요소: 공중 부양 브릭(Floating Brick) {len(floating)}개 발견! (주의)")
         else:
              print(f" - ✨ 구조 상태: 모든 브릭이 잘 연결됨")
              
         print("-" * 40)
         print(f" [시뮬레이션 결과]")
         print(f" - 🕒 진행 시간: {duration:.1f}초")
-        print(f" - 📏 최대 이동(Drift): {max_drift:.2f} (허용치: {drift_threshold})") # Changed threshold to drift_threshold
+        print(f" - 📏 최대 이동(Drift): {max_drift:.2f} (허용치: {drift_threshold})")
         print("-" * 40)
         
-        if result.score == 100: # Changed score to result.score
+        if result.score == 100: 
             print(" ✅ 최종 판정: [합격] (SUCCESS)")
             print("    \"이 모델은 튼튼합니다!\"")
         else:
             print(" ❌ 최종 판정: [불합격] (FAIL)")
-            # Find the culprit
-            culprit = "Unknown"
+            # 원인 분석
+            culprit = "알 수 없음"
             for ev in result.evidence:
                 if ev.type == "FIRST_FAILURE" and ev.brick_ids:
                     culprit = ev.brick_ids[0]
                     break
-            print(f"    💥 최초 붕괴: {culprit}")
+            print(f"    💥 최초 붕괴 시작점: {culprit}")
             
-            # List other victims
+            # 다른 피해 브릭 목록
             victims = []
             for ev in result.evidence:
                 if ev.type == "COLLAPSE_AFTERMATH" and ev.brick_ids:
@@ -605,15 +589,15 @@ class PyBulletVerifier:
             print("    \"구조가 불안정하여 무너졌습니다.\"")
         print("="*40 + "\n")
         
-        # If GUI, keep window open to let user see
+        # GUI 모드인 경우 사용자가 확인할 수 있도록 창을 열어둠
         if self.gui:
-            print("[PyBullet] Simulation finished. Press Enter to close window...")
+            print("[PyBullet] 시뮬레이션 종료. 창을 닫으려면 엔터를 누르세요...")
             input()
 
         self._close_simulation()
         return result
 
-# Simple Test
+# 간단한 테스트용 (Simple Test)
 if __name__ == "__main__":
-    # Mock
+    # 모의(Mock) 실행
     pass
