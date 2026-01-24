@@ -2,31 +2,37 @@
 # LDR 파일을 3D 메쉬로 변환하는 파일
 # 이 파일은 LDR(레고 조립도) 파일을 읽어서 Trimesh Scene 객체로 변환하고,
 # 선택적으로 PyBullet 물리 검증을 수행하여 불안정한 브릭을 빨간색으로 표시합니다.
-# 사용법: python ldr_to_mesh.py <ldr_file_path>
+# 사용법: python ldr_to_mesh.py <ldr_file_path> [--verify]
 # ============================================================================
+
 import trimesh
 import numpy as np
 import os
 import sys
+import argparse
 
-# physical_verification을 경로에 추가
-# config.py 같은 일반 모듈을 위해 프로젝트 루트를 경로에 추가
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.append(project_root)
+# 프로젝트 루트를 경로에 추가 (config.py 등 일반 모듈 용)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
-# physical_verification을 경로에 추가
-sys.path.append(os.path.join(project_root, 'physical_verification'))
+# physical_verification 경로 추가
+pv_path = os.path.join(project_root, 'brickers-ai', 'physical_verification')
+if pv_path not in sys.path:
+    sys.path.append(pv_path)
+
 try:
     import part_library
     from ldr_loader import LdrLoader
     from verifier import PhysicalVerifier
     from pybullet_verifier import PyBulletVerifier
 except ImportError as e:
-    print(f"Error importing physical_verification modules: {e}")
+    print(f"물리 검증 모듈 임포트 오류: {e}")
+    # 경로 디버깅을 위해 현재 sys.path 출력
+    # print(f"현재 sys.path: {sys.path}")
     sys.exit(1)
 
 # LDraw 색상 ID -> RGB (0-255)
-# 참조: glb_to_ldr_v3.py
 LDRAW_COLORS = {
     0:  (33, 33, 33),
     1:  (0, 85, 191),
@@ -129,73 +135,73 @@ LDRAW_COLORS = {
     484: (179, 62, 0),
 }
 
-def ldr_to_mesh(file_path):
+def ldr_to_mesh(file_path, verify=False):
     """
     LDR 파일을 로드하여 단일 Trimesh Scene 객체로 변환합니다.
     'part_library'를 사용하여 형상을 가져옵니다 (DB 캐시 또는 로컬 파일).
+    
+    Args:
+        file_path (str): LDR 파일 경로.
+        verify (bool): True일 경우 PyBullet 물리 검증을 실행하고 불안정한 브릭을 강조 표시합니다.
     """
 
     # 1. 파일 존재 확인
     if not os.path.exists(file_path):
-        print(f"File not found: {file_path}")
+        print(f"파일을 찾을 수 없습니다: {file_path}")
         return None
 
-    print(f"Loading {file_path}...")
+    print(f"로딩 중: {file_path}...")
 
     # ---------------------------------------------------------
-    # [물리 검증] 먼저 검사 실행
+    # [물리 검증] (선택 사항, --verify 플래그 사용 시)
     # ---------------------------------------------------------
-    print("Running Physical Verification...")
-    failed_brick_ids = set()
-    try:
-        loader = LdrLoader()
-        plan = loader.load_from_file(file_path)
+    failed_brick_ids = set() # 실패한 브릭 강조용 집합
+    
+    if verify:
+        print("물리 검증 실행 중 (PyBullet)...")
+        try:
+            loader = LdrLoader()
+            plan = loader.load_from_file(file_path)
 
-        # [레거시 검사] PyBullet 결과와의 혼동을 피하기 위해 현재 억제됨
-        # verifier = PhysicalVerifier(plan)
-        # result = verifier.run_all_checks(mode="ADULT") 
-        # if not result.is_valid: ... 
+            # [PyBullet 검사] 정밀 메쉬 충돌 확인
+            print("PyBullet 정밀 충돌 검사 실행 중 (GUI 모드)...")
+            pb_verifier = PyBulletVerifier(plan, gui=True)
+            # 허용 오차 0 = 최대 민감도 (모든 접촉이 충돌로 간주됨)
+            pb_result = pb_verifier.run_collision_check(tolerance=0) 
 
-        # [PyBullet 검사] 정밀 메쉬 충돌
-        print("Running PyBullet Precision Check (GUI Mode)...")
-        pb_verifier = PyBulletVerifier(plan, gui=True)
-        # 허용 오차 0 = 최대 민감도 (모든 접촉이 충돌)
-        pb_result = pb_verifier.run_collision_check(tolerance=0) 
+            if not pb_result.is_valid:
+                print(f"PyBullet 충돌 감지!")
+                for ev in pb_result.evidence:
+                    print(f"  [PyBullet] {ev.message}")
+                    for bid in ev.brick_ids:
+                        failed_brick_ids.add(bid)
 
-        if not pb_result.is_valid:
-            print(f"PyBullet Collision Detected!")
-            for ev in pb_result.evidence:
-                print(f"  [PyBullet] {ev.message}")
-                for bid in ev.brick_ids:
-                    failed_brick_ids.add(bid)
+            # [PyBullet 검사] 안정성 확인 (중력 시뮬레이션)
+            print("PyBullet 안정성 검증 실행 중 (중력) - 2초 동안...")
+            stab_result = pb_verifier.run_stability_check(duration=2.0)
 
-        # [PyBullet 검사] 안정성 (중력)
-        print("Running PyBullet Stability Check (Gravity) - 10 seconds...")
-        stab_result = pb_verifier.run_stability_check(duration=10.0)
+            if not stab_result.is_valid:
+                 print(f"PyBullet 불안정성 감지!")
+                 for ev in stab_result.evidence:
+                     print(f"  [Stability] {ev.message}")
+                     for bid in ev.brick_ids:
+                         failed_brick_ids.add(bid)
 
-        if not stab_result.is_valid:
-             print(f"PyBullet Instability Detected!")
-             for ev in stab_result.evidence:
-                 print(f"  [Stability] {ev.message}")
-                 for bid in ev.brick_ids:
-                     failed_brick_ids.add(bid)
+            if not failed_brick_ids:
+                print("물리 검증 통과 (모든 브릭 안정적)!")
+            else:
+                 print(f"강조 표시할 실패 브릭 총합: {len(failed_brick_ids)}")
+                 print(f"실패 ID 예시: {list(failed_brick_ids)[:10]}...")
 
-        if not failed_brick_ids:
-            print("Physical Verification PASSED (All Clear)!")
-        else:
-             print(f"Total Failed Bricks to Highlight: {len(failed_brick_ids)}")
-             print(f"Failed IDs: {list(failed_brick_ids)[:10]}...")  # 처음 10개만 표시
-
-    except Exception as e:
-        print(f"Verification Skipped due to error: {e}")
-        import traceback
-        traceback.print_exc()
+        except Exception as e:
+            print(f"오류로 인해 검증이 취소되었습니다: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ---------------------------------------------------------
     # [시각화] 씬 구축
     # ---------------------------------------------------------
     scene = trimesh.Scene()
-
     brick_counter = 0 
 
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -212,7 +218,7 @@ def ldr_to_mesh(file_path):
             if line_type == '1':
                 # 형식: 1 <색상> x y z a b c d e f g h <파일>
                 try:
-                    # 위치 & 회전 파싱
+                    # 위치 및 회전 파싱
                     x, y, z = float(parts[2]), float(parts[3]), float(parts[4])
                     a, b, c = float(parts[5]), float(parts[6]), float(parts[7])
                     d, e, f = float(parts[8]), float(parts[9]), float(parts[10])
@@ -220,27 +226,27 @@ def ldr_to_mesh(file_path):
 
                     part_id = " ".join(parts[14:]) 
 
-                    # 검증을 위한 매핑 ID
+                    # 검증을 위한 매핑용 ID
                     verifier_id = f"{parts[14]}_{brick_counter}"
                     brick_counter += 1
 
                     # ---------------------------------------------------------
-                    # [핵심 로직] 형상 가져오기 (복원됨)
+                    # [핵심 로직] 형상 정보 가져오기
                     # ---------------------------------------------------------
                     triangles = part_library.get_part_geometry(part_id)
 
                     if not triangles:
                         continue
 
-                    # 삼각형을 Trimesh 객체로 변환
+                    # 삼각형 데이터를 Trimesh 객체로 변환
                     vertices = np.array([p for tri in triangles for p in tri])
                     faces = np.arange(len(vertices)).reshape(-1, 3)
                     mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
 
                     # ---------------------------------------------------------
-                    # [변환] LDraw 위치 & 회전 적용
+                    # [변환] LDraw 위치 및 회전 행렬 적용
                     # ---------------------------------------------------------
-                    # 1. LDraw 변환 행렬
+                    # 1. LDraw 4x4 변환 행렬 구성
                     ldraw_matrix = np.eye(4)
                     ldraw_matrix[0, :3] = [a, b, c]
                     ldraw_matrix[1, :3] = [d, e, f]
@@ -249,7 +255,7 @@ def ldr_to_mesh(file_path):
                     ldraw_matrix[1, 3] = y
                     ldraw_matrix[2, 3] = z
 
-                    # 2. 변환 행렬 (LDraw -> 모델)
+                    # 2. 좌표계 변환 행렬 (LDraw -> 모델 뷰어 표준)
                     scale = 1/20.0
                     conv_matrix = np.array([
                         [scale, 0,     0,     0],
@@ -258,47 +264,54 @@ def ldr_to_mesh(file_path):
                         [0,     0,     0,     1]
                     ])
 
-                    # 변환 적용
+                    # 변환 행렬 곱 적용
                     final_matrix = conv_matrix @ ldraw_matrix
                     mesh.apply_transform(final_matrix)
 
-                    # 디버그 매칭
+                    # ---------------------------------------------------------
+                    # [색상 적용] 물리 검증 실패 시 빨간색 표시
+                    # ---------------------------------------------------------
                     if verifier_id in failed_brick_ids:
-                        print(f"!!! MATCH Found: Highlighting Failed Brick: {verifier_id}")
+                        print(f"!!! 일치하는 브릭 발견: 실패한 브릭 강조 - {verifier_id}")
                         final_color = [255, 0, 0, 255] # 빨강
                     else:
-                        rgb_or_rgba = LDRAW_COLORS.get(int(parts[1]), (128, 128, 128)) # 일반 색상
+                        color_id = int(parts[1])
+                        rgb_or_rgba = LDRAW_COLORS.get(color_id, (128, 128, 128)) # 기본 회색
                         if len(rgb_or_rgba) == 4:
                              final_color = list(rgb_or_rgba)
                         else:
                              final_color = [*rgb_or_rgba, 255]
 
                     mesh.visual.face_colors = final_color
-
                     scene.add_geometry(mesh)
 
                 except Exception as e:
-                    print(f"Error parsing line: {line}\n{e}")
+                    print(f"라인 파싱 오류: {line}\n{e}")
                     continue
 
     return scene
 
 if __name__ == "__main__":
-    # 기본 테스트 대상
-    target_ldr = os.path.join("ldr", "car.ldr")
+    parser = argparse.ArgumentParser(description="LDR to Mesh 변환기 및 뷰어")
+    parser.add_argument("file", help="LDR 파일 경로")
+    parser.add_argument("--verify", action="store_true", help="물리 검증을 실행하고 불안정한 브릭을 강조 표시합니다.")
+    
+    args = parser.parse_args()
+    
+    target_ldr = args.file
+    # 절대 경로가 아닌 경우 프로젝트 루트 기준으로 확인 시도
+    if not os.path.exists(target_ldr):
+         target_ldr = os.path.join(project_root, args.file)
 
-    # CLI 인자 오버라이드
-    if len(sys.argv) > 1:
-        target_ldr = sys.argv[1]
+    print(f"대상 LDR: {target_ldr}")
+    print(f"검증 모드: {'켜짐' if args.verify else '꺼짐'}")
 
-    print(f"Target LDR: {target_ldr}")
-
-    # 변환 실행
-    scene = ldr_to_mesh(target_ldr)
+    # 변환 및 씬 생성 실행
+    scene = ldr_to_mesh(target_ldr, verify=args.verify)
 
     if scene:
-        print("Success! Scene loaded.")
-        print("Opening 3D Viewer...")
+        print("성공! 씬을 로드했습니다.")
+        print("3D 뷰어를 여는 중...")
         scene.show()
     else:
-        print("Failed to load scene.")
+        print("씬 로드에 실패했습니다.")

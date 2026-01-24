@@ -10,6 +10,14 @@ import pybullet_data
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from typing import List, Dict, Set, Tuple
+import sys
+import os
+
+# 프로젝트 루트 경로를 path에 추가 (config 모듈 인식을 위해 필수)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 try:
     from .models import Brick, BrickPlan, VerificationResult, Evidence
@@ -27,8 +35,8 @@ class PyBulletVerifier:
         self.plan = plan
         self.gui = gui
         self.physicsClient = None
-        self.brick_bodies = {} # brick_id -> body_id
-        self.cached_shapes = {} # part_file -> collision_shape_id
+        self.brick_bodies = {} # brick_id -> body_id 매핑
+        self.cached_shapes = {} # part_file -> collision_shape_id 캐싱
 
     def _init_simulation(self):
         if self.physicsClient is None:
@@ -93,8 +101,8 @@ class PyBulletVerifier:
              return colShapeId
              
         except Exception as e:
-            print(f"[WARN] Failed to create box for {part_file}: {e}")
-            # Fallback
+            print(f"[WARN] {part_file}의 박스 생성 실패: {e}")
+            # 대체값 (Fallback)
             colShapeId = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.1, 0.1, 0.1])
             self.cached_shapes[part_file] = colShapeId
             return colShapeId
@@ -248,13 +256,13 @@ class PyBulletVerifier:
 
     def run_collision_check(self, tolerance: float = -0.05) -> VerificationResult:
         """
-        Runs collision detection using Global Contact Points (Fast).
+        전역 접촉점(Global Contact Points)을 사용하여 충돌 감지를 실행합니다 (빠름).
         """
         self.load_bricks()
         result = VerificationResult()
         
-        # 1. Global Collision Check (Broadphase + Narrowphase)
-        # performCollisionDetection is implicit in getContactPoints, but good to call explicitly
+        # 1. 전역 충돌 검사 (Broadphase + Narrowphase)
+        # performCollisionDetection은 getContactPoints에 암시되어 있지만 명시적으로 호출하는 것이 좋음
         p.performCollisionDetection()
         points = p.getContactPoints()
         
@@ -266,15 +274,15 @@ class PyBulletVerifier:
                 # pt[1] = bodyUniqueIdA, pt[2] = bodyUniqueIdB
                 b1, b2 = pt[1], pt[2]
                 
-                # Avoid duplicates (A-B and B-A)
+                # 중복 방지 (A-B 와 B-A)
                 if b1 > b2: b1, b2 = b2, b1
                 if (b1, b2) in checked_pairs: continue
                 checked_pairs.add((b1, b2))
                 
-                # pt[8] = contactDistance
+                # pt[8] = contactDistance (접촉 거리)
                 dist = pt[8]
                 
-                # Filter for significant penetration
+                # 심각한 침투(Penetration) 필터링
                 if dist < tolerance:
                      bid1 = [k for k, v in self.brick_bodies.items() if v == b1][0]
                      bid2 = [k for k, v in self.brick_bodies.items() if v == b2][0]
@@ -288,11 +296,11 @@ class PyBulletVerifier:
                          message=msg
                      ))
 
-        # Do NOT close simulation here, keep it open for stability check if needed
+        # 시뮬레이션을 여기서 닫지 않음. 안정성 검사가 필요할 수 있으므로 열어둠
         # self._close_simulation() 
         
         if not collisions:
-            print("PyBullet Verification Passed (No Collisions)")
+            print("PyBullet 검증 통과 (충돌 없음)")
             result.score = 100
         else:
             result.is_valid = False
@@ -302,77 +310,77 @@ class PyBulletVerifier:
 
     def run_stability_check(self, duration: float = 2.0) -> VerificationResult:
         """
-        Runs gravity simulation to check for stability.
-        Uses Contact Points to auto-generate constraints (Glue).
+        중력 시뮬레이션을 실행하여 안정성을 확인합니다.
+        접촉점(Contact Points)을 사용하여 제약 조건(Glue)을 자동 생성합니다.
         """
-        print("Initializing Stability Simulation...")
-        result = VerificationResult()  # Initialize result at the start
+        print("안정성 시뮬레이션 초기화 중...")
+        result = VerificationResult()  # 시작 시 결과 초기화
         
-        # Ensure simulation is valid. If run_collision_check was called, it's open.
-        # If not, init it.
+        # 시뮬레이션이 유효한지 확인. run_collision_check가 호출되었다면 열려 있음.
+        # 아니라면 초기화.
         if self.physicsClient is None:
             self._init_simulation()
             self.load_bricks()
              
-        # Reset gravity for stability (scaled world, so use real gravity)
+        # 안정성을 위해 중력 리셋 (축소된 세계이므로 실제 중력 사용)
         p.setGravity(0, 0, -9.8) 
         
-        # 1. Ground Plane (if not exists)
-        # Check if plane is loaded? Just load it, it's fine.
+        # 1. 지면(Ground Plane) (없으면 로드)
+        # 이미 로드되었는지 확인? 그냥 로드해도 무방함.
         try:
             planeId = p.loadURDF("plane.urdf")
         except:
-             pass # Maybe already loaded or file missing. Plane is builtin usually.
+             pass # 이미 로드되었거나 파일이 없을 수 있음. Plane은 보통 내장됨.
 
-        # 2. Dynamic Mass & Constraints
-        # We need to switch bodies to dynamic? They were created with mass=0.
-        # PyBullet: changeDynamics can change mass!
+        # 2. 동적 질량 & 제약 조건 (Dynamic Mass & Constraints)
+        # 바디를 동적으로 전환해야 함? mass=0으로 생성되었었음.
+        # PyBullet: changeDynamics로 질량 변경 가능!
         
         brick_bodies = self.brick_bodies
         brick_ids = list(brick_bodies.keys())
         original_positions = {}
         
-        # Determine ground threshold (lowest Z)
-        # We already offset so lowest is 0, but let's be safe.
+        # 지면 임계값 결정 (가장 낮은 Z)
+        # 이미 오프셋을 적용해서 최저점이 0이지만, 안전하게 다시 확인.
         all_z = []
         for body_id in brick_bodies.values():
              pos, _ = p.getBasePositionAndOrientation(body_id)
              all_z.append(pos[2])
         
         min_z = min(all_z) if all_z else 0.0
-        ground_threshold = min_z + 0.05 # Within 5cm (scaled) or 0.2 studs
+        ground_threshold = min_z + 0.05 # 5cm(축소) 또는 0.2스터드 이내
         
         for bid, body_id in brick_bodies.items():
             pos, orn = p.getBasePositionAndOrientation(body_id)
             original_positions[body_id] = (pos, orn)
             
-            # DYNAMIC BODIES STABILIZATION
-            # All bricks participate in physics (no infinite mass anchoring)
-            # This allows checking for global instability (toppling/tipping)
-            # High friction prevents sliding, but allows rolling/tipping.
+            # 동적 바디 안정화 (DYNAMIC BODIES STABILIZATION)
+            # 모든 브릭이 물리 시뮬레이션에 참여 (무한 질량 앵커(Anchor) 없음)
+            # 이를 통해 전체적인 불안정성(넘어짐/기울어짐)을 확인할 수 있음
+            # 높은 마찰력은 미끄러짐을 방지하지만 구르거나 넘어지는 것은 허용함.
             p.changeDynamics(
                 body_id, 
                 -1, 
-                mass=0.1,  # All bricks have mass
-                lateralFriction=0.9,     # High friction to grip ground
+                mass=0.1,  # 모든 브릭에 질량 부여
+                lateralFriction=0.9,     # 지면 접지력을 위한 높은 마찰계수
                 rollingFriction=0.1,
                 spinningFriction=0.1,
-                restitution=0.0,         # No bouncing
-                linearDamping=0.5,       # Air resistance equivalent
+                restitution=0.0,         # 튕김(Bouncing) 없음
+                linearDamping=0.5,       # 공기 저항 등가
                 angularDamping=0.5
             )
 
-        # 3. Create Constraints using STUD-TUBE CONNECTION LOGIC
-        # Only connect bricks that are properly connected via stud-tube alignment
+        # 3. 스터드-튜브(STUD-TUBE) 연결 로직을 이용한 제약 조건 생성
+        # 스터드-튜브 정렬을 통해 올바르게 연결된 브릭들만 연결
         constraints_count = 0
         
-        # Get all bricks and find proper connections
+        # 모든 브릭을 가져와 적절한 연결 찾기
         bricks = self.plan.get_all_bricks()
-        print(f"[Stability] Checking {len(bricks)} bricks for STUD-TUBE connections...")
+        print(f"[Stability] {len(bricks)}개 브릭에 대한 STUD-TUBE 연결 확인 중...")
         
-        # Use lego_physics module to find proper connections
+        # lego_physics 모듈을 사용하여 적절한 연결 찾기
         connections = find_all_connections(bricks)
-        print(f"[Stability] Found {len(connections)} stud-tube connections.")
+        print(f"[Stability] {len(connections)}개의 스터드-튜브 연결 발견.")
         
         # Create id -> body_id mapping
         id_to_body = brick_bodies
@@ -430,10 +438,10 @@ class PyBulletVerifier:
             p.setCollisionFilterPair(body_a, body_b, -1, -1, enableCollision=0)
             constraints_count += 1
         
-        # Check for floating bricks (not connected to anything and not on ground)
+        # 부동(Floating) 브릭 확인 (아무것에도 연결되지 않고 지면에도 닿지 않음)
         floating = find_floating_bricks(bricks)
         if floating:
-            print(f"[Stability] WARNING: {len(floating)} floating bricks detected: {floating[:5]}...")
+            print(f"[Stability] 경고: {len(floating)}개의 부동(Floating) 브릭 감지됨: {floating[:5]}...")
             for fid in floating:
                 result.evidence.append(Evidence(
                     type="FLOATING_BRICK",
@@ -488,7 +496,10 @@ class PyBulletVerifier:
                         first_failure_step = step
                         print(f"[안정성] 실패 감지 - 스텝 {step} ({step/240:.2f}초): {worst_brick}이 {current_max_drift:.2f}만큼 이동함")
                         # 즉시 중단하여 파이프라인 속도 향상
-                        break
+                        # GUI 모드에서는 붕괴 과정을 끝까지 보여주기 위해 계속 진행
+                        # 자동화(CI) 모드에서는 빠른 결과를 위해 즉시 중단
+                        if not self.gui:
+                            break
             
             if self.gui:
                 import time
@@ -529,7 +540,7 @@ class PyBulletVerifier:
 
         if failed_bricks:
             result.is_valid = False
-            result.score = 0
+            # result.score = 0  # Logic from either branch
             print(f"[안정성] 검증 실패. 최대 변위: {max_drift:.2f}")
         else:
             print(f"[안정성] 검증 통과. 최대 변위: {max_drift:.2f}")
@@ -542,17 +553,7 @@ class PyBulletVerifier:
         print(f" - 🧱 총 브릭 수: {len(brick_bodies)}") 
         print(f" - 🔗 연결 상태: {constraints_count}개 본드 결합 완료") 
         
-        # 리포트를 위해 부동 브릭 재평가 (앞서 계산된 ground_threshold 사용)
-        connected_brick_ids = set()
-        for brick_id_a, brick_id_b in connections:
-            connected_brick_ids.add(brick_id_a)
-            connected_brick_ids.add(brick_id_b)
-
-        # 'bricks'는 self.plan.get_all_bricks()로부터 얻은 브릭 객체들의 리스트임
-        # 'brick_bodies'는 브릭 ID를 PyBullet 바디 ID에 매핑함
-        # 부동 브릭 확인을 위해 브릭 위치 정보가 필요하며, 
-        # 현재 스코프에서는 앞서 계산된 'floating' 변수를 재사용함.
-        
+        # 리포트를 위해 부동 브릭 재평가
         if floating: # 이전 체크에서 계산된 'floating' 변수 재사용
              print(f" - ⚠️ 위험 요소: 공중 부양 브릭(Floating Brick) {len(floating)}개 발견! (주의)")
         else:
@@ -597,7 +598,66 @@ class PyBulletVerifier:
         self._close_simulation()
         return result
 
-# 간단한 테스트용 (Simple Test)
+# ============================================================================
+# 실행 스크립트 (CLI)
+# ============================================================================
+def main():
+    import argparse
+    import os
+    
+    # Imports
+    try:
+        from physical_verification.ldr_loader import LdrLoader
+    except ImportError:
+         from ldr_loader import LdrLoader
+
+    parser = argparse.ArgumentParser(description="PyBullet Physical Verification Runner")
+    parser.add_argument("file", help="Path to the LDR file to verify")
+    parser.add_argument("--gui", action="store_true", help="Enable GUI visualization")
+    parser.add_argument("--time", type=float, default=5.0, help="Simulation duration in seconds (default: 60.0)")
+    args = parser.parse_args()
+
+    target_file = args.file
+    if not os.path.exists(target_file):
+        # 상대 경로로 시도 (프로젝트 루트 기준)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        target_file = os.path.join(project_root, args.file)
+        if not os.path.exists(target_file):
+            print(f"❌ 에러: 파일을 찾을 수 없습니다: {args.file}")
+            return
+
+    print(f"🚀 PyBullet 물리 검증 시작: {target_file}")
+    
+    # 1. LDR 로드
+    loader = LdrLoader()
+    try:
+        plan = loader.load_from_file(target_file)
+        print(f"✅ 모델 로드 완료: 브릭 {len(plan.bricks)}개")
+    except Exception as e:
+        print(f"❌ 로드 실패: {e}")
+        return
+
+    # 2. PyBullet Verifier 초기화
+    verifier = PyBulletVerifier(plan, gui=args.gui)
+    
+    # 3. 충돌 검사 (Collision Check)
+    print("\n[1/2] 정밀 충돌 검사 실행 중...")
+    col_result = verifier.run_collision_check()
+    if not col_result.is_valid:
+        print("⚠️ 충돌 감지됨!")
+
+    # 4. 안정성 검사 (Stability Check)
+    print(f"\n[2/2] 구조적 안정성(중력) 시뮬레이션 ({args.time}초)...")
+    stab_result = verifier.run_stability_check(duration=args.time)
+    
+    print("\n" + "="*40)
+    if col_result.is_valid and stab_result.is_valid:
+        print("🎉 최종 결과: [PASS] 모든 검증 통과!")
+    else:
+        print("🚫 최종 결과: [FAIL] 검증 실패")
+        if not col_result.is_valid: print(" - 사유: 부품 간 충돌 발생")
+        if not stab_result.is_valid: print(" - 사유: 구조적 붕괴 발생")
+    print("="*40)
+
 if __name__ == "__main__":
-    # 모의(Mock) 실행
-    pass
+    main()

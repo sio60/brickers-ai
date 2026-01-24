@@ -19,6 +19,7 @@ for p in (_THIS_DIR, _PARENT_DIR):
         sys.path.insert(0, sp)
 
 from pylego3d.optimizer import optimize_bricks
+import pylego3d.optimizer as optmod
 from pylego3d.write_ldr import write_ldr
 
 # -----------------------------------------------------------------------------
@@ -132,38 +133,9 @@ def sample_voxel_colors(mesh: trimesh.Trimesh, points: np.ndarray) -> List[int]:
     target_mesh = mesh.copy()
     if hasattr(target_mesh.visual, "to_color"):
         target_mesh.visual = target_mesh.visual.to_color()
-
-    # points에 대해 가장 가까운 삼각형 id 얻기
     _, _, triangle_ids = target_mesh.nearest.on_surface(points)
-
-    fc = np.asarray(getattr(target_mesh.visual, "face_colors", None))
-    # fc가 없거나 이상하면 solid로 대체
-    if fc is None or fc.size == 0:
-        return [4] * len(points)
-
-    # ✅ 케이스 A: 단일 RGBA (shape=(4,))
-    if fc.ndim == 1 and fc.shape[0] >= 3:
-        rgb = fc[:3]
-        cid = rgb_to_ldraw_id(np.asarray(rgb))
-        return [cid] * len(points)
-
-    # ✅ 케이스 B: RGBA 1개만 있는 (shape=(1,4))
-    if fc.ndim == 2 and fc.shape[0] == 1 and fc.shape[1] >= 3:
-        rgb = fc[0, :3]
-        cid = rgb_to_ldraw_id(np.asarray(rgb))
-        return [cid] * len(points)
-
-    # ✅ 케이스 C: 정상 face별 색 (shape=(n_faces,4))
-    if fc.ndim == 2 and fc.shape[0] >= 1 and fc.shape[1] >= 3:
-        tri = np.asarray(triangle_ids, dtype=np.int64)
-        # 혹시 -1 같은 값이 나오거나 범위 벗어나면 클립
-        tri = np.clip(tri, 0, fc.shape[0] - 1)
-        face_colors = fc[tri]
-        return [rgb_to_ldraw_id(rgba[:3]) for rgba in face_colors]
-
-    # 그 외 이상 케이스는 solid로
-    return [4] * len(points)
-
+    face_colors = target_mesh.visual.face_colors[triangle_ids]
+    return [rgb_to_ldraw_id(rgba[:3]) for rgba in face_colors]
 
 # -----------------------------------------------------------------------------
 # 4. Y 인덱스 반전
@@ -177,7 +149,7 @@ def invert_y_idx(idx: np.ndarray) -> Tuple[np.ndarray, int]:
     return out, y_max
 
 # -----------------------------------------------------------------------------
-# 5. [핵심 물리 보정] 심지 박기
+# 5. [핵심 물리 보정] 심지 박기 (Embed Inwards)
 # -----------------------------------------------------------------------------
 def embed_floating_parts(vox: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not vox:
@@ -246,7 +218,7 @@ def embed_floating_parts(vox: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in new_colors.items()]
 
 # -----------------------------------------------------------------------------
-# 6. STEP 레이어 재작성
+# 6. STEP을 "레이어 단위"로 재작성
 # -----------------------------------------------------------------------------
 def rewrite_steps_by_layer(in_path: str, out_path: str, mode: str) -> None:
     with open(in_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -338,20 +310,12 @@ def try_build(
 
     if use_mesh_color:
         search_idx = current_idx.copy()
-    if invert_y:
-        search_idx[:, 1] = y_max_val - search_idx[:, 1]
-    search_pts = origin + (search_idx.astype(np.float32) + 0.5)
-
-    try:
+        if invert_y:
+            search_idx[:, 1] = y_max_val - search_idx[:, 1]
+        search_pts = origin + (search_idx.astype(np.float32) + 0.5)
         current_colors = sample_voxel_colors(mesh, search_pts)
-        # 혹시 길이가 안 맞으면 폴백
-        if len(current_colors) != len(current_idx):
-            raise RuntimeError("color length mismatch")
-    except Exception:
-        current_colors = [solid_color] * len(current_idx)
     else:
         current_colors = [solid_color] * len(current_idx)
-
 
     if len(current_idx) == 0:
         return [], target
@@ -492,7 +456,7 @@ def build_under_budget(
     return best
 
 # -----------------------------------------------------------------------------
-# 8. API 엔트리
+# 8. API 엔트리 (호환용 키워드 방탄)
 # -----------------------------------------------------------------------------
 def convert_glb_to_ldr(
     glb_path: str,
@@ -516,10 +480,7 @@ def convert_glb_to_ldr(
     smart_fix: bool = True,
     step_order: str = "bottomup",
 
-    # ✅ 새로 추가: 타이틀 지정(기존 호출 안 깨짐)
-    title: Optional[str] = None,
-
-    # ✅ 넘어와도 안 죽게 받기만
+    # ✅ 넘어와도 안 죽게 받기만(현재 로직은 fill 안 씀)
     solid: bool = False,
     fill: bool = False,
     extend_catalog: bool = True,
@@ -533,7 +494,7 @@ def convert_glb_to_ldr(
     min_embed: int = 2,
     erosion_iters: int = 1,
     fast_search: bool = True,
-    **kwargs: Any,
+    **kwargs: Any,  # ✅ 마지막 방탄
 ) -> Dict[str, Any]:
     _ = (
         solid, fill, extend_catalog, max_len,
@@ -551,7 +512,7 @@ def convert_glb_to_ldr(
         shrink=float(shrink),
         search_iters=int(search_iters),
         flipx180=bool(flipx180), flipy180=bool(flipy180), flipz180=bool(flipz180),
-        fill=False,  # embedded 모드: 내부 채움 X
+        fill=False,  # ✅ 알고리즘 그대로(embedded 모드: 내부 채움 X)
         kind=str(kind),
         plates_per_voxel=int(plates_per_voxel),
         interlock=bool(interlock),
@@ -570,7 +531,7 @@ def convert_glb_to_ldr(
         parts,
         center=True,
         step_order="none",
-        title=(title or f"{os.path.basename(glb_path)} (tgt={final_target})"),
+        title=f"{os.path.basename(glb_path)} (tgt={final_target})",
         author="glb_to_ldr_embedded",
     )
     rewrite_steps_by_layer(tmp, out_ldr_path, step_order)
@@ -589,7 +550,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("glb", help="input .glb path")
     ap.add_argument("--out", default="out/result.ldr")
-    ap.add_argument("--title", default=None)
     ap.add_argument("--target", type=int, default=60)
     ap.add_argument("--min-target", type=int, default=5)
     ap.add_argument("--budget", type=int, default=100)
@@ -615,7 +575,6 @@ def main():
     result = convert_glb_to_ldr(
         args.glb,
         args.out,
-        title=args.title,
         budget=args.budget,
         target=args.target,
         min_target=args.min_target,
@@ -633,6 +592,8 @@ def main():
         invert_y=args.invert_y,
         smart_fix=args.smart_fix,
         step_order=args.step_order,
+
+        # ✅ CLI에서 넘어오면 받아만 둠(무시)
         solid=bool(args.solid),
     )
 
