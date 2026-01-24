@@ -583,11 +583,15 @@ async def process_all(
             # 프론트엔드가 바로 쓸 수 있는 포맷
             ldr_data_uri = f"data:text/plain;base64,{b64_str}"
         
+        # ✅ URL도 함께 반환 (백엔드 저장용)
+        ldr_url = _to_generated_url(out_ldr, out_dir=out_dir_brick)
+        
         return {
             "ok": True,
             "reqId": req_id,
             "prompt": prompt,
-            "ldrData": ldr_data_uri,  # ldrUrl 대신 ldrData 리턴
+            "ldrData": ldr_data_uri,
+            "ldrUrl": ldr_url, # 백엔드가 DB에 저장할 URL
             "parts": result.get("parts"),
             "finalTarget": result.get("final_target")
         }
