@@ -6,7 +6,7 @@ import uuid
 import traceback
 from pathlib import Path
 from typing import Dict, Optional, Any
-
+from fastapi.responses import JSONResponse
 import anyio
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
@@ -496,3 +496,107 @@ async def brickify(
         parts=int(result.get("parts", 0)),
         finalTarget=int(result.get("final_target", 0)),
     )
+@router.post("/process-all")
+async def process_all(
+    file: UploadFile = File(...),
+    age: str = Form("6-7"),
+    budget: int = Form(100)
+):
+    # 1. 파일 검증
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="image only")
+
+    req_id = uuid.uuid4().hex
+    img_bytes = await file.read()
+    
+    print(f"[{req_id}] 통합 프로세스 시작 (Age: {age}, Budget: {budget})")
+
+    try:
+        # Step 1: 보정
+        corrected_bytes = await render_one_image(img_bytes, file.content_type or "image/png")
+        
+        # Step 2: 프롬프트 생성
+        prompt = await anyio.to_thread.run_sync(
+            build_lego_prompt_sync, corrected_bytes, "image/png"
+        )
+        
+        # Step 3: Tripo 3D 생성
+        TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
+        if not TRIPO_API_KEY:
+            raise HTTPException(status_code=500, detail="TRIPO Key missing")
+            
+        out_dir_3d = GENERATED_DIR / f"tripo_{req_id}"
+        out_dir_3d.mkdir(parents=True, exist_ok=True)
+        
+        glb_path = None
+        async with TripoClient(api_key=TRIPO_API_KEY) as client:
+            task_id = await client.text_to_model(prompt=prompt, negative_prompt="low quality, text")
+            task = await client.wait_for_task(task_id)
+            if task.status != TaskStatus.SUCCESS:
+                 raise RuntimeError("Tripo task failed")
+            downloaded = await client.download_task_models(task, str(out_dir_3d))
+            
+            if downloaded.get("model"):
+                p = Path(downloaded["model"])
+                if p.exists(): glb_path = p
+        
+        if not glb_path:
+            glbs = list(out_dir_3d.glob("*.glb"))
+            if glbs: glb_path = glbs[0]
+            
+        if not glb_path:
+            raise RuntimeError("GLB generation failed")
+
+        # Step 4: Brickify (LDR 변환)
+        out_dir_brick = GENERATED_DIR / f"brickify_{req_id}"
+        out_dir_brick.mkdir(parents=True, exist_ok=True)
+        out_ldr = out_dir_brick / "result.ldr"
+        
+        global _CONVERT_FN
+        if _CONVERT_FN is None:
+            _CONVERT_FN = _load_engine_convert()
+            
+        start_target = 60 if int(budget) > 80 else 30
+
+        result = await anyio.to_thread.run_sync(
+            lambda: _CONVERT_FN(
+                str(glb_path),
+                str(out_ldr),
+                budget=int(budget),
+                target=int(start_target),
+                min_target=5,
+                shrink=0.85,
+                search_iters=6,
+                kind="brick",
+                plates_per_voxel=3,
+                interlock=True,
+                smart_fix=True
+            )
+        )
+        
+        # ✅ [핵심 변경] 파일을 URL이 아니라 Base64 문자열로 읽어서 리턴
+        ldr_data_uri = None
+        if out_ldr.exists():
+            ldr_bytes = out_ldr.read_bytes()
+            # 바이트 -> Base64 문자열 변환
+            b64_str = base64.b64encode(ldr_bytes).decode("utf-8")
+            # 프론트엔드가 바로 쓸 수 있는 포맷
+            ldr_data_uri = f"data:text/plain;base64,{b64_str}"
+        
+        # ✅ URL도 함께 반환 (백엔드 저장용)
+        ldr_url = _to_generated_url(out_ldr, out_dir=out_dir_brick)
+        
+        return {
+            "ok": True,
+            "reqId": req_id,
+            "prompt": prompt,
+            "ldrData": ldr_data_uri,
+            "ldrUrl": ldr_url, # 백엔드가 DB에 저장할 URL
+            "parts": result.get("parts"),
+            "finalTarget": result.get("final_target")
+        }
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[{req_id}] ERROR: {tb}")
+        raise HTTPException(status_code=500, detail=str(e))
