@@ -6,7 +6,7 @@ import uuid
 import traceback
 from pathlib import Path
 from typing import Dict, Optional, Any
-from fastapi.responses import JSONResponse
+
 import anyio
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
@@ -18,9 +18,6 @@ from tripo3d.models import TaskStatus
 
 from service.nano_banana import render_one_image
 
-# -----------------------------
-# Router
-# -----------------------------
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
 
@@ -82,6 +79,10 @@ STATIC_PREFIX = os.environ.get("GENERATED_URL_PREFIX", "/api/generated").rstrip(
 
 
 def _to_generated_url(p: Path, out_dir: Path) -> str:
+    """
+    GENERATED_DIR 아래 파일이면: /api/generated/... 로 변환
+    GENERATED_DIR 밖 파일이면: out_dir로 복사 후 /api/generated/... 로 변환
+    """
     p = Path(p).resolve()
     gen = GENERATED_DIR.resolve()
 
@@ -116,6 +117,14 @@ async def _download_http_to_file(url: str, dst: Path) -> Path:
         r.raise_for_status()
         dst.write_bytes(r.content)
     return dst
+
+
+def _parse_bool(v: str | bool | None, default: bool = False) -> bool:
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    return v.strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 # -----------------------------
@@ -171,7 +180,7 @@ def build_lego_prompt_sync(image_bytes: bytes, mime: str) -> str:
                 ],
             }
         ],
-        max_output_tokens=220,
+        max_output_tokens=10000,
     )
 
     prompt = _extract_text(resp)
@@ -181,182 +190,14 @@ def build_lego_prompt_sync(image_bytes: bytes, mime: str) -> str:
 
 
 # -----------------------------
-# 1) 2D 이미지 생성
+# Brickify helpers
 # -----------------------------
-@router.post("/render-image")
-async def render_image(file: UploadFile = File(...)):
-    if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="image only")
-
-    try:
-        img_bytes = await file.read()
-        out_bytes = await render_one_image(img_bytes, file.content_type or "image/png")
-        return Response(content=out_bytes, media_type="image/png")
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception:
-        tb = traceback.format_exc()
-        print("[kids.render_image] ERROR\n", tb)
-        raise HTTPException(status_code=500, detail="Internal Server Error during generation")
-
-
-# -----------------------------
-# 2) 프롬프트만 생성
-# -----------------------------
-class PromptResp(BaseModel):
-    prompt: str
-
-
-@router.post("/generate-prompt", response_model=PromptResp)
-async def generate_prompt(file: UploadFile = File(...)):
-    if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="image only")
-
-    try:
-        img_bytes = await file.read()
-        prompt = await anyio.to_thread.run_sync(
-            build_lego_prompt_sync, img_bytes, file.content_type or "image/png"
-        )
-        return {"prompt": prompt}
-    except Exception as e:
-        tb = traceback.format_exc()
-        print("[kids.generate_prompt] ERROR\n", tb)
-        if DEBUG:
-            raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail="Internal Server Error during prompt generation")
-
-
-# -----------------------------
-# 3) 이미지 -> prompt -> Tripo -> 다운로드 -> URL 반환
-# -----------------------------
-class Generate3DResp(BaseModel):
-    prompt: str
-    taskId: str
-    modelUrl: str
-    files: Dict[str, str]
-
-
-@router.post("/generate-3d", response_model=Generate3DResp)
-async def generate_3d(
-    file: UploadFile = File(...),
-    referenceLdr: str | None = Form(default=None),
-    # ✅ 프론트가 prompt를 보내니까 지원해줌(있으면 그대로 쓰고 없으면 생성)
-    prompt: str | None = Form(default=None),
-):
-    if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="image only")
-
-    TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
-    if not TRIPO_API_KEY:
-        raise HTTPException(status_code=500, detail="TRIPO_API_KEY is not set")
-
-    req_id = uuid.uuid4().hex
-    ext = _mime_to_ext(file.content_type or "image/png")
-
-    raw_path = GENERATED_DIR / f"{req_id}_raw{ext}"
-    out_dir = GENERATED_DIR / f"tripo_{req_id}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        img_bytes = await file.read()
-        raw_path.write_bytes(img_bytes)
-
-        # (1) prompt: 프론트가 준 prompt가 있으면 그거 사용
-        if prompt and prompt.strip():
-            prompt = prompt.strip()
-        else:
-            prompt = await anyio.to_thread.run_sync(
-                build_lego_prompt_sync, img_bytes, file.content_type or "image/png"
-            )
-
-        # (2) Tripo 3D
-        negative_prompt = (
-            "low quality, blurry, noisy, over-detailed, high poly, "
-            "thin parts, tiny features, text, logos, patterns, textures"
-        )
-
-        async with TripoClient(api_key=TRIPO_API_KEY) as client:
-            task_id = await client.text_to_model(prompt=prompt, negative_prompt=negative_prompt)
-            task = await client.wait_for_task(task_id, verbose=DEBUG)
-            if task.status != TaskStatus.SUCCESS:
-                raise RuntimeError(f"Tripo task failed: status={task.status}")
-            downloaded = await client.download_task_models(task, str(out_dir))
-
-        # URL/None 대비
-        fixed_downloaded: Dict[str, str] = {}
-        for model_type, path_or_url in (downloaded or {}).items():
-            if not path_or_url:
-                continue
-            s = str(path_or_url)
-            if s.startswith(("http://", "https://")):
-                ext_guess = ".glb" if ".glb" in s.lower() else ".bin"
-                dst = out_dir / f"{model_type}{ext_guess}"
-                await _download_http_to_file(s, dst)
-                fixed_downloaded[model_type] = str(dst)
-            else:
-                fixed_downloaded[model_type] = s
-
-        # 존재 체크
-        missing = []
-        for k, v in fixed_downloaded.items():
-            pv = Path(v)
-            if not pv.exists():
-                missing.append((k, v, "NOT_EXISTS"))
-            elif pv.stat().st_size == 0:
-                missing.append((k, v, "ZERO_SIZE"))
-        if missing:
-            raise RuntimeError(f"Downloaded files missing: {missing}")
-
-        files_url: Dict[str, str] = {}
-        for model_type, path_str in fixed_downloaded.items():
-            url = _to_generated_url(Path(path_str), out_dir=out_dir)
-            files_url[model_type] = url
-
-        if not files_url:
-            glbs = [p for p in out_dir.rglob("*.glb") if p.is_file()]
-            if glbs:
-                files_url["glb"] = _to_generated_url(glbs[0], out_dir=out_dir)
-
-        if not files_url:
-            raise RuntimeError("No downloadable model files found in out_dir")
-
-        model_url = _pick_model_url(files_url)
-
-        return {
-            "prompt": prompt,
-            "taskId": str(task_id),
-            "modelUrl": model_url,
-            "files": files_url,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[kids.generate_3d] ERROR req_id={req_id}\n{tb}")
-        _write_error_log(out_dir, tb)
-
-        if DEBUG:
-            raise HTTPException(status_code=500, detail={"reqId": req_id, "error": str(e)})
-
-        raise HTTPException(status_code=500, detail="Internal Server Error during 3D generation")
-
-
-# -----------------------------
-# ✅ 4) GLB -> LDR (brickify) 추가
-# -----------------------------
-class BrickifyResp(BaseModel):
-    ldrUrl: str
-    parts: int
-    finalTarget: int
-
-
 AGE_TO_BUDGET = {"4-5": 20, "6-7": 60, "8-10": 120}
 
 
 def _sanitize_glb_url(u: str) -> str:
-    # 프론트 버그로 /api/api/generated 같은게 오면 복구
     u = (u or "").strip()
+    # 프론트 버그로 /api/api/generated 같은게 오면 복구
     if u.startswith("/api/api/"):
         u = u.replace("/api/api/", "/api/", 1)
     return u
@@ -378,8 +219,7 @@ def _local_generated_path_from_url(u: str) -> Optional[Path]:
 
 def _load_engine_convert():
     """
-    brick-engine 폴더명이 하이픈이라 import가 안 되니까,
-    파일경로로 모듈 로드.
+    brick-engine 폴더명이 하이픈이라 import가 안 되니까 파일경로로 모듈 로드.
     """
     import importlib.util
 
@@ -402,54 +242,196 @@ def _load_engine_convert():
 _CONVERT_FN = None
 
 
+def _budget_to_start_target(eff_budget: int) -> int:
+    if eff_budget <= 25:
+        return 24
+    if eff_budget <= 70:
+        return 45
+    return 60
 
-@router.post("/brickify", response_model=BrickifyResp)
-async def brickify(
-    glbUrl: str = Form(...),
-    age: str | None = Form(default=None),
+
+def _find_glb_in_dir(out_dir: Path) -> Optional[Path]:
+    glbs = [p for p in out_dir.rglob("*.glb") if p.is_file() and p.stat().st_size > 0]
+    return glbs[0] if glbs else None
+
+
+def _pick_glb_from_downloaded(downloaded: Dict[str, str], out_dir: Path) -> Optional[Path]:
+    # downloaded dict 안에 .glb가 있으면 그거 우선
+    for _, v in (downloaded or {}).items():
+        p = Path(v)
+        if p.suffix.lower() == ".glb" and p.exists() and p.stat().st_size > 0:
+            return p
+    return _find_glb_in_dir(out_dir)
+
+
+# -----------------------------
+# Response schema
+# -----------------------------
+class ProcessResp(BaseModel):
+    ok: bool
+    reqId: str
+
+    correctedUrl: str
+    prompt: str
+
+    taskId: str
+    modelUrl: str
+    files: Dict[str, str]
+
+    ldrUrl: str
+    ldrData: Optional[str] = None
+
+    parts: int
+    finalTarget: int
+
+
+# -----------------------------
+# ✅ 단일 API
+# -----------------------------
+@router.post("/process-all", response_model=ProcessResp)
+async def process(
+    file: UploadFile = File(...),
+    age: str = Form("6-7"),
     budget: int | None = Form(default=None),
+    # 프론트가 prompt를 보내면 그대로 사용(없으면 생성)
+    prompt: str | None = Form(default=None),
+    # 필요할 때만 LDR을 base64로 같이 보냄
+    returnLdrData: str | bool | None = Form(default="true"),
 ):
-    global _CONVERT_FN
-    glbUrl = _sanitize_glb_url(glbUrl)
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="image only")
 
-    # 예산 결정
-    eff_budget = budget if budget is not None else AGE_TO_BUDGET.get((age or "").strip(), 60)
+    TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
+    if not TRIPO_API_KEY:
+        raise HTTPException(status_code=500, detail="TRIPO_API_KEY is not set")
 
-    # 작업 폴더
     req_id = uuid.uuid4().hex
-    out_dir = GENERATED_DIR / f"brickify_{req_id}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_req_dir = GENERATED_DIR / f"req_{req_id}"
+    out_tripo_dir = GENERATED_DIR / f"tripo_{req_id}"
+    out_brick_dir = GENERATED_DIR / f"brickify_{req_id}"
+    out_req_dir.mkdir(parents=True, exist_ok=True)
+    out_tripo_dir.mkdir(parents=True, exist_ok=True)
+    out_brick_dir.mkdir(parents=True, exist_ok=True)
 
-    glb_path: Optional[Path] = None
     try:
-        # 1) GLB 확보 (로컬 매핑 우선)
-        local = _local_generated_path_from_url(glbUrl)
-        if local and local.exists():
-            glb_path = local
+        # -----------------
+        # 0) 입력 저장
+        # -----------------
+        img_bytes = await file.read()
+        raw_ext = _mime_to_ext(file.content_type or "image/png")
+        raw_path = out_req_dir / f"raw{raw_ext}"
+        raw_path.write_bytes(img_bytes)
+
+        # -----------------
+        # 1) 보정
+        # -----------------
+        corrected_bytes = await render_one_image(img_bytes, file.content_type or "image/png")
+        corrected_path = out_req_dir / "corrected.png"
+        corrected_path.write_bytes(corrected_bytes)
+        corrected_url = _to_generated_url(corrected_path, out_dir=out_req_dir)
+
+        # -----------------
+        # 2) Prompt
+        # -----------------
+        if prompt and prompt.strip():
+            prompt_text = prompt.strip()
         else:
-            if not glbUrl.startswith(("http://", "https://")):
-                raise RuntimeError(f"Cannot resolve glbUrl: {glbUrl}")
-            glb_path = out_dir / "input.glb"
-            await _download_http_to_file(glbUrl, glb_path)
+            prompt_text = await anyio.to_thread.run_sync(
+                build_lego_prompt_sync, corrected_bytes, "image/png"
+            )
+
+        # -----------------
+        # 3) Tripo 3D (생성 → 대기 → 다운로드)
+        # -----------------
+        negative_prompt = (
+            "low quality, blurry, noisy, over-detailed, high poly, "
+            "thin parts, tiny features, text, logos, patterns, textures"
+        )
+
+        async with TripoClient(api_key=TRIPO_API_KEY) as client:
+            task_id = await client.text_to_model(prompt=prompt_text, negative_prompt=negative_prompt)
+            task = await client.wait_for_task(task_id, verbose=DEBUG)
+            if task.status != TaskStatus.SUCCESS:
+                raise RuntimeError(f"Tripo task failed: status={task.status}")
+            downloaded = await client.download_task_models(task, str(out_tripo_dir))
+
+        # -----------------
+        # 3-1) downloaded 정규화 (URL이면 다시 받아서 파일로)
+        # -----------------
+        fixed_downloaded: Dict[str, str] = {}
+        for model_type, path_or_url in (downloaded or {}).items():
+            if not path_or_url:
+                continue
+            s = str(path_or_url)
+            if s.startswith(("http://", "https://")):
+                ext_guess = ".glb" if ".glb" in s.lower() else ".bin"
+                dst = out_tripo_dir / f"{model_type}{ext_guess}"
+                await _download_http_to_file(s, dst)
+                fixed_downloaded[model_type] = str(dst)
+            else:
+                fixed_downloaded[model_type] = s
+
+        # 파일 존재/사이즈 체크
+        missing = []
+        for k, v in fixed_downloaded.items():
+            pv = Path(v)
+            if not pv.exists():
+                missing.append((k, v, "NOT_EXISTS"))
+            elif pv.stat().st_size == 0:
+                missing.append((k, v, "ZERO_SIZE"))
+        if missing:
+            raise RuntimeError(f"Downloaded files missing: {missing}")
+
+        # -----------------
+        # 3-2) Tripo 파일 URL 맵 만들기
+        # -----------------
+        files_url: Dict[str, str] = {}
+        for model_type, path_str in fixed_downloaded.items():
+            files_url[model_type] = _to_generated_url(Path(path_str), out_dir=out_tripo_dir)
+
+        # fallback: out_tripo_dir 내 glb라도 넣기
+        if not any(u.lower().endswith(".glb") for u in files_url.values()):
+            glb_fallback = _find_glb_in_dir(out_tripo_dir)
+            if glb_fallback:
+                files_url["glb"] = _to_generated_url(glb_fallback, out_dir=out_tripo_dir)
+
+        if not files_url:
+            raise RuntimeError("No downloadable model files found in out_tripo_dir")
+
+        model_url = _pick_model_url(files_url)
+
+        # -----------------
+        # 4) Brickify 입력 GLB 확보
+        # -----------------
+        glb_path = _pick_glb_from_downloaded(fixed_downloaded, out_tripo_dir)
+
+        # 그래도 없으면 model_url로부터 로컬 매핑/다운로드
+        if glb_path is None:
+            local = _local_generated_path_from_url(model_url)
+            if local and local.exists() and local.stat().st_size > 0:
+                glb_path = local
+            else:
+                if not model_url.startswith(("http://", "https://")):
+                    raise RuntimeError(f"Cannot resolve glb for brickify: {model_url}")
+                glb_path = out_brick_dir / "input.glb"
+                await _download_http_to_file(model_url, glb_path)
 
         if not glb_path.exists() or glb_path.stat().st_size == 0:
             raise RuntimeError(f"GLB missing/empty: {glb_path}")
 
-        # 2) 엔진 로드 (캐시)
+        # -----------------
+        # 5) Brickify 실행
+        # -----------------
+        eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 60))
+        start_target = _budget_to_start_target(eff_budget)
+
+        global _CONVERT_FN
         if _CONVERT_FN is None:
             _CONVERT_FN = _load_engine_convert()
 
-        # 3) start_target 프리셋
-        if int(eff_budget) <= 25:
-            start_target = 24
-        elif int(eff_budget) <= 70:
-            start_target = 45
-        else:
-            start_target = 60
+        out_ldr = out_brick_dir / "result.ldr"
 
-        out_ldr = out_dir / "result.ldr"
-
-        # ✅ 정상 호출 (딱 한 번)
+        # ✅ 너가 쓰던 핵심 파라미터 풀세트 유지
         result: Dict[str, Any] = await anyio.to_thread.run_sync(
             lambda: _CONVERT_FN(  # type: ignore
                 str(glb_path),
@@ -467,7 +449,7 @@ async def brickify(
                 use_mesh_color=True,
                 invert_y=False,
                 smart_fix=True,
-                # 아래 인자들은 엔진에서 "호환용으로 받아서 무시"하게 해둠
+                # 아래 인자들은 엔진에서 "호환용으로 받아서 무시" 가능
                 span=4,
                 max_new_voxels=12000,
                 refine_iters=8,
@@ -481,122 +463,40 @@ async def brickify(
             )
         )
 
-    except Exception as e:
-        tb = traceback.format_exc()
-        _write_error_log(out_dir, tb)
-        print("[kids.brickify] ERROR\n", tb)
-        if DEBUG:
-            raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail="brickify failed")
+        if not out_ldr.exists() or out_ldr.stat().st_size == 0:
+            raise RuntimeError("LDR output missing/empty")
 
-    # 결과 URL
-    ldr_url = _to_generated_url(out_ldr, out_dir=out_dir)
-    return BrickifyResp(
-        ldrUrl=ldr_url,
-        parts=int(result.get("parts", 0)),
-        finalTarget=int(result.get("final_target", 0)),
-    )
-@router.post("/process-all")
-async def process_all(
-    file: UploadFile = File(...),
-    age: str = Form("6-7"),
-    budget: int = Form(100)
-):
-    # 1. 파일 검증
-    if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="image only")
+        ldr_url = _to_generated_url(out_ldr, out_dir=out_brick_dir)
 
-    req_id = uuid.uuid4().hex
-    img_bytes = await file.read()
-    
-    print(f"[{req_id}] 통합 프로세스 시작 (Age: {age}, Budget: {budget})")
-
-    try:
-        # Step 1: 보정
-        corrected_bytes = await render_one_image(img_bytes, file.content_type or "image/png")
-        
-        # Step 2: 프롬프트 생성
-        prompt = await anyio.to_thread.run_sync(
-            build_lego_prompt_sync, corrected_bytes, "image/png"
-        )
-        
-        # Step 3: Tripo 3D 생성
-        TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
-        if not TRIPO_API_KEY:
-            raise HTTPException(status_code=500, detail="TRIPO Key missing")
-            
-        out_dir_3d = GENERATED_DIR / f"tripo_{req_id}"
-        out_dir_3d.mkdir(parents=True, exist_ok=True)
-        
-        glb_path = None
-        async with TripoClient(api_key=TRIPO_API_KEY) as client:
-            task_id = await client.text_to_model(prompt=prompt, negative_prompt="low quality, text")
-            task = await client.wait_for_task(task_id)
-            if task.status != TaskStatus.SUCCESS:
-                 raise RuntimeError("Tripo task failed")
-            downloaded = await client.download_task_models(task, str(out_dir_3d))
-            
-            if downloaded.get("model"):
-                p = Path(downloaded["model"])
-                if p.exists(): glb_path = p
-        
-        if not glb_path:
-            glbs = list(out_dir_3d.glob("*.glb"))
-            if glbs: glb_path = glbs[0]
-            
-        if not glb_path:
-            raise RuntimeError("GLB generation failed")
-
-        # Step 4: Brickify (LDR 변환)
-        out_dir_brick = GENERATED_DIR / f"brickify_{req_id}"
-        out_dir_brick.mkdir(parents=True, exist_ok=True)
-        out_ldr = out_dir_brick / "result.ldr"
-        
-        global _CONVERT_FN
-        if _CONVERT_FN is None:
-            _CONVERT_FN = _load_engine_convert()
-            
-        start_target = 60 if int(budget) > 80 else 30
-
-        result = await anyio.to_thread.run_sync(
-            lambda: _CONVERT_FN(
-                str(glb_path),
-                str(out_ldr),
-                budget=int(budget),
-                target=int(start_target),
-                min_target=5,
-                shrink=0.85,
-                search_iters=6,
-                kind="brick",
-                plates_per_voxel=3,
-                interlock=True,
-                smart_fix=True
-            )
-        )
-        
-        # ✅ [핵심 변경] 파일을 URL이 아니라 Base64 문자열로 읽어서 리턴
-        ldr_data_uri = None
-        if out_ldr.exists():
-            ldr_bytes = out_ldr.read_bytes()
-            # 바이트 -> Base64 문자열 변환
-            b64_str = base64.b64encode(ldr_bytes).decode("utf-8")
-            # 프론트엔드가 바로 쓸 수 있는 포맷
+        ldr_data_uri: Optional[str] = None
+        if _parse_bool(returnLdrData, default=True):
+            b64_str = base64.b64encode(out_ldr.read_bytes()).decode("utf-8")
             ldr_data_uri = f"data:text/plain;base64,{b64_str}"
-        
-        # ✅ URL도 함께 반환 (백엔드 저장용)
-        ldr_url = _to_generated_url(out_ldr, out_dir=out_dir_brick)
-        
+
         return {
             "ok": True,
             "reqId": req_id,
-            "prompt": prompt,
+            "correctedUrl": corrected_url,
+            "prompt": prompt_text,
+            "taskId": str(task_id),
+            "modelUrl": model_url,
+            "files": files_url,
+            "ldrUrl": ldr_url,
             "ldrData": ldr_data_uri,
-            "ldrUrl": ldr_url, # 백엔드가 DB에 저장할 URL
-            "parts": result.get("parts"),
-            "finalTarget": result.get("final_target")
+            "parts": int(result.get("parts", 0)),
+            "finalTarget": int(result.get("final_target", 0)),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         tb = traceback.format_exc()
-        print(f"[{req_id}] ERROR: {tb}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[kids.process] ERROR req_id={req_id}\n{tb}")
+        _write_error_log(out_req_dir, tb)
+        _write_error_log(out_tripo_dir, tb)
+        _write_error_log(out_brick_dir, tb)
+
+        if DEBUG:
+            raise HTTPException(status_code=500, detail={"reqId": req_id, "error": str(e)})
+
+        raise HTTPException(status_code=500, detail="process failed")
