@@ -29,9 +29,9 @@ for p in (_THIS_DIR, _BRICK_ENGINE_DIR, _PROJECT_ROOT, _PHYSICAL_VERIFICATION_DI
 
 # LLM 클라이언트 임포트 (패키지/직접 실행 모두 지원)
 try:
-    from .llm_clients import BaseLLMClient, GroqClient
+    from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
 except ImportError:
-    from llm_clients import BaseLLMClient, GroqClient
+    from llm_clients import BaseLLMClient, GroqClient, GeminiClient
 
 
 # ============================================================================
@@ -55,6 +55,7 @@ DEFAULT_PARAMS = {
     "use_mesh_color": True,    # 메시 색상 사용
     "invert_y": False,         # Y축 반전
     "smart_fix": True,         # 스마트 보정 활성화
+    "fill": True,              # 내부 채움 활성화 (구조적 안정성 위해 기본 True)
     "step_order": "bottomup",  # 조립 순서
 }
 
@@ -149,6 +150,7 @@ GLB 3D 모델을 레고 브릭으로 변환하는 시스템의 파라미터를 �
 1. 물리 시뮬레이션에서 무너지지 않는 안정적인 구조물 생성
 2. 원본 형상을 최대한 유지하면서 구조적 안정성 확보
 3. 브릭 수를 적절히 유지 (너무 적으면 형상 손실, 너무 많으면 복잡해짐)
+4. ⚠️ 중요: 오직 일반 브릭(Brick)만 사용해야 합니다. 납작한 플레이트(Plate) 형태는 절대 사용하지 마세요.
 
 응답 형식:
 반드시 JSON 형식으로만 응답하세요. 다른 설명 없이 JSON만 출력하세요."""
@@ -187,6 +189,7 @@ def build_adjustment_prompt(
 | budget | {current_params.get('budget', 100)} | 최대 브릭 수 | 늘리면 더 촘촘해져서 안정 ↑ |
 | interlock | {current_params.get('interlock', True)} | 브릭 맞물림 | True면 연결 강화 |
 | smart_fix | {current_params.get('smart_fix', True)} | 부동 브릭 보정 | True면 자동 보정 |
+| fill | {current_params.get('fill', True)} | 내부 채움 | True면 내부를 브릭으로 채워 안정성 ↑ |
 
 ⚠️ 주의: kind와 plates_per_voxel은 변경하지 마세요! 변경 시 브릭 연결이 깨집니다.
 
@@ -270,12 +273,15 @@ def parse_llm_response(response: Dict[str, Any], current_params: Dict[str, Any])
     
     # 유효한 파라미터만 업데이트
     # ⚠️ plates_per_voxel 제외: 이 값을 변경하면 브릭 연결이 완전히 깨짐!
-    valid_keys = {"target", "budget", "interlock", "smart_fix", "kind",
+    valid_keys = {"target", "budget", "interlock", "smart_fix", "kind", "fill",
                   "min_target", "shrink", "search_iters", "max_area"}
     
     for key, value in new_params_partial.items():
         if key in valid_keys:
             new_params[key] = value
+    
+    # ⚠️ 항상 브릭만 사용하도록 강제 (플레이트 방지)
+    new_params["kind"] = "brick"
     
     return new_params, reasoning, confidence
 
@@ -295,20 +301,21 @@ def _fallback_strategy(current_params: Dict[str, Any]) -> Dict[str, Any]:
 # 공중부양 브릭 수정 프롬프트 (Phase 2)
 # ============================================================================
 
-BRICK_FIX_SYSTEM_PROMPT = """당신은 레고 브릭 구조물 수리 전문가입니다.
-공중에 떠 있는(연결되지 않은) 브릭을 분석하고 삭제 여부를 결정합니다.
+BRICK_FIX_SYSTEM_PROMPT = """당신은 레고 브릭 구조물 생성 전문가입니다.
+공중에 떠 있는(연결되지 않은) 브릭을 분석하고 해당 데이터를 기반으로 구조물을 재구성합니다.
 
 당신의 목표:
 1. 공중부양 브릭을 삭제하여 구조적 안정성 확보
 2. 아이들이 모델을 들었을 때 브릭이 떨어지지 않도록 함
 3. 형상 손실을 최소화하되, 안정성을 우선
 
-⚠️ 중요: 이동(move)은 사용하지 마세요! 삭제(delete)만 사용하세요.
-이동은 좌표 오류가 발생하기 쉽고 오히려 불안정해집니다.
+각 브릭에 대해 다음 중 하나를 결정:
+- "delete": 공중부양 브릭을 삭제 (형상 유지가 덜 중요할 때 권장)
+- "add": 공중부양 브릭을 지탱하기 위해 후보 위치(candidates)에 새로운 지지 브릭을 추가 (구조 보강 및 형상 유지)
+- "keep": 아무 작업도 하지 않음 (추천하지 않음)
 
-각 브릭에 대해 다음 중 하나만 결정:
-- "delete": 삭제 (권장 - 공중부양 브릭은 대부분 삭제)
-- "keep": 유지 (정말 형상에 중요한 경우에만)
+⚠️ 중요: "move"는 사용하지 마세요. 좌표 오차로 인해 구조가 더 불안정해집니다.
+보강 시에는 제공된 "연결 가능 후보"의 `new_position` 위치를 사용하여 새로운 브릭을 추가하십시오.
 
 응답은 반드시 JSON 형식으로만 출력하세요."""
 
@@ -351,14 +358,15 @@ def build_brick_fix_prompt(
 ## 요청
 
 위 공중부양 브릭들을 어떻게 처리할지 결정해주세요.
-형상 유지가 중요하면 이동(move), 중요하지 않으면 삭제(delete)를 선택하세요.
+구조적 안정을 위해 해당 브릭을 "delete" 하거나, "add"를 통해 후보 위치에 지지 브릭을 세워 보강하십시오.
+"add"를 선택할 경우, 해당 후보의 `new_position`을 `position`으로 지정하십시오.
 
 응답 형식:
 ```json
 {{
     "reasoning": "전체적인 결정 이유 (한 문장)",
     "decisions": [
-        {{"brick_id": "3005.dat_0", "action": "move", "position": [x, y, z]}},
+        {{"brick_id": "3005.dat_0", "action": "add", "position": [x, y, z], "part": "3005.dat"}},
         {{"brick_id": "3005.dat_1", "action": "delete"}},
         {{"brick_id": "3005.dat_2", "action": "keep"}}
     ]
@@ -366,8 +374,9 @@ def build_brick_fix_prompt(
 ```
 
 ⚠️ 주의:
-- "move" 선택 시 반드시 후보 목록의 position 중 하나를 사용하세요
-- 후보가 없는 브릭은 "delete" 또는 "keep"만 선택 가능"""
+- "add" 선택 시 반드시 후보 목록의 position 중 하나를 사용하세요. 
+- "add" 시 사용할 파츠(part)는 가급적 1x1 브릭("3005.dat")을 권장합니다.
+- 후보가 없는 브릭은 "delete" 또는 "keep"만 선택 가능합니다."""
     
     return prompt
 
@@ -392,17 +401,22 @@ def parse_brick_fix_response(response: Dict[str, Any]) -> Tuple[List[Dict[str, A
         if "brick_id" not in d:
             continue
         action = d.get("action", "keep")
-        if action not in ("move", "delete", "keep"):
+        # move는 add로 취급하거나 무시 (사용자 요청: 이동하지 말 것)
+        if action == "move":
+            action = "add"
+        
+        if action not in ("add", "delete", "keep"):
             action = "keep"
         
         decision = {"brick_id": d["brick_id"], "action": action}
         
-        if action == "move":
+        if action == "add":
             position = d.get("position")
             if position and len(position) == 3:
                 decision["position"] = position
+                decision["part"] = d.get("part", "3005.dat") # 기본 1x1 브릭
             else:
-                # 위치 없으면 삭제로 변경
+                # 위치 없으면 삭제(또는 유지)로 변경
                 decision["action"] = "delete"
         
         valid_decisions.append(decision)
@@ -452,9 +466,9 @@ class RegenerationAgent:
         self.verification_duration = verification_duration
     
     def _get_llm_client(self) -> BaseLLMClient:
-        """LLM 클라이언트 lazy 초기화"""
+        """LLM 클라이언트 lazy 초기화 (기본: Gemini)"""
         if self.llm_client is None:
-            self.llm_client = GroqClient()
+            self.llm_client = GeminiClient()
         return self.llm_client
     
     def run(

@@ -18,8 +18,12 @@ for p in (_THIS_DIR, _PARENT_DIR):
     if sp not in sys.path:
         sys.path.insert(0, sp)
 
-from pylego3d.optimizer import optimize_bricks
-import pylego3d.optimizer as optmod
+try:
+    from .optimizer_copy import optimize_bricks
+    from . import optimizer_copy as optmod
+except (ImportError, ValueError):
+    from optimizer_copy import optimize_bricks
+    import optimizer_copy as optmod
 from pylego3d.write_ldr import write_ldr
 
 # -----------------------------------------------------------------------------
@@ -564,7 +568,7 @@ def convert_glb_to_ldr(
         shrink=float(shrink),
         search_iters=int(search_iters),
         flipx180=bool(flipx180), flipy180=bool(flipy180), flipz180=bool(flipz180),
-        fill=False,  # ✅ 알고리즘 그대로(embedded 모드: 내부 채움 X)
+        fill=bool(fill),  # ✅ 사용자 설정(fill) 반영 (기존 False 하드코딩 제거)
         kind=str(kind),
         plates_per_voxel=int(plates_per_voxel),
         interlock=bool(interlock),
@@ -618,7 +622,7 @@ def main():
     ap.add_argument("--flipx180", action="store_true")
     ap.add_argument("--flipy180", action="store_true")
     ap.add_argument("--flipz180", action="store_true")
-    ap.add_argument("--kind", choices=["brick", "plate"], default="brick")
+    ap.add_argument("--kind", choices=["brick"], default="brick", help="브릭 종류 (플레이트는 사용 금지됨)")
     ap.add_argument("--plates-per-voxel", type=int, default=3)
     ap.add_argument("--no-interlock", action="store_true")
     ap.add_argument("--max-area", type=int, default=20)
@@ -653,7 +657,8 @@ def main():
         smart_fix=args.smart_fix,
         step_order=args.step_order,
 
-        # ✅ CLI에서 넘어오면 받아만 둠(무시)
+        # ✅ CLI에서 넘어오면 fill로 전달
+        fill=bool(args.solid),
         solid=bool(args.solid),
     )
 
