@@ -57,20 +57,42 @@ jobs:
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
           script: |
+            set -euo pipefail
             export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
             cd /home/${{ secrets.USERNAME }}/brickers-ai
-            
-            # Ensure directory exists (if not created by scp)
-            # mkdir -p . (scp creates it)
-            
-            # Pull latest image
-            # docker compose needs DOCKER_USERNAME env var or it should be hardcoded in file.
-            # passing env var via script export works.
-            
+
+            echo "📄 Writing .env..."
+            cat > .env <<'EOF'
+            # --- API Keys ---
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            TRIPO_API_KEY=${{ secrets.TRIPO_API_KEY }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            OPENAI_MODEL=${{ secrets.OPENAI_MODEL }}
+            NANO_BANANA_MODEL=${{ secrets.NANO_BANANA_MODEL }}
+
+            # --- S3 Upload ---
+            AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
+            AWS_REGION=${{ secrets.AWS_REGION }}
+            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            # (선택) 없으면 자동 생성
+            S3_PUBLIC_BASE_URL=${{ secrets.S3_PUBLIC_BASE_URL }}
+            # (선택)
+            S3_PREFIX=kids
+
+            # --- Timeouts ---
+            KIDS_TOTAL_TIMEOUT_SEC=840
+            TRIPO_WAIT_TIMEOUT_SEC=780
+            EOF
+
+            echo "🔐 Docker Hub login..."
+            echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+            echo "📦 Pull latest image..."
             sudo -E docker compose pull
-            
-            # Restart services
+
+            echo "🔁 Restart..."
             sudo -E docker compose up -d
-            
-            # Cleanup unused images
+
+            echo "🧹 Prune..."
             sudo docker image prune -f
