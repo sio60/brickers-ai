@@ -535,6 +535,7 @@ def convert_glb_to_ldr(
     invert_y: bool = False,
     smart_fix: bool = True,
     step_order: str = "bottomup",
+    auto_remove_1x1: bool = True,
 
     # ✅ 넘어와도 안 죽게 받기만(현재 로직은 fill 안 씀)
     solid: bool = False,
@@ -592,10 +593,12 @@ def convert_glb_to_ldr(
     )
     rewrite_steps_by_layer(tmp, out_ldr_path, step_order)
     
-    # ✅ 1x1 브릭(3005.dat) 자동 제거 - 연결 불안정하므로 제외
-    removed_count = remove_1x1_bricks(out_ldr_path)
-    if removed_count > 0:
-        print(f"[INFO] 1x1 브릭 {removed_count}개 자동 제거됨 (안정성 향상)")
+    # ✅ 1x1 브릭(3005.dat) 자동 삭제 옵션 처리
+    removed_count = 0
+    if auto_remove_1x1:
+        removed_count = remove_1x1_bricks(out_ldr_path)
+        if removed_count > 0:
+            print(f"[INFO] 1x1 브릭 {removed_count}개 자동 제거됨 (안정성 향상)")
     
     # 최종 부품 수 다시 계산
     final_parts = count_ldr_parts(out_ldr_path)
@@ -605,7 +608,12 @@ def convert_glb_to_ldr(
     except OSError:
         pass
 
-    return {"out": out_ldr_path, "parts": final_parts, "final_target": int(final_target)}
+    return {
+        "out": out_ldr_path, 
+        "parts": final_parts, 
+        "final_target": int(final_target),
+        "removed_1x1_count": removed_count
+    }
 
 # -----------------------------------------------------------------------------
 # 9. CLI main
@@ -632,6 +640,7 @@ def main():
     ap.add_argument("--no-color", action="store_true", help="Disable mesh color")
     ap.add_argument("--invert-y", action="store_true", help="Force invert Y axis")
     ap.add_argument("--smart-fix", action="store_true", default=True)
+    ap.add_argument("--no-auto-remove-1x1", action="store_true", help="1x1 브릭 자동 제거 비활성화")
 
     args = ap.parse_args()
     use_mesh_color = not args.no_color
@@ -656,6 +665,7 @@ def main():
         invert_y=args.invert_y,
         smart_fix=args.smart_fix,
         step_order=args.step_order,
+        auto_remove_1x1=(not args.no_auto_remove_1x1),
 
         # ✅ CLI에서 넘어오면 fill로 전달
         fill=bool(args.solid),
