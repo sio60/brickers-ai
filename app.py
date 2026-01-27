@@ -21,10 +21,7 @@ app = FastAPI(title="Brickers AI API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["*"],  # ✅ 배포/로컬 모두 허용 (보안상 필요시 도메인 지정)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
