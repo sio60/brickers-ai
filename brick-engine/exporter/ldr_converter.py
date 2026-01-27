@@ -64,6 +64,32 @@ def get_rotation_matrix(rotation: int) -> List[int]:
 
 
 # ============================================
+# 슬로프 파츠 (bbox 충돌 검사 시 특별 처리)
+# ============================================
+
+# 슬로프는 경사면이라 bbox가 실제보다 크게 계산됨
+# A자 지붕처럼 마주보는 배치 시 bbox 겹침 → false positive 발생
+# 슬로프끼리는 tolerance를 더 크게 적용
+#
+# NOTE: 하드코딩 이유 - MongoDB에 실제 파츠명 없음 (파일명만 저장)
+# 추후 MongoDB 데이터 업데이트 시 동적 판단으로 전환 가능
+SLOPE_PARTS = {
+    '3037', '3038', '3039', '3040',  # Slope 45 2xN
+    '3044', '3048', '3049',          # Slope 45 1xN
+    '3665', '3660', '3676', '3678',  # Slope Inverted
+    '3747', '4286', '4287',          # Slope Triple
+    '4460', '4461',                  # Slope 75
+    '3298', '3299', '3300',          # Slope 33
+    '85984', '60481',                # Slope 30
+    '54200', '30363',                # Slope 30 1x1
+    '15571', '92946',                # Slope Curved
+    '4861', '4856', '4857', '4858',  # Slope 45 (roof wedge)
+}
+
+SLOPE_TOLERANCE = 45.0  # 슬로프끼리 충돌 검사 시 tolerance (A자 지붕 허용)
+
+
+# ============================================
 # 바운딩 박스 계산
 # ============================================
 
@@ -77,8 +103,15 @@ class BBox:
     min_z: float
     max_z: float
 
-    def intersects(self, other: 'BBox', tolerance: float = 0.1) -> bool:
-        """다른 바운딩 박스와 겹치는지 확인 (tolerance: 허용 오차)"""
+    def intersects(self, other: 'BBox', tolerance: float = 10.0) -> bool:
+        """
+        다른 바운딩 박스와 겹치는지 확인
+
+        tolerance: 허용 오차 (LDU 단위)
+        - 레고 브릭은 스터드 그리드(20 LDU)에 맞춰 나란히 배치됨
+        - 슬로프, 바퀴 등 특수 파츠는 bbox가 실제보다 크게 계산됨
+        - 기본값 10.0 (0.5 스터드)으로 정상 배치 허용
+        """
         return (
             self.min_x < other.max_x - tolerance and
             self.max_x > other.min_x + tolerance and
@@ -108,22 +141,128 @@ def get_rotated_size(size: List[float], rotation: int) -> List[float]:
     return [sx, sy, sz]
 
 
+# ============================================
+# 파츠 ID 기반 크기 테이블 (MongoDB 정보 부족 대비)
+# ============================================
+# 형식: part_id -> (studs_x, studs_z, height)
+PART_SIZE_TABLE = {
+    # === 브릭 (높이 24) ===
+    # 형식: (studs_x, studs_z, height_ldu)
+    "3001": (4, 2, 24),   # Brick 2x4
+    "3002": (3, 2, 24),   # Brick 2x3
+    "3003": (2, 2, 24),   # Brick 2x2
+    "3004": (2, 1, 24),   # Brick 1x2 (주의: 1x4 아님!)
+    "3005": (1, 1, 24),   # Brick 1x1
+    "3006": (10, 2, 24),  # Brick 2x10
+    "3007": (8, 2, 24),   # Brick 2x8
+    "3008": (8, 1, 24),   # Brick 1x8
+    "3009": (6, 1, 24),   # Brick 1x6
+    "3010": (4, 1, 24),   # Brick 1x4
+    "3622": (3, 1, 24),   # Brick 1x3
+    "3245": (12, 2, 24),  # Brick 2x12
+    "2456": (6, 2, 24),   # Brick 2x6
+    "3062b": (1, 1, 24),  # Brick Round 1x1
+
+    # === 플레이트 (높이 8) ===
+    "3020": (4, 2, 8),    # Plate 2x4
+    "3021": (3, 2, 8),    # Plate 2x3
+    "3022": (2, 2, 8),    # Plate 2x2
+    "3023": (2, 1, 8),    # Plate 1x2
+    "3024": (1, 1, 8),    # Plate 1x1
+    "3026": (6, 2, 8),    # Plate 2x6
+    "3028": (12, 6, 8),   # Plate 6x12
+    "3029": (12, 4, 8),   # Plate 4x12
+    "3030": (10, 4, 8),   # Plate 4x10
+    "3031": (6, 4, 8),    # Plate 4x6
+    "3032": (4, 4, 8),    # Plate 4x4
+    "3033": (10, 6, 8),   # Plate 6x10
+    "3034": (8, 2, 8),    # Plate 2x8
+    "3035": (8, 4, 8),    # Plate 4x8
+    "3036": (8, 6, 8),    # Plate 6x8
+    "3037": (10, 4, 8),   # Plate 4x10
+    "3460": (8, 1, 8),    # Plate 1x8
+    "3666": (6, 1, 8),    # Plate 1x6
+    "3710": (4, 1, 8),    # Plate 1x4
+    "3795": (2, 2, 8),    # Plate 2x2 corner
+
+    # === 슬로프 (높이 24, 다양) ===
+    "3039": (2, 2, 24),   # Slope 45 2x2
+    "3040": (1, 2, 24),   # Slope 45 2x1 (Z방향으로 긺)
+    "3040a": (1, 2, 24),
+    "3040b": (1, 2, 24),
+    "3044": (3, 1, 24),   # Slope 45 1x3
+    "3037": (4, 2, 24),   # Slope 45 2x4
+    "3038": (3, 2, 24),   # Slope 45 2x3
+    "3298": (3, 2, 24),   # Slope 33 2x3
+    "3300": (4, 2, 24),   # Slope 33 2x4
+    "3678b": (4, 2, 24),  # Slope 65 2x4
+    "4286": (3, 1, 24),   # Slope 33 1x3
+    "4287": (3, 1, 8),    # Slope 33 1x3 inverted (낮음)
+    "3665": (2, 1, 8),    # Slope 45 1x2 inverted
+
+    # === 타일 (높이 8) ===
+    "3068b": (2, 2, 8),   # Tile 2x2
+    "3069b": (2, 1, 8),   # Tile 1x2
+    "3070b": (1, 1, 8),   # Tile 1x1
+    "6636": (6, 1, 8),    # Tile 1x6
+    "2431": (4, 1, 8),    # Tile 1x4
+    "63864": (3, 1, 8),   # Tile 1x3
+
+    # === 바퀴/타이어 (특수 - 원형이라 bbox 계산 다름) ===
+    "3641": (2, 2, 14),    # Wheel 11mm D. x 8mm (원형, Z가 두께)
+    "3137c01": (4, 2, 32), # Wheel Holder 2x4 with Wheels
+    "4624": (2, 2, 12),    # Wheel 8mm D. x 6mm
+    "6014": (2, 2, 20),    # Wheel 11mm D. x 12mm
+    "6015": (2, 2, 24),    # Wheel 18mm D. x 8mm
+
+    # === 기타 특수 파츠 ===
+    "3942": (2, 2, 24),   # Cone 2x2x2
+    "3062": (1, 1, 24),   # Round Brick 1x1
+    "6143": (2, 2, 8),    # Round Brick 2x2 Dome
+}
+
+
 def get_brick_bbox(brick: PlacedBrick, parts_db: Dict) -> Optional[BBox]:
-    """브릭의 실제 바운딩 박스 계산"""
-    part_info = parts_db.get(brick.part_id)
-    if not part_info:
-        return None
+    """
+    브릭의 실제 바운딩 박스 계산
 
-    # bbox 정보가 있어야 함
-    bbox_size = part_info.get('bbox', part_info.get('size'))
-    if not bbox_size:
-        return None
+    LDraw 표준 단위:
+    - 1 스터드 = 20 LDU
+    - 브릭 높이 = 24 LDU (스터드 제외)
+    - 플레이트 높이 = 8 LDU (스터드 제외)
+    - 스터드 높이 = 4 LDU
 
-    # 리스트 형태로 변환
-    if isinstance(bbox_size, dict):
-        bbox_size = bbox_size.get('size', [40, 24, 40])
-    if not isinstance(bbox_size, list) or len(bbox_size) < 3:
-        bbox_size = [40, 24, 40]  # 기본값
+    우선순위:
+    1. PART_SIZE_TABLE (특수 파츠 - 바퀴 등)
+    2. MongoDB bbox.size (일반 파츠)
+    3. 기본값 2x2 브릭
+    """
+    part_id = brick.part_id.lower()
+    part_info = parts_db.get(part_id)
+    bbox_size = None
+
+    # 1순위: PART_SIZE_TABLE (특수 파츠는 MongoDB bbox가 부정확)
+    if part_id in PART_SIZE_TABLE:
+        studs_x, studs_z, height = PART_SIZE_TABLE[part_id]
+        width_x = studs_x * 20
+        width_z = studs_z * 20
+        bbox_size = [width_x, height, width_z]
+
+    # 2순위: MongoDB bbox.size
+    elif part_info and 'bbox' in part_info:
+        bbox_data = part_info['bbox']
+        if isinstance(bbox_data, dict) and 'size' in bbox_data:
+            size = bbox_data['size']
+            if isinstance(size, list) and len(size) >= 3:
+                # MongoDB bbox는 스터드 포함 높이 (+4)
+                width_x = size[0]
+                height = size[1] - 4  # 스터드 높이 제외
+                width_z = size[2]
+                bbox_size = [width_x, height, width_z]
+
+    # 3순위: 기본값 (2x2 브릭)
+    if bbox_size is None:
+        bbox_size = [40, 24, 40]
 
     # 회전 적용
     size = get_rotated_size(bbox_size, brick.rotation)
@@ -267,67 +406,124 @@ def check_collisions(bricks: List[PlacedBrick], parts_db: Dict) -> List[tuple]:
     collisions = []
     bboxes = []
 
-    # 모든 브릭의 바운딩 박스 계산
+    # 모든 브릭의 바운딩 박스 계산 (part_id도 함께 저장)
     for brick in bricks:
         bbox = get_brick_bbox(brick, parts_db)
         if bbox:
-            bboxes.append((brick.id, bbox))
+            bboxes.append((brick.id, brick.part_id, bbox))
 
     # 모든 쌍에 대해 충돌 검사
     for i in range(len(bboxes)):
         for j in range(i + 1, len(bboxes)):
-            id1, bbox1 = bboxes[i]
-            id2, bbox2 = bboxes[j]
-            if bbox1.intersects(bbox2):
+            id1, part1, bbox1 = bboxes[i]
+            id2, part2, bbox2 = bboxes[j]
+
+            # 슬로프끼리는 tolerance를 더 크게 적용 (A자 지붕 등 허용)
+            is_both_slope = part1 in SLOPE_PARTS and part2 in SLOPE_PARTS
+            tolerance = SLOPE_TOLERANCE if is_both_slope else 10.0
+
+            if bbox1.intersects(bbox2, tolerance):
                 collisions.append((id1, id2))
 
     return collisions
 
 
-def check_floating(bricks: List[PlacedBrick], parts_db: Dict, ground_y: float = 0) -> List[str]:
+def _are_bricks_connected(bbox1: BBox, bbox2: BBox, tolerance: float = 2.0) -> bool:
     """
-    부유 브릭 검사 (공중에 떠있는 브릭)
+    두 브릭이 연결되어 있는지 확인 (수직 연결만)
+
+    레고 브릭은 스터드를 통해 수직으로만 연결됨.
+    수평으로 맞닿는 것은 물리적 연결이 아님.
+
+    연결 조건:
+    - Y축으로 맞닿고 X/Z가 겹침 (위아래로 쌓임)
+    """
+    # X, Z 겹침 여부
+    x_overlap = bbox1.min_x < bbox2.max_x and bbox1.max_x > bbox2.min_x
+    z_overlap = bbox1.min_z < bbox2.max_z and bbox1.max_z > bbox2.min_z
+
+    # 수직 연결: Y축으로 맞닿음 (위아래)
+    y_touch_top = abs(bbox1.min_y - bbox2.max_y) < tolerance  # bbox1이 bbox2 위
+    y_touch_bottom = abs(bbox1.max_y - bbox2.min_y) < tolerance  # bbox1이 bbox2 아래
+
+    if (y_touch_top or y_touch_bottom) and x_overlap and z_overlap:
+        return True
+
+    return False
+
+
+def check_floating(bricks: List[PlacedBrick], parts_db: Dict, ground_y: float = None) -> List[str]:
+    """
+    부유 브릭 검사 - 연결성 기반 (v2)
+
+    바닥에서 시작해서 연결된 브릭 네트워크를 BFS로 탐색.
+    네트워크에 속하지 않은 브릭만 부유로 판정.
 
     Args:
         bricks: 브릭 리스트
         parts_db: 파츠 DB
-        ground_y: 바닥 Y좌표 (기본값 0)
+        ground_y: 바닥 Y좌표 (None이면 자동 계산 - 가장 아래 브릭 기준)
 
     Returns:
         부유 중인 브릭 ID 리스트
     """
-    floating = []
-    bboxes = {}
+    from collections import deque
 
-    # 모든 브릭의 바운딩 박스 계산
+    if not bricks:
+        return []
+
+    bboxes = {}
+    brick_ids = []
+
+    # 1. 모든 브릭의 바운딩 박스 계산
     for brick in bricks:
         bbox = get_brick_bbox(brick, parts_db)
         if bbox:
             bboxes[brick.id] = bbox
+            brick_ids.append(brick.id)
 
-    # 각 브릭이 지지대를 가지고 있는지 확인
-    for brick in bricks:
-        bbox = bboxes.get(brick.id)
-        if not bbox:
-            continue
+    if not bboxes:
+        return []
 
-        # 바닥에 닿아있는지 확인 (LDraw: Y가 클수록 아래)
-        on_ground = bbox.max_y >= ground_y - 2  # 허용 오차 2 LDU
+    # 2. 바닥 Y 자동 계산 (가장 아래 브릭의 max_y)
+    if ground_y is None:
+        ground_y = max(bbox.max_y for bbox in bboxes.values())
 
-        if on_ground:
-            continue
+    # 3. 바닥에 닿은 브릭들 찾기 (시작점)
+    grounded = set()
+    for brick_id, bbox in bboxes.items():
+        if bbox.max_y >= ground_y - 2:  # 바닥에 닿음
+            grounded.add(brick_id)
 
-        # 다른 브릭 위에 있는지 확인
-        supported = False
-        for other_id, other_bbox in bboxes.items():
-            if other_id == brick.id:
-                continue
-            if bbox.is_supported_by(other_bbox):
-                supported = True
-                break
+    # 바닥에 닿은 브릭이 없으면 전부 부유
+    if not grounded:
+        return brick_ids
 
-        if not supported:
-            floating.append(brick.id)
+    # 3. 연결 그래프 생성 (인접 리스트)
+    adjacency = {bid: [] for bid in brick_ids}
+
+    # O(n^2) 연결 체크 - 브릭 수가 많으면 느릴 수 있음
+    id_list = list(bboxes.keys())
+    for i in range(len(id_list)):
+        for j in range(i + 1, len(id_list)):
+            id1, id2 = id_list[i], id_list[j]
+            if _are_bricks_connected(bboxes[id1], bboxes[id2]):
+                adjacency[id1].append(id2)
+                adjacency[id2].append(id1)
+
+    # 4. BFS로 바닥에서 도달 가능한 브릭 찾기
+    supported = set(grounded)
+    queue = deque(grounded)
+
+    while queue:
+        current = queue.popleft()
+        for neighbor in adjacency[current]:
+            if neighbor not in supported:
+                supported.add(neighbor)
+                queue.append(neighbor)
+
+    # 5. 도달 불가능한 브릭 = 부유
+    floating = [bid for bid in brick_ids if bid not in supported]
 
     return floating
 

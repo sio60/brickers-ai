@@ -1,3 +1,10 @@
+# ============================================================================
+# LDraw 파트 라이브러리 및 데이터 접근 모듈
+# 이 파일은 LDraw 파트 파일의 경로를 확인하고, 파일을 파싱하여 
+# 파트의 경계 상자(bbox) 및 기하학적 데이터(geometry)를 추출합니다.
+# 또한, MongoDB 데이터베이스에서 파트의 치수, 설명 및 기타 메타데이터를
+# 조회하는 기능을 제공합니다.
+# ============================================================================
 import os
 import math
 import re
@@ -6,9 +13,9 @@ from pathlib import Path
 
 # Import DB module from the same directory
 try:
-    from . import db
+    from . import yang_db as db
 except ImportError:
-    import db
+    import yang_db as db
 
 # Global cache for part dimensions
 DIMENSION_CACHE = {}
@@ -20,27 +27,27 @@ P_DIR = os.path.join(LDRAW_LIB_PATH, "p")
 
 def resolve_file_path(filename):
     """
-    Finds the absolute path of a .dat file.
-    Checks 'parts' first, then 'p'.
-    Handles backslashes/forward slashes.
+    .dat 파일의 절대 경로를 찾습니다.
+    'parts' 디렉토리를 먼저 확인한 후 'p' 디렉토리를 확인합니다.
+    역슬래시/슬래시 경로 구분자를 처리합니다.
     """
     filename = filename.replace("\\", os.sep).replace("/", os.sep)
     
-    # Check parts
+    # parts 디렉토리 확인
     path = os.path.join(PARTS_DIR, filename)
     if os.path.exists(path):
         return path
         
-    # Check p (primitives)
+    # p (primitives) 디렉토리 확인
     path = os.path.join(P_DIR, filename)
     if os.path.exists(path):
         return path
         
-    # Some subfiles might be relative to LDRAW root (rare, but possible)
-    # usually they are just 's\file.dat' which is inside parts/s/file.dat
-    # or '4-4cyli.dat' which is inside p/4-4cyli.dat
+    # 일부 서브파일은 LDraw 루트 기준일 수 있음 (드물지만 발생 가능)
+    # 보통 parts/s/file.dat 내부의 's\file.dat'이거나
+    # p/4-4cyli.dat 내부의 '4-4cyli.dat'임
     
-    # Try case-insensitive search
+    # 대소문자 구분 없이 검색 시도
     clean_name = filename.lower()
     for root_dir in [PARTS_DIR, P_DIR]:
         try:
@@ -49,8 +56,6 @@ def resolve_file_path(filename):
                  return path_lower
         except: pass
         
-    # Valid Debug: Print what we tried if failed
-    # print(f"[DEBUG] Failed to resolve: {filename}")
     return None
 
 def parse_ldraw_part(part_id, depth=0, max_depth=3, accumulated_matrix=None):
@@ -59,10 +64,8 @@ def parse_ldraw_part(part_id, depth=0, max_depth=3, accumulated_matrix=None):
 
     file_path = resolve_file_path(part_id)
     if not file_path:
-        # print(f"[DEBUG] Local parse failed - File not found: {part_id}")
         return None
-    # ... (Rest of parse_ldraw_part logic is same, keep it concise)
-    # Re-implementing simplified parse logic to ensure it works
+    # 정확한 작동을 위해 간소화된 파싱 로직 재구현
     min_x, min_y, min_z = float('inf'), float('inf'), float('inf')
     max_x, max_y, max_z = float('-inf'), float('-inf'), float('-inf')
     found_geometry = False
@@ -77,7 +80,7 @@ def parse_ldraw_part(part_id, depth=0, max_depth=3, accumulated_matrix=None):
                 if not parts: continue
                 line_type = parts[0]
                 
-                if line_type == '1': # Subfile
+                if line_type == '1': # 서브파일
                     if depth >= max_depth: continue
                     try:
                         sub_x, sub_y, sub_z = float(parts[2]), float(parts[3]), float(parts[4])
@@ -105,7 +108,7 @@ def parse_ldraw_part(part_id, depth=0, max_depth=3, accumulated_matrix=None):
                                 found_geometry = True
                     except: pass
                         
-                elif line_type in ('3', '4'): # Tri/Quad
+                elif line_type in ('3', '4'): # 삼각형/사각형
                     try:
                         coords = [float(x) for x in parts[2:]]
                         for k in range(0, len(coords), 3):
@@ -133,14 +136,14 @@ def get_part_dims(part_id: str):
     if clean_id in DIMENSION_CACHE:
         return DIMENSION_CACHE[clean_id]
     
-    # 2. Query MongoDB
+    # 2. MongoDB 쿼리
     try:
         coll = db.get_parts_collection()
         query = {
             "$or": [
                 {"partFile": f"{clean_id}.dat"},
                 {"filename": f"{clean_id}.dat"},
-                {"partPath": {"$regex": f"/{clean_id}\.dat$", "$options": "i"}}
+                {"partPath": {"$regex": rf"/{clean_id}\.dat$", "$options": "i"}}
             ]
         }
         doc = coll.find_one(query)
@@ -150,10 +153,9 @@ def get_part_dims(part_id: str):
             DIMENSION_CACHE[clean_id] = result
             return result
     except Exception as e:
-        print(f"[ERROR] DB Metadata Read Error: {e}")
+        print(f"[오류] DB 메타데이터 읽기 오류: {e}")
 
-    # 3. Fallback
-    # print(f"[Fallback] Parsing local file for {clean_id}")
+    # 3. 폴백 (로컬 파일 파싱)
     clean_filename = f"{clean_id}.dat"
     bbox = get_raw_bbox(clean_filename, 0, 10)
     
@@ -161,48 +163,46 @@ def get_part_dims(part_id: str):
         DIMENSION_CACHE[clean_id] = bbox
         return bbox
     else:
-        print(f"[ERROR] All methods failed for {clean_id}. DB failed, Local file failed.")
+        print(f"[오류] 모든 방법 실패: {clean_id}. DB 및 로컬 파일 접근 불가.")
 
     return None
 
-# Cache for part descriptions
-# Cache for part descriptions and metadata
+# 파트 설명 및 메타데이터 캐시
 DESC_CACHE = {}
 META_CACHE = {}
 
 def get_part_metadata_from_db(part_id: str):
     """
-    Retrieves part metadata (description, category, keywords) from MongoDB.
-    Returns a dict or None.
+    MongoDB에서 파트 메타데이터(설명, 카테고리, 키워드)를 가져옵니다.
+    딕셔너리 또는 None을 반환합니다.
     """
-    # 1. Strip instance suffix
+    # 1. 인스턴스 접미사 제거
     base_id = re.sub(r'_\d+$', '', part_id)
-    # 2. Normalize
+    # 2. 정규화
     clean_id = base_id.lower().replace(".dat", "").strip()
     
-    # Check cache, but ONLY if it has a real description (not just "*.dat")
+    # 캐시 확인 (실제 설명이 있는 경우에만 사용)
     if clean_id in META_CACHE:
         cached = META_CACHE[clean_id]
-        # If cached description is just a filename, ignore cache and re-fetch
+        # 캐시된 설명이 파일 이름인 경우 캐시를 무시하고 다시 가져옴
         if not cached["description"].lower().endswith(".dat"):
             return cached
         
     try:
         coll = db.get_parts_collection()
-        # Try ALL possible fields
+        # 가능한 모든 필드 시도
         query = {
             "$or": [
                 {"partFile": f"{clean_id}.dat"},
                 {"filename": f"{clean_id}.dat"},
                 {"partFile": clean_id}, 
-                {"partPath": {"$regex": f"/{clean_id}\.dat$", "$options": "i"}}
+                {"partPath": {"$regex": rf"/{clean_id}\.dat$", "$options": "i"}}
             ]
         }
         doc = coll.find_one(query)
             
         if doc:
-            # Check what fields are actually in the doc.
-            desc = doc.get("name") or doc.get("description") or "Unknown Part"
+            desc = doc.get("name") or doc.get("description") or "알 수 없는 부품"
             meta = {
                 "description": desc,
                 "category": doc.get("category", ""),
@@ -211,30 +211,30 @@ def get_part_metadata_from_db(part_id: str):
             META_CACHE[clean_id] = meta
             return meta
     except Exception as e:
-        print(f"[ERROR] DB Metadata Read Error: {e}")
+        print(f"[오류] DB 메타데이터 읽기 오류: {e}")
         pass
         
     return None
 
 def get_part_description(part_id: str) -> str:
     """
-    Gets part description using DB first, falling back to local file.
-    Improved: If DB returns a filename (e.g. "3004.dat") instead of a real name,
-    force fallback to local file to get the real English description.
+    DB를 우선으로 사용하고 로컬 파일로 폴백하여 파트 설명을 가져옵니다.
+    개선: DB가 실제 이름 대신 파일 이름(예: "3004.dat")을 반환하는 경우,
+    로컬 파일에서 실제 영문 설명을 가져오도록 폴백을 강제합니다.
     """
-    # 0. Strip instance suffix first (e.g. "11477.dat_0" -> "11477.dat")
+    # 0. 인스턴스 접미사 제거 (예: "11477.dat_0" -> "11477.dat")
     base_id = re.sub(r'_\d+$', '', part_id)
     
-    # 1. Try DB
+    # 1. DB 시도
     meta = get_part_metadata_from_db(base_id)
     if meta:
         desc = meta["description"]
-        # If DB gave us a real name (doesn't end in .dat), use it.
-        # Otherwise, fall through to local file to get the REAL name.
+        # DB가 실제 이름을 반환한 경우(.dat로 끝나지 않음) 사용함
+        # 그렇지 않으면 로컬 파일에서 실제 이름을 가져오기 위해 다음 단계로 진행
         if not desc.lower().endswith(".dat"):
             return desc
 
-    # 2. Fallback to Local
+    # 2. 로컬 파일로 폴백
     clean_id = base_id.lower().replace(".dat", "").strip()
     filename = f"{clean_id}.dat"
     
@@ -243,41 +243,40 @@ def get_part_description(part_id: str) -> str:
         
     file_path = resolve_file_path(filename)
     if not file_path:
-        # If we have a DB result (even if it's just a filename), return that as a last resort
+        # DB 결과라도 있는 경우 최후의 수단으로 반환
         if meta:
             return meta["description"]
-        return "Unknown Part"
+        return "알 수 없는 부품"
         
     try:
         with open(file_path, 'r', encoding='latin-1') as f:
             first_line = f.readline().strip()
-            # Format: "0 Part Name" or just "0 Name"
+            # 형식: "0 Part Name" 또는 "0 Name"
             if first_line.startswith("0"):
                 desc = first_line[1:].strip()
-                # If the file also just says "0 3004.dat" (rare), we are stuck, but usually it's "0 Brick 1 x 2"
+                # 파일마저 "0 3004.dat"인 경우(드묾) 어쩔 수 없지만, 대개 "0 Brick 1 x 2" 형식임
                 DESC_CACHE[clean_id] = desc
                 return desc
     except:
         pass
     
-    # Last resort: if we had a DB result, return it
     if meta:
         return meta["description"]
         
-    return "Unknown Part"
+    return "알 수 없는 부품"
 
-# Cache for geometries (list of triangles)
+# 지오메트리 캐시 (삼각형 목록)
 GEO_CACHE = {}
 
 def get_part_geometry(part_id: str, depth=0, max_depth=3):
     """
-    Returns a list of triangles in local LDU coordinates.
-    Each triangle is a tuple of 3 points: ((x1,y1,z1), (x2,y2,z2), (x3,y3,z3))
+    로컬 LDU 좌표계의 삼각형 목록을 반환합니다.
+    각 삼각형은 3개의 점으로 구성된 튜플입니다: ((x1,y1,z1), (x2,y2,z2), (x3,y3,z3))
     """
     clean_id = part_id.lower().replace(".dat", "").strip()
     filename = f"{clean_id}.dat"
     
-    # Check cache (only top level calls use cache typically, but we can cache raw geometry)
+    # 캐시 확인
     if depth == 0 and clean_id in GEO_CACHE:
         return GEO_CACHE[clean_id]
         
@@ -297,9 +296,9 @@ def get_part_geometry(part_id: str, depth=0, max_depth=3):
                 if not parts: continue
                 line_type = parts[0]
                 
-                # Type 1: Sub-file
+                # 타입 1: 서브파일
                 if line_type == '1' and depth < max_depth:
-                     # 1 <colour> x y z a b c d e f g h <file>
+                     # 1 <색상> x y z a b c d e f g h <파일>
                     try:
                         tx, ty, tz = float(parts[2]), float(parts[3]), float(parts[4])
                         a, b, c = float(parts[5]), float(parts[6]), float(parts[7])
@@ -309,7 +308,7 @@ def get_part_geometry(part_id: str, depth=0, max_depth=3):
                         
                         sub_tris = get_part_geometry(sub_file, depth + 1, max_depth)
                         
-                        # Transform sub-triangles
+                        # 서브 삼각형 변환
                         for t in sub_tris:
                             new_t = []
                             for p in t:
@@ -322,7 +321,7 @@ def get_part_geometry(part_id: str, depth=0, max_depth=3):
                     except:
                         pass
 
-                # Type 3: Triangle
+                # 타입 3: 삼각형
                 elif line_type == '3':
                     try:
                         coords = [float(x) for x in parts[2:11]]
@@ -333,7 +332,7 @@ def get_part_geometry(part_id: str, depth=0, max_depth=3):
                     except:
                         pass
                         
-                # Type 4: Quad (Split into 2 Triangles)
+                # 타입 4: 사각형 (2개의 삼각형으로 분할)
                 elif line_type == '4':
                      try:
                         coords = [float(x) for x in parts[2:14]]
@@ -341,7 +340,7 @@ def get_part_geometry(part_id: str, depth=0, max_depth=3):
                         p2 = (coords[3], coords[4], coords[5])
                         p3 = (coords[6], coords[7], coords[8])
                         p4 = (coords[9], coords[10], coords[11])
-                        # Split: (p1, p2, p3) and (p3, p4, p1)
+                        # 분할: (p1, p2, p3) 및 (p3, p4, p1)
                         triangles.append((p1, p2, p3))
                         triangles.append((p3, p4, p1))
                      except:
