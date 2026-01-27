@@ -69,3 +69,4 @@ pybullet==3.2.7
 langchain-google-genai
 langchain-core
 langsmith
+boto3

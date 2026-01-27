@@ -1,8 +1,6 @@
+# docker-compose.yml (AI repo)
 services:
   app:
-    # 이미지 이름은 GitHub Secrets(DOCKER_USERNAME)와 일치해야 합니다.
-    # deploy.yml에서 sed 명령어로 교체하거나, .env에서 주입받을 수 있습니다.
-    # 여기서는 GitHub Actions에서 DOCKER_USERNAME을 환경변수로 주입받아 사용하도록 세팅합니다.
     image: ${DOCKER_USERNAME}/brickers-ai:latest
     container_name: brickers-ai-container
     restart: unless-stopped
@@ -10,6 +8,13 @@ services:
       - "8000:8000"
     volumes:
       - ./.env:/app/.env
-    # 필요한 경우 환경변수 추가 (이미 .env 파일에서 로드되므로 별도 지정 불필요)
-    # environment:
-    #   - ENV=prod
+    environment:
+      # ✅ 전체 작업 총 제한 (Spring보다 조금 짧게)
+      - KIDS_TOTAL_TIMEOUT_SEC=840
+      # ✅ Tripo 대기 제한 (무한대기 방지)
+      - TRIPO_WAIT_TIMEOUT_SEC=780
+
+      # ✅ S3 업로드 프리픽스 (선택)
+      - S3_PREFIX=kids
+      # ✅ (선택) base url 직접 주고 싶으면 사용
+      # - S3_PUBLIC_BASE_URL=https://YOUR_BUCKET.s3.YOUR_REGION.amazonaws.com

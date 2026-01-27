@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # ✅ kids router
 from route import kids_render
 
+
 app = FastAPI(title="Brickers AI API", version="0.1.0")
 
 app.add_middleware(
