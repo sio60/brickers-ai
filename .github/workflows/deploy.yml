@@ -1,0 +1,98 @@
+name: Deploy to Raspberry Pi
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/brickers-ai:latest
+          platforms: linux/arm64
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Copy docker-compose.yml to Raspberry Pi
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.KEY }}
+          port: ${{ secrets.PORT }}
+          source: "docker-compose.yml"
+          target: "/home/${{ secrets.USERNAME }}/brickers-ai"
+
+      - name: Execute remote commands via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.KEY }}
+          port: ${{ secrets.PORT }}
+          script: |
+            set -euo pipefail
+            export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
+            cd /home/${{ secrets.USERNAME }}/brickers-ai
+
+            echo "📄 Writing .env..."
+            cat > .env <<'EOF'
+            # --- API Keys ---
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            TRIPO_API_KEY=${{ secrets.TRIPO_API_KEY }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            OPENAI_MODEL=${{ secrets.OPENAI_MODEL }}
+            NANO_BANANA_MODEL=${{ secrets.NANO_BANANA_MODEL }}
+
+            # --- S3 Upload ---
+            AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
+            AWS_REGION=${{ secrets.AWS_REGION }}
+            AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            # (선택) 없으면 자동 생성
+            S3_PUBLIC_BASE_URL=${{ secrets.S3_PUBLIC_BASE_URL }}
+            # (선택)
+            S3_PREFIX=kids
+
+            # --- Timeouts ---
+            KIDS_TOTAL_TIMEOUT_SEC=840
+            TRIPO_WAIT_TIMEOUT_SEC=780
+            EOF
+
+            echo "🔐 Docker Hub login..."
+            echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+            echo "📦 Pull latest image..."
+            sudo -E docker compose pull
+
+            echo "🔁 Restart..."
+            sudo -E docker compose up -d
+
+            echo "🧹 Prune..."
+            sudo docker image prune -f
