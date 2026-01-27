@@ -317,6 +317,8 @@ BRICK_FIX_SYSTEM_PROMPT = """당신은 레고 브릭 구조물 생성 전문가�
 ⚠️ 중요: "move"는 사용하지 마세요. 좌표 오차로 인해 구조가 더 불안정해집니다.
 보강 시에는 제공된 "연결 가능 후보"의 `new_position` 위치를 사용하여 새로운 브릭을 추가하십시오.
 
+💡 팁: 1x1 브릭("3005.dat", "3024.dat")이 불안정한 경우, 구조적 중요도가 낮다면 과감히 "delete"를 선택하여 안정성을 확보하세요.
+
 응답은 반드시 JSON 형식으로만 출력하세요."""
 
 
@@ -518,6 +520,7 @@ class RegenerationAgent:
                 conv_result = convert_glb_to_ldr(
                     glb_path,
                     output_ldr_path,
+                    auto_remove_1x1=False,  # 1x1 브릭 유지 (물리 검증 후 선별적 삭제)
                     **current_params
                 )
                 total_bricks = conv_result.get("parts", 0)
