@@ -532,6 +532,9 @@ async def process(
     prompt: str | None = Form(default=None),
     returnLdrData: str | bool | None = Form(default="true"),
 ):
+    import time
+    total_start = time.time()
+
     if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="image only")
 
@@ -547,6 +550,13 @@ async def process(
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
+    print("═" * 70)
+    print(f"🚀 [AI-SERVER] 요청 시작 | reqId={req_id}")
+    print(f"📁 파일: {file.filename} | size={file.size}bytes | type={file.content_type}")
+    print(f"📊 파라미터: age={age} | budget={budget} | prompt={'custom' if prompt else 'auto'}")
+    print(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
+    print("═" * 70)
+
     try:
         # ✅ 전체 타임아웃 (무한 대기 방지)
         with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
@@ -554,32 +564,45 @@ async def process(
             # -----------------
             # 0) 입력 저장
             # -----------------
+            step_start = time.time()
+            print(f"📌 [STEP 0/5] 입력 이미지 저장 중...")
             img_bytes = await file.read()
             raw_ext = _mime_to_ext(file.content_type or "image/png")
             raw_path = out_req_dir / f"raw{raw_ext}"
             await _write_bytes_async(raw_path, img_bytes)
+            print(f"✅ [STEP 0/5] 입력 저장 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
             # -----------------
             # 1) 보정 (Gemini) - thread로 안전
             # -----------------
+            step_start = time.time()
+            print(f"📌 [STEP 1/5] Gemini 이미지 보정 시작...")
             corrected_bytes = await render_one_image_async(img_bytes, file.content_type or "image/png")
             corrected_path = out_req_dir / "corrected.png"
             await _write_bytes_async(corrected_path, corrected_bytes)
             corrected_url = _to_generated_url(corrected_path, out_dir=out_req_dir)
+            print(f"✅ [STEP 1/5] Gemini 보정 완료 | {len(corrected_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
             # -----------------
             # 2) Prompt (OpenAI) - thread로 안전
             # -----------------
+            step_start = time.time()
             if prompt and prompt.strip():
                 prompt_text = prompt.strip()
+                print(f"📌 [STEP 2/5] 커스텀 프롬프트 사용 | len={len(prompt_text)}")
             else:
+                print(f"📌 [STEP 2/5] OpenAI 프롬프트 생성 시작...")
                 prompt_text = await anyio.to_thread.run_sync(
                     build_lego_prompt_sync, corrected_bytes, "image/png"
                 )
+                print(f"✅ [STEP 2/5] 프롬프트 생성 완료 | len={len(prompt_text)} | {time.time()-step_start:.2f}s")
+                print(f"   📝 프롬프트: {prompt_text[:100]}...")
 
             # -----------------
             # 3) Tripo 3D (생성 → 대기 → 다운로드)
             # -----------------
+            step_start = time.time()
+            print(f"📌 [STEP 3/5] Tripo 3D 모델 생성 시작... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
             negative_prompt = (
                 "low quality, blurry, noisy, over-detailed, high poly, "
                 "thin parts, tiny features, text, logos, patterns, textures"
@@ -587,6 +610,7 @@ async def process(
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
                 task_id = await client.text_to_model(prompt=prompt_text, negative_prompt=negative_prompt)
+                print(f"   🔄 Tripo 작업 생성됨 | taskId={task_id}")
 
                 # ✅ Tripo 대기 타임아웃
                 with anyio.fail_after(TRIPO_WAIT_TIMEOUT_SEC):
@@ -595,7 +619,12 @@ async def process(
                 if task.status != TaskStatus.SUCCESS:
                     raise RuntimeError(f"Tripo task failed: status={task.status}")
 
+                print(f"   ✅ Tripo 작업 완료 | status={task.status}")
                 downloaded = await client.download_task_models(task, str(out_tripo_dir))
+                print(f"   📥 Tripo 파일 다운로드 완료 | files={list(downloaded.keys()) if downloaded else 'None'}")
+
+            tripo_elapsed = time.time() - step_start
+            print(f"✅ [STEP 3/5] Tripo 완료 | {tripo_elapsed:.2f}s")
 
             # -----------------
             # 3-1) downloaded 정규화 (URL이면 다시 받아서 파일로)
@@ -658,11 +687,15 @@ async def process(
             if not glb_path.exists() or glb_path.stat().st_size == 0:
                 raise RuntimeError(f"GLB missing/empty: {glb_path}")
 
+            print(f"   📦 GLB 준비완료 | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
+
             # -----------------
             # 5) Brickify 실행 (CPU heavy -> thread)
             # -----------------
+            step_start = time.time()
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 60))
             start_target = _budget_to_start_target(eff_budget)
+            print(f"📌 [STEP 4/5] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
 
             global _CONVERT_FN
             if _CONVERT_FN is None:
@@ -700,9 +733,17 @@ async def process(
                 )
             )
 
+            brickify_elapsed = time.time() - step_start
+            print(f"✅ [STEP 4/5] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
                 raise RuntimeError("LDR output missing/empty")
 
+            # -----------------
+            # 5) 결과 URL 생성
+            # -----------------
+            step_start = time.time()
+            print(f"📌 [STEP 5/5] 결과 URL 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
             ldr_url = _to_generated_url(out_ldr, out_dir=out_brick_dir)
 
             ldr_data_uri: Optional[str] = None
@@ -710,6 +751,17 @@ async def process(
                 b = await _read_bytes_async(out_ldr)
                 b64_str = base64.b64encode(b).decode("utf-8")
                 ldr_data_uri = f"data:text/plain;base64,{b64_str}"
+
+            print(f"✅ [STEP 5/5] URL 생성 완료 | {time.time()-step_start:.2f}s")
+
+            total_elapsed = time.time() - total_start
+            print("═" * 70)
+            print(f"🎉 [AI-SERVER] 요청 완료! | reqId={req_id}")
+            print(f"⏱️  총 소요시간: {total_elapsed:.2f}s ({total_elapsed/60:.1f}분)")
+            print(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
+            print(f"   - Brickify: {brickify_elapsed:.2f}s")
+            print(f"📦 결과: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
+            print("═" * 70)
 
             return {
                 "ok": True,
@@ -728,8 +780,13 @@ async def process(
     except HTTPException:
         raise
     except Exception as e:
+        total_elapsed = time.time() - total_start
         tb = traceback.format_exc()
-        print(f"[kids.process] ERROR req_id={req_id}\n{tb}")
+        print("═" * 70)
+        print(f"❌ [AI-SERVER] 요청 실패! | reqId={req_id} | 소요시간={total_elapsed:.2f}s")
+        print(f"❌ 에러: {str(e)}")
+        print("═" * 70)
+        print(tb)
         _write_error_log(out_req_dir, tb)
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
@@ -738,3 +795,4 @@ async def process(
             raise HTTPException(status_code=500, detail={"reqId": req_id, "error": str(e)})
 
         raise HTTPException(status_code=500, detail="process failed")
+
