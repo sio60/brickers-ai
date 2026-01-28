@@ -4,20 +4,20 @@ services:
     # 로컬 빌드 사용 (또는 수동으로 빌드한 이미지)
     build:
       context: .
-      dockerfile: Dockerfile.optimized
+      dockerfile: Dockerfile
     image: brickers-ai:base
     container_name: brickers-ai-container
     restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
-      # ✅ 핵심: 소스코드를 볼륨 마운트 (패키지는 이미지에 설치됨)
+      # ✅ Kids Mode 전용 소스코드 마운트
       - ./route:/app/route
       - ./brick-engine:/app/brick-engine
       - ./app.py:/app/app.py
       - ./config.py:/app/config.py
       - ./.env:/app/.env
-      # public 폴더 (선택사항)
+      # public 폴더 (생성된 파일 저장소)
       - ./public:/app/public
     environment:
       - KIDS_TOTAL_TIMEOUT_SEC=840
@@ -25,3 +25,14 @@ services:
       - S3_PREFIX=uploads/ai-generated
       # PYTHONUNBUFFERED: 로그 즉시 출력
       - PYTHONUNBUFFERED=1
+
+      # ✅ SQS 설정 (Backend와 동일한 큐 사용)
+      - AWS_SQS_QUEUE_URL=${AWS_SQS_QUEUE_URL}
+      - AWS_SQS_ENABLED=${AWS_SQS_ENABLED:-true}
+      - SQS_POLL_INTERVAL=${SQS_POLL_INTERVAL:-5}
+      - SQS_MAX_MESSAGES=${SQS_MAX_MESSAGES:-1}
+      - SQS_VISIBILITY_TIMEOUT=${SQS_VISIBILITY_TIMEOUT:-1800}
+      - SQS_WAIT_TIME=${SQS_WAIT_TIME:-10}
+
+      # ✅ Backend 연동 (Stage 업데이트용)
+      - BACKEND_URL=${BACKEND_URL:-http://backend:8080}

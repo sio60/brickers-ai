@@ -114,9 +114,20 @@ jobs:
             S3_PUBLIC_BASE_URL=${{ secrets.S3_PUBLIC_BASE_URL }}
             S3_PREFIX=uploads/ai-generated
 
+            # --- SQS ---
+            AWS_SQS_QUEUE_URL=${{ secrets.AWS_SQS_QUEUE_URL }}
+            AWS_SQS_ENABLED=true
+            SQS_POLL_INTERVAL=5
+            SQS_MAX_MESSAGES=1
+            SQS_VISIBILITY_TIMEOUT=1800
+            SQS_WAIT_TIME=10
+
+            # --- Backend URL (Stage 업데이트용) ---
+            BACKEND_URL=${{ secrets.BACKEND_URL }}
+
             # --- Timeouts ---
-            KIDS_TOTAL_TIMEOUT_SEC=840
-            TRIPO_WAIT_TIMEOUT_SEC=780
+            KIDS_TOTAL_TIMEOUT_SEC=1800
+            TRIPO_WAIT_TIMEOUT_SEC=900
             EOF
 
             # 베이스 이미지가 없으면 pull (최초 1회만)
