@@ -2,7 +2,7 @@ name: Deploy to Raspberry Pi (Optimized)
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -96,6 +96,11 @@ jobs:
             set -euo pipefail
             export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
             cd /home/${{ secrets.USERNAME }}/brickers-ai
+
+            echo "🔄 Pulling latest code from GitHub..."
+            git fetch origin
+            git checkout main
+            git pull origin main
 
             echo "📄 Writing .env..."
             # .env가 디렉토리면 삭제
