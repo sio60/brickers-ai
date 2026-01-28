@@ -26,8 +26,9 @@ services:
       # PYTHONUNBUFFERED: 로그 즉시 출력
       - PYTHONUNBUFFERED=1
 
-      # ✅ SQS 설정 (Backend와 동일한 큐 사용)
-      - AWS_SQS_QUEUE_URL=${AWS_SQS_QUEUE_URL}
+      # ✅ SQS 설정 (2개 Queue 분리)
+      - AWS_SQS_REQUEST_QUEUE_URL=${AWS_SQS_REQUEST_QUEUE_URL}
+      - AWS_SQS_RESULT_QUEUE_URL=${AWS_SQS_RESULT_QUEUE_URL}
       - AWS_SQS_ENABLED=${AWS_SQS_ENABLED:-true}
       - SQS_POLL_INTERVAL=${SQS_POLL_INTERVAL:-5}
       - SQS_MAX_MESSAGES=${SQS_MAX_MESSAGES:-1}
