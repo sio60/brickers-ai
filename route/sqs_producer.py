@@ -80,6 +80,8 @@ async def send_result_message(
         print(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (메시지 전송 스킵) | jobId={job_id}")
         return
 
+    print(f"📤 [SQS Producer] RESULT 메시지 생성 시작 | jobId={job_id}")
+
     try:
         client = _get_sqs_client()
 
@@ -99,15 +101,22 @@ async def send_result_message(
                 "parts": parts,
                 "finalTarget": final_target,
             })
+            print(f"   - success=True")
+            print(f"   - ldrUrl: {ldr_url[:60]}..." if ldr_url else "   - ldrUrl: (empty)")
+            print(f"   - parts: {parts}, finalTarget: {final_target}")
         else:
             message["errorMessage"] = error_message or "Unknown error"
+            print(f"   - success=False")
+            print(f"   - errorMessage: {error_message}")
 
-        client.send_message(
+        print(f"   - queueUrl: {SQS_QUEUE_URL}")
+
+        response = client.send_message(
             QueueUrl=SQS_QUEUE_URL,
             MessageBody=json.dumps(message)
         )
 
-        print(f"✅ [SQS Producer] RESULT 메시지 전송 완료 | jobId={job_id} | success={success}")
+        print(f"✅ [SQS Producer] RESULT 메시지 전송 완료 | jobId={job_id} | messageId={response.get('MessageId', 'N/A')}")
 
     except Exception as e:
         print(f"❌ [SQS Producer] 메시지 전송 실패 | jobId={job_id} | error={str(e)}")
