@@ -25,7 +25,7 @@ def _is_truthy(v: str) -> bool:
 
 # 환경 변수
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-2").strip()
-SQS_QUEUE_URL = os.environ.get("AWS_SQS_QUEUE_URL", "").strip()
+SQS_REQUEST_QUEUE_URL = os.environ.get("AWS_SQS_REQUEST_QUEUE_URL", "").strip()  # Backend → AI (REQUEST 수신)
 SQS_ENABLED = _is_truthy(os.environ.get("AWS_SQS_ENABLED", "false"))
 SQS_POLL_INTERVAL = int(os.environ.get("SQS_POLL_INTERVAL", "5"))  # 초
 SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "1"))  # AI는 CPU intensive → 순차 처리
@@ -56,8 +56,8 @@ def _get_sqs_client():
     if boto3 is None:
         raise RuntimeError("boto3 is not installed (pip install boto3)")
 
-    if not SQS_QUEUE_URL:
-        raise RuntimeError("AWS_SQS_QUEUE_URL is not set")
+    if not SQS_REQUEST_QUEUE_URL:
+        raise RuntimeError("AWS_SQS_REQUEST_QUEUE_URL is not set")
 
     # boto3는 아래 env를 자동으로 읽음:
     # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION
@@ -88,7 +88,7 @@ async def poll_and_process():
             log(f"🔄 [SQS Consumer] 폴링 중... (poll #{_POLL_COUNT})")
 
         response = sqs.receive_message(
-            QueueUrl=SQS_QUEUE_URL,
+            QueueUrl=SQS_REQUEST_QUEUE_URL,
             MaxNumberOfMessages=SQS_MAX_MESSAGES,
             WaitTimeSeconds=SQS_WAIT_TIME,
             VisibilityTimeout=SQS_VISIBILITY_TIMEOUT,
@@ -208,7 +208,7 @@ def delete_message(receipt_handle: str):
     try:
         sqs = _get_sqs_client()
         sqs.delete_message(
-            QueueUrl=SQS_QUEUE_URL,
+            QueueUrl=SQS_REQUEST_QUEUE_URL,
             ReceiptHandle=receipt_handle,
         )
     except Exception as e:
@@ -227,7 +227,7 @@ async def start_consumer():
 
     log("═" * 70)
     log("[SQS Consumer] 🚀 시작")
-    log(f"   - Queue URL: {SQS_QUEUE_URL}")
+    log(f"   - Queue URL: {SQS_REQUEST_QUEUE_URL}")
     log(f"   - Poll Interval: {SQS_POLL_INTERVAL}초")
     log(f"   - Max Messages: {SQS_MAX_MESSAGES}")
     log(f"   - Wait Time: {SQS_WAIT_TIME}초 (Long polling)")
