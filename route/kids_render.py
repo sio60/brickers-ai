@@ -5,14 +5,22 @@ import os
 import base64
 import uuid
 import traceback
+import time
 from pathlib import Path
 from typing import Dict, Optional, Any
+from datetime import datetime
 
 import anyio
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 
 import httpx
+
+
+def log(msg: str) -> None:
+    """타임스탬프 포함 로그 출력"""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    print(f"[{ts}] {msg}")
 
 # ---- OpenAI ----
 # OpenAI import removed - no longer needed
@@ -609,12 +617,12 @@ async def process_kids_request_internal(
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
-    print("═" * 70)
-    print(f"🚀 [AI-SERVER] 요청 시작 | jobId={job_id}")
-    print(f"📁 원본 이미지 URL: {source_image_url}")
-    print(f"📊 파라미터: age={age} | budget={budget}")
-    print(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
-    print("═" * 70)
+    log("═" * 70)
+    log(f"🚀 [AI-SERVER] 요청 시작 | jobId={job_id}")
+    log(f"📁 원본 이미지 URL: {source_image_url}")
+    log(f"📊 파라미터: age={age} | budget={budget}")
+    log(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
+    log("═" * 70)
 
     try:
         # ✅ 전체 타임아웃 (무한 대기 방지)
@@ -624,28 +632,28 @@ async def process_kids_request_internal(
             # 0) S3에서 원본 이미지 다운로드
             # -----------------
             step_start = time.time()
-            print(f"📌 [STEP 0/5] S3에서 원본 이미지 다운로드 중...")
+            log(f"📌 [STEP 0/5] S3에서 원본 이미지 다운로드 중...")
             img_bytes = await _download_from_s3(source_image_url)
             raw_path = out_req_dir / "raw.png"
             await _write_bytes_async(raw_path, img_bytes)
-            print(f"✅ [STEP 0/5] 다운로드 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+            log(f"✅ [STEP 0/5] 다운로드 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
             # -----------------
             # 1) 보정 (Gemini) - thread로 안전
             # -----------------
             step_start = time.time()
-            print(f"📌 [STEP 1/5] Gemini 이미지 보정 시작...")
+            log(f"📌 [STEP 1/5] Gemini 이미지 보정 시작...")
             corrected_bytes = await render_one_image_async(img_bytes, "image/png")
             corrected_path = out_req_dir / "corrected.png"
             await _write_bytes_async(corrected_path, corrected_bytes)
             corrected_url = _to_generated_url(corrected_path, out_dir=out_req_dir)
-            print(f"✅ [STEP 1/5] Gemini 보정 완료 | {len(corrected_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+            log(f"✅ [STEP 1/5] Gemini 보정 완료 | {len(corrected_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
             # -----------------
             # 2) Tripo 3D (이미지 → 3D 모델 생성)
             # -----------------
             step_start = time.time()
-            print(f"📌 [STEP 2/4] Tripo 3D 모델 생성 시작 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
+            log(f"📌 [STEP 2/4] Tripo 3D 모델 생성 시작 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
 
             # ✅ Backend에 stage 업데이트
             await update_job_stage(job_id, "THREE_D_PREVIEW")
@@ -667,7 +675,7 @@ async def process_kids_request_internal(
                 print(f"   📥 Tripo 파일 다운로드 완료 | files={list(downloaded.keys()) if downloaded else 'None'}")
 
             tripo_elapsed = time.time() - step_start
-            print(f"✅ [STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
+            log(f"✅ [STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
 
             # -----------------
             # 3-1) downloaded 정규화 (URL이면 다시 받아서 파일로)
@@ -738,7 +746,7 @@ async def process_kids_request_internal(
             step_start = time.time()
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 60))
             start_target = _budget_to_start_target(eff_budget)
-            print(f"📌 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
+            log(f"📌 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
 
             # ✅ Backend에 stage 업데이트
             await update_job_stage(job_id, "MODEL")
@@ -780,7 +788,7 @@ async def process_kids_request_internal(
             )
 
             brickify_elapsed = time.time() - step_start
-            print(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+            log(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
 
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
                 raise RuntimeError("LDR output missing/empty")
@@ -789,7 +797,7 @@ async def process_kids_request_internal(
             # 5) 결과 URL 생성 및 BOM 파일 생성
             # -----------------
             step_start = time.time()
-            print(f"📌 [STEP 4/4] 결과 URL 생성 및 BOM 파일 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
+            log(f"📌 [STEP 4/4] 결과 URL 생성 및 BOM 파일 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
             ldr_url = _to_generated_url(out_ldr, out_dir=out_brick_dir)
 
             # ✅ BOM (Bill of Materials) 파일 생성
@@ -801,15 +809,15 @@ async def process_kids_request_internal(
             bom_url = _to_generated_url(out_bom, out_dir=out_brick_dir)
             print(f"   ✅ BOM 파일 생성 완료 | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
 
-            print(f"✅ [STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
+            log(f"✅ [STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
 
             total_elapsed = time.time() - total_start
-            print("═" * 70)
-            print(f"🎉 [AI-SERVER] 요청 완료! | jobId={job_id}")
-            print(f"⏱️  총 소요시간: {total_elapsed:.2f}s ({total_elapsed/60:.1f}분)")
-            print(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
-            print(f"   - Brickify: {brickify_elapsed:.2f}s")
-            print(f"📦 결과: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
+            log("═" * 70)
+            log(f"🎉 [AI-SERVER] 요청 완료! | jobId={job_id}")
+            log(f"⏱️  총 소요시간: {total_elapsed:.2f}s ({total_elapsed/60:.1f}분)")
+            log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
+            log(f"   - Brickify: {brickify_elapsed:.2f}s")
+            log(f"📦 결과: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
             print("═" * 70)
 
             return {
@@ -824,11 +832,11 @@ async def process_kids_request_internal(
     except Exception as e:
         total_elapsed = time.time() - total_start
         tb = traceback.format_exc()
-        print("═" * 70)
-        print(f"❌ [AI-SERVER] 요청 실패! | jobId={job_id} | 소요시간={total_elapsed:.2f}s")
-        print(f"❌ 에러: {str(e)}")
-        print("═" * 70)
-        print(tb)
+        log("═" * 70)
+        log(f"❌ [AI-SERVER] 요청 실패! | jobId={job_id} | 소요시간={total_elapsed:.2f}s")
+        log(f"❌ 에러: {str(e)}")
+        log("═" * 70)
+        log(tb)
         _write_error_log(out_req_dir, tb)
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
