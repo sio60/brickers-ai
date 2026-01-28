@@ -15,11 +15,16 @@ RUN apt-get update && apt-get install -y \
     libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# ✅ 로컬 wheels 폴더 복사 (pybullet 등 미리 빌드된 패키지)
+COPY ./wheels /tmp/wheels
+
 # requirements.txt만 먼저 복사 (레이어 캐싱 최적화)
 COPY requirements.txt .
 
-# 패키지 설치 (이 레이어는 캐시됨)
-RUN pip install --no-cache-dir -r requirements.txt
+# ✅ 패키지 설치 (로컬 wheels 우선 사용)
+RUN pip install --no-cache-dir \
+    --find-links=/tmp/wheels \
+    -r requirements.txt
 
 # ============================================
 # Stage 2: Runtime (소스코드는 볼륨 마운트)
