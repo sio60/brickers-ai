@@ -81,7 +81,7 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
-          source: "route,brick-engine,app.py,config.py,docker-compose.yml"
+          source: "route,brick-engine,app.py,config.py,docker-compose.yml,Dockerfile,requirements.txt,wheels,__init__.py"
           target: "/home/${{ secrets.USERNAME }}/brickers-ai"
           overwrite: true
 
@@ -96,11 +96,6 @@ jobs:
             set -euo pipefail
             export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
             cd /home/${{ secrets.USERNAME }}/brickers-ai
-
-            echo "🔄 Pulling latest code from GitHub..."
-            git fetch origin
-            git checkout main
-            git pull origin main
 
             echo "📄 Writing .env..."
             # .env가 디렉토리면 삭제
@@ -141,23 +136,12 @@ jobs:
             TRIPO_WAIT_TIMEOUT_SEC=900
             EOF
 
-            # 베이스 이미지가 없으면 pull (최초 1회만)
-            if ! sudo docker images | grep -q "brickers-ai.*base"; then
-              echo "🔐 Docker Hub login..."
-              echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+            echo "🔨 Building and restarting containers..."
+            sudo -E docker compose down
+            sudo -E docker compose build
+            sudo -E docker compose up -d
 
-              echo "📦 Pull base image (first time only)..."
-              sudo docker pull ${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
-            fi
-
-            # requirements.txt 변경된 경우에만 이미지 갱신
-            if [ "${{ needs.check-requirements.outputs.requirements_changed }}" = "true" ]; then
-              echo "📦 Requirements changed - pulling new base image..."
-              echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
-              sudo docker pull ${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
-            fi
-
-            echo "🔁 Restarting container..."
-            sudo -E docker compose restart
+            echo "📋 Showing logs..."
+            sudo docker ps | grep brickers-ai
 
             echo "✅ Deployment complete!"
