@@ -90,7 +90,7 @@ S3_PUBLIC_BASE_URL = os.environ.get("S3_PUBLIC_BASE_URL", "").strip().rstrip("/"
 USE_S3 = _is_truthy(os.environ.get("USE_S3", "true" if S3_BUCKET else "false"))
 
 # prefix (선택)
-S3_PREFIX = os.environ.get("S3_PREFIX", "kids").strip().strip("/")
+S3_PREFIX = os.environ.get("S3_PREFIX", "uploads/ai-generated").strip().strip("/")
 
 # 공개 URL이 안 되면 presign으로 내려주기(선택)
 S3_PRESIGN = _is_truthy(os.environ.get("S3_PRESIGN", "false"))
@@ -217,6 +217,8 @@ def _to_generated_url(p: Path, out_dir: Path) -> str:
     USE_S3=false면: GENERATED_DIR 기준 /api/generated/... URL 반환
     GENERATED_DIR 밖 파일이면: out_dir로 복사 후 처리
     """
+    from datetime import datetime
+
     p = Path(p).resolve()
     gen = GENERATED_DIR.resolve()
 
@@ -232,10 +234,13 @@ def _to_generated_url(p: Path, out_dir: Path) -> str:
         p = dst
         rel = dst.relative_to(gen)
 
-    # ✅ S3 업로드 모드
+    # ✅ S3 업로드 모드 (타임스탬프 기반 경로 구조화)
     if USE_S3:
         try:
-            s3_key = f"{S3_PREFIX}/{rel.as_posix()}" if S3_PREFIX else rel.as_posix()
+            now = datetime.now()
+            year, month = now.year, now.month
+            # uploads/ai-generated/2026/01/req_abc/corrected.png
+            s3_key = f"{S3_PREFIX}/{year:04d}/{month:02d}/{rel.as_posix()}" if S3_PREFIX else rel.as_posix()
             content_type = _guess_content_type(p)
             s3_url = _upload_to_s3(p, s3_key, content_type)
             if s3_url:
@@ -256,6 +261,13 @@ async def _download_http_to_file(url: str, dst: Path) -> Path:
         r.raise_for_status()
         await _write_bytes_async(dst, r.content)
     return dst
+
+async def _download_from_s3(url: str) -> bytes:
+    """S3 URL에서 파일 다운로드"""
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
 
 def _parse_bool(v: str | bool | None, default: bool = False) -> bool:
     if v is None:
@@ -502,6 +514,15 @@ def _pick_glb_from_downloaded(downloaded: Dict[str, str], out_dir: Path) -> Opti
     return _find_glb_in_dir(out_dir)
 
 # -----------------------------
+# Request schema
+# -----------------------------
+class KidsProcessRequest(BaseModel):
+    sourceImageUrl: str  # S3 URL (Frontend가 직접 업로드한 URL)
+    age: str = "6-7"
+    budget: Optional[int] = None
+    prompt: Optional[str] = None
+    returnLdrData: bool = False  # S3 사용 시 기본값 False
+
 # Response schema
 # -----------------------------
 class ProcessResp(BaseModel):
@@ -525,18 +546,9 @@ class ProcessResp(BaseModel):
 # ✅ 단일 API
 # -----------------------------
 @router.post("/process-all", response_model=ProcessResp)
-async def process(
-    file: UploadFile = File(...),
-    age: str = Form("6-7"),
-    budget: int | None = Form(default=None),
-    prompt: str | None = Form(default=None),
-    returnLdrData: str | bool | None = Form(default="true"),
-):
+async def process(request: KidsProcessRequest):
     import time
     total_start = time.time()
-
-    if not (file.content_type or "").startswith("image/"):
-        raise HTTPException(status_code=400, detail="image only")
 
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
@@ -552,8 +564,8 @@ async def process(
 
     print("═" * 70)
     print(f"🚀 [AI-SERVER] 요청 시작 | reqId={req_id}")
-    print(f"📁 파일: {file.filename} | size={file.size}bytes | type={file.content_type}")
-    print(f"📊 파라미터: age={age} | budget={budget} | prompt={'custom' if prompt else 'auto'}")
+    print(f"📁 원본 이미지 URL: {request.sourceImageUrl}")
+    print(f"📊 파라미터: age={request.age} | budget={request.budget} | prompt={'custom' if request.prompt else 'auto'}")
     print(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
     print("═" * 70)
 
@@ -562,22 +574,21 @@ async def process(
         with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
 
             # -----------------
-            # 0) 입력 저장
+            # 0) S3에서 원본 이미지 다운로드
             # -----------------
             step_start = time.time()
-            print(f"📌 [STEP 0/5] 입력 이미지 저장 중...")
-            img_bytes = await file.read()
-            raw_ext = _mime_to_ext(file.content_type or "image/png")
-            raw_path = out_req_dir / f"raw{raw_ext}"
+            print(f"📌 [STEP 0/5] S3에서 원본 이미지 다운로드 중...")
+            img_bytes = await _download_from_s3(request.sourceImageUrl)
+            raw_path = out_req_dir / "raw.png"
             await _write_bytes_async(raw_path, img_bytes)
-            print(f"✅ [STEP 0/5] 입력 저장 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+            print(f"✅ [STEP 0/5] 다운로드 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
             # -----------------
             # 1) 보정 (Gemini) - thread로 안전
             # -----------------
             step_start = time.time()
             print(f"📌 [STEP 1/5] Gemini 이미지 보정 시작...")
-            corrected_bytes = await render_one_image_async(img_bytes, file.content_type or "image/png")
+            corrected_bytes = await render_one_image_async(img_bytes, "image/png")
             corrected_path = out_req_dir / "corrected.png"
             await _write_bytes_async(corrected_path, corrected_bytes)
             corrected_url = _to_generated_url(corrected_path, out_dir=out_req_dir)
@@ -587,8 +598,8 @@ async def process(
             # 2) Prompt (OpenAI) - thread로 안전
             # -----------------
             step_start = time.time()
-            if prompt and prompt.strip():
-                prompt_text = prompt.strip()
+            if request.prompt and request.prompt.strip():
+                prompt_text = request.prompt.strip()
                 print(f"📌 [STEP 2/5] 커스텀 프롬프트 사용 | len={len(prompt_text)}")
             else:
                 print(f"📌 [STEP 2/5] OpenAI 프롬프트 생성 시작...")
@@ -693,7 +704,7 @@ async def process(
             # 5) Brickify 실행 (CPU heavy -> thread)
             # -----------------
             step_start = time.time()
-            eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 60))
+            eff_budget = int(request.budget) if request.budget is not None else int(AGE_TO_BUDGET.get(request.age.strip(), 60))
             start_target = _budget_to_start_target(eff_budget)
             print(f"📌 [STEP 4/5] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
 
@@ -746,8 +757,9 @@ async def process(
             print(f"📌 [STEP 5/5] 결과 URL 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
             ldr_url = _to_generated_url(out_ldr, out_dir=out_brick_dir)
 
+            # ✅ S3 사용 시에는 ldrData 생략 (불필요한 base64 인코딩 제거)
             ldr_data_uri: Optional[str] = None
-            if _parse_bool(returnLdrData, default=True):
+            if not USE_S3 and request.returnLdrData:
                 b = await _read_bytes_async(out_ldr)
                 b64_str = base64.b64encode(b).decode("utf-8")
                 ldr_data_uri = f"data:text/plain;base64,{b64_str}"
