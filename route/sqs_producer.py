@@ -9,6 +9,12 @@ from datetime import datetime
 from typing import Optional
 
 
+def log(msg: str) -> None:
+    """타임스탬프 포함 로그 출력"""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    log(f"[{ts}] {msg}")
+
+
 def _is_truthy(v: str) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "y", "on")
 
@@ -77,10 +83,10 @@ async def send_result_message(
         error_message: 실패 시 에러 메시지
     """
     if not SQS_ENABLED:
-        print(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (메시지 전송 스킵) | jobId={job_id}")
+        log(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (메시지 전송 스킵) | jobId={job_id}")
         return
 
-    print(f"📤 [SQS Producer] RESULT 메시지 생성 시작 | jobId={job_id}")
+    log(f"📤 [SQS Producer] RESULT 메시지 생성 시작 | jobId={job_id}")
 
     try:
         client = _get_sqs_client()
@@ -101,23 +107,23 @@ async def send_result_message(
                 "parts": parts,
                 "finalTarget": final_target,
             })
-            print(f"   - success=True")
-            print(f"   - ldrUrl: {ldr_url[:60]}..." if ldr_url else "   - ldrUrl: (empty)")
-            print(f"   - parts: {parts}, finalTarget: {final_target}")
+            log(f"   - success=True")
+            log(f"   - ldrUrl: {ldr_url[:60]}..." if ldr_url else "   - ldrUrl: (empty)")
+            log(f"   - parts: {parts}, finalTarget: {final_target}")
         else:
             message["errorMessage"] = error_message or "Unknown error"
-            print(f"   - success=False")
-            print(f"   - errorMessage: {error_message}")
+            log(f"   - success=False")
+            log(f"   - errorMessage: {error_message}")
 
-        print(f"   - queueUrl: {SQS_QUEUE_URL}")
+        log(f"   - queueUrl: {SQS_QUEUE_URL}")
 
         response = client.send_message(
             QueueUrl=SQS_QUEUE_URL,
             MessageBody=json.dumps(message)
         )
 
-        print(f"✅ [SQS Producer] RESULT 메시지 전송 완료 | jobId={job_id} | messageId={response.get('MessageId', 'N/A')}")
+        log(f"✅ [SQS Producer] RESULT 메시지 전송 완료 | jobId={job_id} | messageId={response.get('MessageId', 'N/A')}")
 
     except Exception as e:
-        print(f"❌ [SQS Producer] 메시지 전송 실패 | jobId={job_id} | error={str(e)}")
+        log(f"❌ [SQS Producer] 메시지 전송 실패 | jobId={job_id} | error={str(e)}")
         raise
