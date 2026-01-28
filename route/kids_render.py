@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import httpx
 
 # ---- OpenAI ----
-from openai import OpenAI
+# OpenAI import removed - no longer needed
 
 # ---- Tripo ----
 from tripo3d import TripoClient
@@ -269,6 +269,56 @@ async def _download_from_s3(url: str) -> bytes:
         resp.raise_for_status()
         return resp.content
 
+def _generate_bom_from_ldr(ldr_path: Path) -> Dict[str, Any]:
+    """
+    LDR 파일에서 BOM (Bill of Materials) 생성
+    Returns: {
+        "total_parts": int,
+        "parts": [{"part_id": str, "color": str, "quantity": int}, ...]
+    }
+    """
+    from collections import Counter
+
+    if not ldr_path.exists():
+        return {"total_parts": 0, "parts": []}
+
+    content = ldr_path.read_text(encoding="utf-8", errors="ignore")
+    lines = content.splitlines()
+
+    # LDraw 파츠 라인 추출 (타입 1)
+    parts_counter = Counter()
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("0"):  # 주석 또는 메타데이터
+            continue
+
+        parts = line.split()
+        if len(parts) >= 15 and parts[0] == "1":  # 타입 1: 서브파일 참조 (파츠)
+            color = parts[1]
+            part_id = parts[14] if len(parts) > 14 else "unknown"
+            # .dat 확장자 제거
+            if part_id.endswith(".dat"):
+                part_id = part_id[:-4]
+
+            key = f"{part_id}_{color}"
+            parts_counter[key] += 1
+
+    # BOM 생성
+    bom_parts = []
+    for key, qty in parts_counter.most_common():
+        part_id, color = key.rsplit("_", 1)
+        bom_parts.append({
+            "part_id": part_id,
+            "color": color,
+            "quantity": qty
+        })
+
+    return {
+        "total_parts": sum(parts_counter.values()),
+        "parts": bom_parts
+    }
+
 def _parse_bool(v: str | bool | None, default: bool = False) -> bool:
     if v is None:
         return default
@@ -302,84 +352,30 @@ def _local_generated_path_from_url(u: str) -> Optional[Path]:
     return None
 
 # -----------------------------
-# OpenAI prompt builder (sync -> thread)
+# OpenAI prompt builder - REMOVED (직접 이미지로 Tripo 호출)
 # -----------------------------
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-SYSTEM_INSTRUCTIONS = """You are an expert prompt engineer for 3D modeling from a reference photo.
-Goal: output a single-paragraph English prompt for creating a SIMPLE mesh suitable for LEGO building instructions.
-
-Rules:
-- Output ONLY the prompt text (one paragraph). No bullets, no numbering, no extra commentary.
-- Low-poly hard-surface, blocky primitives, clean planar surfaces.
-- Keep geometry simple: large primitives, straight edges, shallow insets only.
-- Remove micro details: logos, text, tiny vents, patterns, textures, stickers, decals.
-- Prefer symmetry when possible.
-"""
-
-def _extract_text(resp) -> str:
-    t = getattr(resp, "output_text", None)
-    if isinstance(t, str) and t.strip():
-        return t.strip()
-
-    out = getattr(resp, "output", []) or []
-    texts: list[str] = []
-    for item in out:
-        for c in getattr(item, "content", []) or []:
-            if getattr(c, "type", "") in ("output_text", "text"):
-                val = getattr(c, "text", "") or ""
-                if val.strip():
-                    texts.append(val.strip())
-    return "\n".join(texts).strip()
-
-def build_lego_prompt_sync(image_bytes: bytes, mime: str) -> str:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    resp = openai_client.responses.create(
-        model=OPENAI_MODEL,
-        instructions=SYSTEM_INSTRUCTIONS,
-        input=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "Analyze the image and produce the modeling prompt following the rules."},
-                    {"type": "input_image", "image_url": f"data:{mime};base64,{b64}", "detail": "low"},
-                ],
-            }
-        ],
-        max_output_tokens=800,  # ✅ 10000은 너무 큼(속도/비용/안정성)
-    )
-
-    prompt = _extract_text(resp)
-    if not prompt:
-        raise RuntimeError("Empty prompt from OpenAI")
-    return prompt
+# ✅ OpenAI 프롬프트 생성 단계 제거됨
+# ✅ Nano Banana 이미지를 Tripo에 직접 전달
 
 # -----------------------------
 # Nano Banana (Gemini) - sync -> thread
 # -----------------------------
 PROMPT_NANO_BANANA = """
-Create ONE SINGLE IMAGE that is a 2x2 grid collage (four panels inside one image).
-Do NOT output separate images. Do NOT output a single-view image.
+Create a high-quality, vibrant image suitable for 3D modeling.
 
-Layout (must be visible as 4 distinct panels with clear spacing/borders):
-- Top-left: front view
-- Top-right: left 3/4 view
-- Bottom-left: right 3/4 view
-- Bottom-right: back view
+Requirements:
+- Single view from the best angle to capture the subject's key features
+- Clean white studio background
+- Soft, even lighting with subtle shadows
+- Vivid, saturated colors with clear color separation
+- Sharp, well-defined edges and contours
+- High contrast between subject and background
+- Professional product photography style
+- Remove any text, logos, patterns, or decorative details
+- Simplify complex textures into solid, uniform colors
+- Maintain the overall shape and proportions of the subject
 
-Rules:
-- The result must be ONE composite image containing all four panels.
-- Clean white studio background in every panel.
-- Soft shadow in every panel.
-- Keep the exact same LEGO model/subject consistent across panels.
-- Same lighting and scale across panels.
-- Add thin dividers or margins between panels so the 2x2 grid is obvious.
+Output a single, polished image optimized for 3D mesh generation.
 """
 
 def _decode_if_base64_image(data: bytes | str) -> bytes:
@@ -530,7 +526,6 @@ class ProcessResp(BaseModel):
     reqId: str
 
     correctedUrl: str
-    prompt: str
 
     taskId: str
     modelUrl: str
@@ -538,6 +533,7 @@ class ProcessResp(BaseModel):
 
     ldrUrl: str
     ldrData: Optional[str] = None
+    bomUrl: str  # ✅ BOM 파일 URL 추가
 
     parts: int
     finalTarget: int
@@ -595,32 +591,14 @@ async def process(request: KidsProcessRequest):
             print(f"✅ [STEP 1/5] Gemini 보정 완료 | {len(corrected_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
             # -----------------
-            # 2) Prompt (OpenAI) - thread로 안전
+            # 2) Tripo 3D (이미지 → 3D 모델 생성)
             # -----------------
             step_start = time.time()
-            if request.prompt and request.prompt.strip():
-                prompt_text = request.prompt.strip()
-                print(f"📌 [STEP 2/5] 커스텀 프롬프트 사용 | len={len(prompt_text)}")
-            else:
-                print(f"📌 [STEP 2/5] OpenAI 프롬프트 생성 시작...")
-                prompt_text = await anyio.to_thread.run_sync(
-                    build_lego_prompt_sync, corrected_bytes, "image/png"
-                )
-                print(f"✅ [STEP 2/5] 프롬프트 생성 완료 | len={len(prompt_text)} | {time.time()-step_start:.2f}s")
-                print(f"   📝 프롬프트: {prompt_text[:100]}...")
-
-            # -----------------
-            # 3) Tripo 3D (생성 → 대기 → 다운로드)
-            # -----------------
-            step_start = time.time()
-            print(f"📌 [STEP 3/5] Tripo 3D 모델 생성 시작... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
-            negative_prompt = (
-                "low quality, blurry, noisy, over-detailed, high poly, "
-                "thin parts, tiny features, text, logos, patterns, textures"
-            )
+            print(f"📌 [STEP 2/4] Tripo 3D 모델 생성 시작 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
-                task_id = await client.text_to_model(prompt=prompt_text, negative_prompt=negative_prompt)
+                # ✅ image_to_model: Nano Banana 이미지를 직접 Tripo에 전달
+                task_id = await client.image_to_model(file=str(corrected_path))
                 print(f"   🔄 Tripo 작업 생성됨 | taskId={task_id}")
 
                 # ✅ Tripo 대기 타임아웃
@@ -635,7 +613,7 @@ async def process(request: KidsProcessRequest):
                 print(f"   📥 Tripo 파일 다운로드 완료 | files={list(downloaded.keys()) if downloaded else 'None'}")
 
             tripo_elapsed = time.time() - step_start
-            print(f"✅ [STEP 3/5] Tripo 완료 | {tripo_elapsed:.2f}s")
+            print(f"✅ [STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
 
             # -----------------
             # 3-1) downloaded 정규화 (URL이면 다시 받아서 파일로)
@@ -681,7 +659,7 @@ async def process(request: KidsProcessRequest):
             model_url = _pick_model_url(files_url)
 
             # -----------------
-            # 4) Brickify 입력 GLB 확보
+            # 3) Brickify 입력 GLB 확보
             # -----------------
             glb_path = _pick_glb_from_downloaded(fixed_downloaded, out_tripo_dir)
 
@@ -701,12 +679,12 @@ async def process(request: KidsProcessRequest):
             print(f"   📦 GLB 준비완료 | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
             # -----------------
-            # 5) Brickify 실행 (CPU heavy -> thread)
+            # 4) Brickify 실행 (CPU heavy -> thread)
             # -----------------
             step_start = time.time()
             eff_budget = int(request.budget) if request.budget is not None else int(AGE_TO_BUDGET.get(request.age.strip(), 60))
             start_target = _budget_to_start_target(eff_budget)
-            print(f"📌 [STEP 4/5] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
+            print(f"📌 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
 
             global _CONVERT_FN
             if _CONVERT_FN is None:
@@ -745,16 +723,16 @@ async def process(request: KidsProcessRequest):
             )
 
             brickify_elapsed = time.time() - step_start
-            print(f"✅ [STEP 4/5] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+            print(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
 
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
                 raise RuntimeError("LDR output missing/empty")
 
             # -----------------
-            # 5) 결과 URL 생성
+            # 4) 결과 URL 생성 및 BOM 파일 생성
             # -----------------
             step_start = time.time()
-            print(f"📌 [STEP 5/5] 결과 URL 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
+            print(f"📌 [STEP 4/4] 결과 URL 생성 및 BOM 파일 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
             ldr_url = _to_generated_url(out_ldr, out_dir=out_brick_dir)
 
             # ✅ S3 사용 시에는 ldrData 생략 (불필요한 base64 인코딩 제거)
@@ -764,7 +742,16 @@ async def process(request: KidsProcessRequest):
                 b64_str = base64.b64encode(b).decode("utf-8")
                 ldr_data_uri = f"data:text/plain;base64,{b64_str}"
 
-            print(f"✅ [STEP 5/5] URL 생성 완료 | {time.time()-step_start:.2f}s")
+            # ✅ BOM (Bill of Materials) 파일 생성
+            print(f"   📋 BOM 파일 생성 중...")
+            bom_data = await anyio.to_thread.run_sync(_generate_bom_from_ldr, out_ldr)
+            out_bom = out_brick_dir / "bom.json"
+            import json
+            await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
+            bom_url = _to_generated_url(out_bom, out_dir=out_brick_dir)
+            print(f"   ✅ BOM 파일 생성 완료 | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+
+            print(f"✅ [STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
 
             total_elapsed = time.time() - total_start
             print("═" * 70)
@@ -779,12 +766,12 @@ async def process(request: KidsProcessRequest):
                 "ok": True,
                 "reqId": req_id,
                 "correctedUrl": corrected_url,
-                "prompt": prompt_text,
                 "taskId": str(task_id),
                 "modelUrl": model_url,
                 "files": files_url,
                 "ldrUrl": ldr_url,
                 "ldrData": ldr_data_uri,
+                "bomUrl": bom_url,  # ✅ BOM 파일 URL
                 "parts": int(result.get("parts", 0)),
                 "finalTarget": int(result.get("final_target", 0)),
             }
