@@ -9,3 +9,6 @@ checkpoints/
 debug_*.py
 ldr/*.ldr
 public
+# Backup files
+*.old
+*.old.yml

@@ -29,6 +29,26 @@ from google.genai import types as genai_types
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
 # -----------------------------
+# Backend 연동 (Stage 업데이트)
+# -----------------------------
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").rstrip("/")
+
+async def update_job_stage(job_id: str, stage: str) -> None:
+    """
+    Backend에 Job stage 업데이트 요청
+    - 실패해도 전체 플로우에 영향 없음 (로그만 출력)
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.patch(
+                f"{BACKEND_URL}/api/kids/jobs/{job_id}/stage",
+                json={"stage": stage}
+            )
+        print(f"   ✅ [Stage Update] {stage}")
+    except Exception as e:
+        print(f"   ⚠️ [Stage Update] 실패 (무시) | stage={stage} | error={str(e)}")
+
+# -----------------------------
 # Helpers / Config
 # -----------------------------
 def _is_truthy(v: str) -> bool:
@@ -539,18 +559,49 @@ class ProcessResp(BaseModel):
     finalTarget: int
 
 # -----------------------------
-# ✅ 단일 API
+# ✅ 내부 함수 (SQS Consumer에서 호출)
 # -----------------------------
-@router.post("/process-all", response_model=ProcessResp)
-async def process(request: KidsProcessRequest):
+async def process_kids_request_internal(
+    job_id: str,
+    source_image_url: str,
+    age: str,
+    budget: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Kids 렌더링 내부 로직 (SQS Consumer에서 호출)
+    - S3에서 이미지 다운로드
+    - Gemini 보정
+    - Tripo 3D 생성
+    - Brickify LDR 변환
+    - BOM 생성
+
+    Args:
+        job_id: Job ID (MongoDB)
+        source_image_url: S3 업로드된 원본 이미지 URL
+        age: 나이 범위 (4-5, 6-7, 8-10)
+        budget: 예산 (None이면 age 기반 자동 설정)
+
+    Returns:
+        {
+            "correctedUrl": str,
+            "modelUrl": str,
+            "ldrUrl": str,
+            "bomUrl": str,
+            "parts": int,
+            "finalTarget": int,
+        }
+
+    Raises:
+        RuntimeError: 처리 실패 시
+    """
     import time
     total_start = time.time()
 
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
-        raise HTTPException(status_code=500, detail="TRIPO_API_KEY is not set")
+        raise RuntimeError("TRIPO_API_KEY is not set")
 
-    req_id = uuid.uuid4().hex
+    req_id = job_id  # Job ID를 req_id로 사용
     out_req_dir = GENERATED_DIR / f"req_{req_id}"
     out_tripo_dir = GENERATED_DIR / f"tripo_{req_id}"
     out_brick_dir = GENERATED_DIR / f"brickify_{req_id}"
@@ -559,9 +610,9 @@ async def process(request: KidsProcessRequest):
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
     print("═" * 70)
-    print(f"🚀 [AI-SERVER] 요청 시작 | reqId={req_id}")
-    print(f"📁 원본 이미지 URL: {request.sourceImageUrl}")
-    print(f"📊 파라미터: age={request.age} | budget={request.budget} | prompt={'custom' if request.prompt else 'auto'}")
+    print(f"🚀 [AI-SERVER] 요청 시작 | jobId={job_id}")
+    print(f"📁 원본 이미지 URL: {source_image_url}")
+    print(f"📊 파라미터: age={age} | budget={budget}")
     print(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
     print("═" * 70)
 
@@ -574,7 +625,7 @@ async def process(request: KidsProcessRequest):
             # -----------------
             step_start = time.time()
             print(f"📌 [STEP 0/5] S3에서 원본 이미지 다운로드 중...")
-            img_bytes = await _download_from_s3(request.sourceImageUrl)
+            img_bytes = await _download_from_s3(source_image_url)
             raw_path = out_req_dir / "raw.png"
             await _write_bytes_async(raw_path, img_bytes)
             print(f"✅ [STEP 0/5] 다운로드 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
@@ -595,6 +646,9 @@ async def process(request: KidsProcessRequest):
             # -----------------
             step_start = time.time()
             print(f"📌 [STEP 2/4] Tripo 3D 모델 생성 시작 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
+
+            # ✅ Backend에 stage 업데이트
+            await update_job_stage(job_id, "THREE_D_PREVIEW")
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
                 # ✅ image_to_model: Nano Banana 이미지를 직접 Tripo에 전달
@@ -682,9 +736,12 @@ async def process(request: KidsProcessRequest):
             # 4) Brickify 실행 (CPU heavy -> thread)
             # -----------------
             step_start = time.time()
-            eff_budget = int(request.budget) if request.budget is not None else int(AGE_TO_BUDGET.get(request.age.strip(), 60))
+            eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 60))
             start_target = _budget_to_start_target(eff_budget)
             print(f"📌 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
+
+            # ✅ Backend에 stage 업데이트
+            await update_job_stage(job_id, "MODEL")
 
             global _CONVERT_FN
             if _CONVERT_FN is None:
@@ -729,18 +786,11 @@ async def process(request: KidsProcessRequest):
                 raise RuntimeError("LDR output missing/empty")
 
             # -----------------
-            # 4) 결과 URL 생성 및 BOM 파일 생성
+            # 5) 결과 URL 생성 및 BOM 파일 생성
             # -----------------
             step_start = time.time()
             print(f"📌 [STEP 4/4] 결과 URL 생성 및 BOM 파일 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
             ldr_url = _to_generated_url(out_ldr, out_dir=out_brick_dir)
-
-            # ✅ S3 사용 시에는 ldrData 생략 (불필요한 base64 인코딩 제거)
-            ldr_data_uri: Optional[str] = None
-            if not USE_S3 and request.returnLdrData:
-                b = await _read_bytes_async(out_ldr)
-                b64_str = base64.b64encode(b).decode("utf-8")
-                ldr_data_uri = f"data:text/plain;base64,{b64_str}"
 
             # ✅ BOM (Bill of Materials) 파일 생성
             print(f"   📋 BOM 파일 생성 중...")
@@ -755,7 +805,7 @@ async def process(request: KidsProcessRequest):
 
             total_elapsed = time.time() - total_start
             print("═" * 70)
-            print(f"🎉 [AI-SERVER] 요청 완료! | reqId={req_id}")
+            print(f"🎉 [AI-SERVER] 요청 완료! | jobId={job_id}")
             print(f"⏱️  총 소요시간: {total_elapsed:.2f}s ({total_elapsed/60:.1f}분)")
             print(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
             print(f"   - Brickify: {brickify_elapsed:.2f}s")
@@ -763,26 +813,19 @@ async def process(request: KidsProcessRequest):
             print("═" * 70)
 
             return {
-                "ok": True,
-                "reqId": req_id,
                 "correctedUrl": corrected_url,
-                "taskId": str(task_id),
                 "modelUrl": model_url,
-                "files": files_url,
                 "ldrUrl": ldr_url,
-                "ldrData": ldr_data_uri,
-                "bomUrl": bom_url,  # ✅ BOM 파일 URL
+                "bomUrl": bom_url,
                 "parts": int(result.get("parts", 0)),
                 "finalTarget": int(result.get("final_target", 0)),
             }
 
-    except HTTPException:
-        raise
     except Exception as e:
         total_elapsed = time.time() - total_start
         tb = traceback.format_exc()
         print("═" * 70)
-        print(f"❌ [AI-SERVER] 요청 실패! | reqId={req_id} | 소요시간={total_elapsed:.2f}s")
+        print(f"❌ [AI-SERVER] 요청 실패! | jobId={job_id} | 소요시간={total_elapsed:.2f}s")
         print(f"❌ 에러: {str(e)}")
         print("═" * 70)
         print(tb)
@@ -790,8 +833,57 @@ async def process(request: KidsProcessRequest):
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
 
+        raise RuntimeError(str(e)) from e
+
+
+# -----------------------------
+# ✅ HTTP API (호환성 유지)
+# -----------------------------
+@router.post("/process-all", response_model=ProcessResp)
+async def process(request: KidsProcessRequest):
+    """
+    Kids Mode 처리 (HTTP 엔드포인트)
+    - 기존 호환성 유지
+    - 내부적으로 process_kids_request_internal 호출
+    """
+    req_id = uuid.uuid4().hex
+
+    try:
+        result = await process_kids_request_internal(
+            job_id=req_id,
+            source_image_url=request.sourceImageUrl,
+            age=request.age,
+            budget=request.budget,
+        )
+
+        # ✅ S3 사용 시에는 ldrData 생략 (불필요한 base64 인코딩 제거)
+        ldr_data_uri: Optional[str] = None
+        if not USE_S3 and request.returnLdrData:
+            # ldrUrl에서 파일 읽기
+            ldr_path = _local_generated_path_from_url(result["ldrUrl"])
+            if ldr_path and ldr_path.exists():
+                b = await _read_bytes_async(ldr_path)
+                b64_str = base64.b64encode(b).decode("utf-8")
+                ldr_data_uri = f"data:text/plain;base64,{b64_str}"
+
+        return {
+            "ok": True,
+            "reqId": req_id,
+            "correctedUrl": result["correctedUrl"],
+            "taskId": req_id,  # task_id는 없지만 호환성 유지
+            "modelUrl": result["modelUrl"],
+            "files": {},  # files는 내부 함수에서 반환 안 함
+            "ldrUrl": result["ldrUrl"],
+            "ldrData": ldr_data_uri,
+            "bomUrl": result["bomUrl"],
+            "parts": result["parts"],
+            "finalTarget": result["finalTarget"],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
         if DEBUG:
             raise HTTPException(status_code=500, detail={"reqId": req_id, "error": str(e)})
-
         raise HTTPException(status_code=500, detail="process failed")
 
