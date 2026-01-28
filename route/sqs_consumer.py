@@ -58,6 +58,8 @@ def _get_sqs_client():
     return _SQS_CLIENT
 
 
+_POLL_COUNT = 0  # 폴링 횟수 추적
+
 async def poll_and_process():
     """
     SQS에서 REQUEST 메시지 폴링 및 처리
@@ -65,11 +67,18 @@ async def poll_and_process():
     - REQUEST 타입 메시지만 처리
     - 순차 처리 (AI는 CPU intensive)
     """
+    global _POLL_COUNT
+
     if not SQS_ENABLED:
         return
 
     try:
         sqs = _get_sqs_client()
+        _POLL_COUNT += 1
+
+        # 10회마다 폴링 로그 (너무 많은 로그 방지)
+        if _POLL_COUNT % 10 == 1:
+            print(f"🔄 [SQS Consumer] 폴링 중... (poll #{_POLL_COUNT})")
 
         response = sqs.receive_message(
             QueueUrl=SQS_QUEUE_URL,
@@ -81,13 +90,20 @@ async def poll_and_process():
         messages = response.get("Messages", [])
 
         if messages:
-            print(f"📥 [SQS Consumer] 메시지 수신 | count={len(messages)}")
+            print(f"📥 [SQS Consumer] 메시지 수신! | count={len(messages)} | poll #{_POLL_COUNT}")
+            for msg in messages:
+                print(f"   - MessageId: {msg.get('MessageId', 'N/A')}")
+                try:
+                    body_preview = msg.get("Body", "")[:200]
+                    print(f"   - Body preview: {body_preview}...")
+                except:
+                    pass
 
         for message in messages:
             await process_message(message)
 
     except Exception as e:
-        print(f"❌ [SQS Consumer] 폴링 실패 | error={str(e)}")
+        print(f"❌ [SQS Consumer] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")
 
 
 async def process_message(message: Dict[str, Any]):
@@ -100,8 +116,15 @@ async def process_message(message: Dict[str, Any]):
     message_id = message.get("MessageId", "unknown")
     receipt_handle = message["ReceiptHandle"]
 
+    print("=" * 60)
+    print(f"📨 [SQS Consumer] 메시지 처리 시작 | messageId={message_id}")
+
     try:
         body = json.loads(message["Body"])
+        print(f"   - type: {body.get('type')}")
+        print(f"   - jobId: {body.get('jobId')}")
+        print(f"   - sourceImageUrl: {body.get('sourceImageUrl', '')[:80]}...")
+        print(f"   - age: {body.get('age')}, budget: {body.get('budget')}")
 
         # REQUEST 타입만 처리
         if body.get("type") != "REQUEST":
@@ -115,6 +138,7 @@ async def process_message(message: Dict[str, Any]):
         budget = body.get("budget")
 
         print(f"📌 [SQS Consumer] REQUEST 메시지 처리 시작 | jobId={job_id}")
+        print(f"🚀 [SQS Consumer] AI 렌더링 시작...")
 
         # ✅ Kids 렌더링 실행
         result = await process_kids_request_internal(
@@ -124,7 +148,14 @@ async def process_message(message: Dict[str, Any]):
             budget=budget,
         )
 
+        print(f"✅ [SQS Consumer] AI 렌더링 완료!")
+        print(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
+        print(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
+        print(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
+        print(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}")
+
         # ✅ RESULT 메시지 전송 (성공)
+        print(f"📤 [SQS Consumer] RESULT 메시지 전송 중...")
         await send_result_message(
             job_id=job_id,
             success=True,
@@ -140,6 +171,7 @@ async def process_message(message: Dict[str, Any]):
         delete_message(receipt_handle)
 
         print(f"✅ [SQS Consumer] REQUEST 메시지 처리 완료 | jobId={job_id}")
+        print("=" * 60)
 
     except json.JSONDecodeError as e:
         print(f"❌ [SQS Consumer] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
