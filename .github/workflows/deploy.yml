@@ -78,7 +78,7 @@ jobs:
             # (선택) 없으면 자동 생성
             S3_PUBLIC_BASE_URL=${{ secrets.S3_PUBLIC_BASE_URL }}
             # (선택)
-            S3_PREFIX=kids
+            S3_PREFIX=uploads/ai-generated
 
             # --- Timeouts ---
             KIDS_TOTAL_TIMEOUT_SEC=840
