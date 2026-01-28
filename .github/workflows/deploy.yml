@@ -98,6 +98,12 @@ jobs:
             cd /home/${{ secrets.USERNAME }}/brickers-ai
 
             echo "📄 Writing .env..."
+            # .env가 디렉토리면 삭제
+            if [ -d .env ]; then
+              echo "⚠️  .env is a directory, removing..."
+              rm -rf .env
+            fi
+
             cat > .env <<'EOF'
             # --- API Keys ---
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
