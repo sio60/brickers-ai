@@ -20,6 +20,8 @@ services:
       # public 폴더 (생성된 파일 저장소)
       - ./public:/app/public
     environment:
+      # ✅ 시간대 설정 (한국)
+      - TZ=Asia/Seoul
       - KIDS_TOTAL_TIMEOUT_SEC=840
       - TRIPO_WAIT_TIMEOUT_SEC=780
       - S3_PREFIX=uploads/ai-generated
