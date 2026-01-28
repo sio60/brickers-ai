@@ -6,10 +6,17 @@ from __future__ import annotations
 import os
 import json
 import asyncio
+from datetime import datetime
 from typing import Dict, Any
 
 from route.kids_render import process_kids_request_internal
 from route.sqs_producer import send_result_message
+
+
+def log(msg: str) -> None:
+    """타임스탬프 포함 로그 출력"""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    print(f"[{ts}] {msg}")
 
 
 def _is_truthy(v: str) -> bool:
@@ -78,7 +85,7 @@ async def poll_and_process():
 
         # 10회마다 폴링 로그 (너무 많은 로그 방지)
         if _POLL_COUNT % 10 == 1:
-            print(f"🔄 [SQS Consumer] 폴링 중... (poll #{_POLL_COUNT})")
+            log(f"🔄 [SQS Consumer] 폴링 중... (poll #{_POLL_COUNT})")
 
         response = sqs.receive_message(
             QueueUrl=SQS_QUEUE_URL,
@@ -90,12 +97,12 @@ async def poll_and_process():
         messages = response.get("Messages", [])
 
         if messages:
-            print(f"📥 [SQS Consumer] 메시지 수신! | count={len(messages)} | poll #{_POLL_COUNT}")
+            log(f"📥 [SQS Consumer] 메시지 수신! | count={len(messages)} | poll #{_POLL_COUNT}")
             for msg in messages:
-                print(f"   - MessageId: {msg.get('MessageId', 'N/A')}")
+                log(f"   - MessageId: {msg.get('MessageId', 'N/A')}")
                 try:
                     body_preview = msg.get("Body", "")[:200]
-                    print(f"   - Body preview: {body_preview}...")
+                    log(f"   - Body preview: {body_preview}...")
                 except:
                     pass
 
@@ -103,7 +110,7 @@ async def poll_and_process():
             await process_message(message)
 
     except Exception as e:
-        print(f"❌ [SQS Consumer] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")
+        log(f"❌ [SQS Consumer] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")
 
 
 async def process_message(message: Dict[str, Any]):
@@ -116,19 +123,19 @@ async def process_message(message: Dict[str, Any]):
     message_id = message.get("MessageId", "unknown")
     receipt_handle = message["ReceiptHandle"]
 
-    print("=" * 60)
-    print(f"📨 [SQS Consumer] 메시지 처리 시작 | messageId={message_id}")
+    log("=" * 60)
+    log(f"📨 [SQS Consumer] 메시지 처리 시작 | messageId={message_id}")
 
     try:
         body = json.loads(message["Body"])
-        print(f"   - type: {body.get('type')}")
-        print(f"   - jobId: {body.get('jobId')}")
-        print(f"   - sourceImageUrl: {body.get('sourceImageUrl', '')[:80]}...")
-        print(f"   - age: {body.get('age')}, budget: {body.get('budget')}")
+        log(f"   - type: {body.get('type')}")
+        log(f"   - jobId: {body.get('jobId')}")
+        log(f"   - sourceImageUrl: {body.get('sourceImageUrl', '')[:80]}...")
+        log(f"   - age: {body.get('age')}, budget: {body.get('budget')}")
 
         # REQUEST 타입만 처리
         if body.get("type") != "REQUEST":
-            print(f"⚠️ [SQS Consumer] RESULT 타입 메시지 무시 | messageId={message_id} | type={body.get('type')}")
+            log(f"⚠️ [SQS Consumer] RESULT 타입 메시지 무시 | messageId={message_id} | type={body.get('type')}")
             delete_message(receipt_handle)
             return
 
@@ -137,8 +144,8 @@ async def process_message(message: Dict[str, Any]):
         age = body.get("age", "6-7")
         budget = body.get("budget")
 
-        print(f"📌 [SQS Consumer] REQUEST 메시지 처리 시작 | jobId={job_id}")
-        print(f"🚀 [SQS Consumer] AI 렌더링 시작...")
+        log(f"📌 [SQS Consumer] REQUEST 메시지 처리 시작 | jobId={job_id}")
+        log(f"🚀 [SQS Consumer] AI 렌더링 시작...")
 
         # ✅ Kids 렌더링 실행
         result = await process_kids_request_internal(
@@ -148,14 +155,14 @@ async def process_message(message: Dict[str, Any]):
             budget=budget,
         )
 
-        print(f"✅ [SQS Consumer] AI 렌더링 완료!")
-        print(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
-        print(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
-        print(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
-        print(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}")
+        log(f"✅ [SQS Consumer] AI 렌더링 완료!")
+        log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
+        log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
+        log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
+        log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}")
 
         # ✅ RESULT 메시지 전송 (성공)
-        print(f"📤 [SQS Consumer] RESULT 메시지 전송 중...")
+        log(f"📤 [SQS Consumer] RESULT 메시지 전송 중...")
         await send_result_message(
             job_id=job_id,
             success=True,
@@ -170,16 +177,16 @@ async def process_message(message: Dict[str, Any]):
         # ✅ 메시지 삭제 (처리 완료)
         delete_message(receipt_handle)
 
-        print(f"✅ [SQS Consumer] REQUEST 메시지 처리 완료 | jobId={job_id}")
-        print("=" * 60)
+        log(f"✅ [SQS Consumer] REQUEST 메시지 처리 완료 | jobId={job_id}")
+        log("=" * 60)
 
     except json.JSONDecodeError as e:
-        print(f"❌ [SQS Consumer] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
+        log(f"❌ [SQS Consumer] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
         # 파싱 실패 메시지는 삭제 (재처리 불가)
         delete_message(receipt_handle)
 
     except Exception as e:
-        print(f"❌ [SQS Consumer] 메시지 처리 실패 | messageId={message_id} | error={str(e)}")
+        log(f"❌ [SQS Consumer] 메시지 처리 실패 | messageId={message_id} | error={str(e)}")
 
         # ✅ RESULT 메시지 전송 (실패)
         try:
@@ -190,7 +197,7 @@ async def process_message(message: Dict[str, Any]):
                 error_message=str(e),
             )
         except Exception as send_error:
-            print(f"❌ [SQS Consumer] 실패 메시지 전송 실패 | error={str(send_error)}")
+            log(f"❌ [SQS Consumer] 실패 메시지 전송 실패 | error={str(send_error)}")
 
         # AI 처리 실패 메시지는 삭제 (재처리 X, RESULT로 실패 전달함)
         delete_message(receipt_handle)
@@ -205,7 +212,7 @@ def delete_message(receipt_handle: str):
             ReceiptHandle=receipt_handle,
         )
     except Exception as e:
-        print(f"❌ [SQS Consumer] 메시지 삭제 실패 | error={str(e)}")
+        log(f"❌ [SQS Consumer] 메시지 삭제 실패 | error={str(e)}")
 
 
 async def start_consumer():
@@ -215,17 +222,17 @@ async def start_consumer():
     - 에러 발생 시에도 계속 실행
     """
     if not SQS_ENABLED:
-        print("[SQS Consumer] ⚠️ SQS 비활성화 상태 (AWS_SQS_ENABLED=false)")
+        log("[SQS Consumer] ⚠️ SQS 비활성화 상태 (AWS_SQS_ENABLED=false)")
         return
 
-    print("═" * 70)
-    print("[SQS Consumer] 🚀 시작")
-    print(f"   - Queue URL: {SQS_QUEUE_URL}")
-    print(f"   - Poll Interval: {SQS_POLL_INTERVAL}초")
-    print(f"   - Max Messages: {SQS_MAX_MESSAGES}")
-    print(f"   - Wait Time: {SQS_WAIT_TIME}초 (Long polling)")
-    print(f"   - Visibility Timeout: {SQS_VISIBILITY_TIMEOUT}초")
-    print("═" * 70)
+    log("═" * 70)
+    log("[SQS Consumer] 🚀 시작")
+    log(f"   - Queue URL: {SQS_QUEUE_URL}")
+    log(f"   - Poll Interval: {SQS_POLL_INTERVAL}초")
+    log(f"   - Max Messages: {SQS_MAX_MESSAGES}")
+    log(f"   - Wait Time: {SQS_WAIT_TIME}초 (Long polling)")
+    log(f"   - Visibility Timeout: {SQS_VISIBILITY_TIMEOUT}초")
+    log("═" * 70)
 
     while True:
         try:
@@ -233,6 +240,6 @@ async def start_consumer():
             await asyncio.sleep(SQS_POLL_INTERVAL)
 
         except Exception as e:
-            print(f"❌ [SQS Consumer] 예외 발생 | error={str(e)}")
+            log(f"❌ [SQS Consumer] 예외 발생 | error={str(e)}")
             # 에러 발생해도 계속 실행
             await asyncio.sleep(SQS_POLL_INTERVAL)
