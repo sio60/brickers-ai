@@ -1,4 +1,4 @@
-name: Deploy to Raspberry Pi
+name: Deploy to Raspberry Pi (Optimized)
 
 on:
   push:
@@ -6,7 +6,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-push:
+  # ============================================
+  # Job 1: 패키지 변경 시에만 이미지 빌드
+  # - requirements.txt 변경 감지
+  # - 변경된 경우에만 Docker 이미지 빌드
+  # ============================================
+  check-requirements:
+    runs-on: ubuntu-latest
+    outputs:
+      requirements_changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if requirements.txt changed
+        id: check
+        run: |
+          if git diff --name-only HEAD HEAD~1 | grep -q "requirements.txt"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-base-image:
+    needs: check-requirements
+    if: needs.check-requirements.outputs.requirements_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,30 +50,40 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push
+      - name: Build and push base image
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile.optimized
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/brickers-ai:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
           platforms: linux/arm64
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
+          cache-to: type=inline
 
+  # ============================================
+  # Job 2: 소스코드 배포 (매번 실행)
+  # - 소스코드만 복사
+  # - 컨테이너 재시작
+  # ============================================
   deploy:
-    needs: build-and-push
+    needs: [check-requirements, build-base-image]
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Copy docker-compose.yml to Raspberry Pi
+      - name: Copy source files to Raspberry Pi
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
-          source: "docker-compose.yml"
+          source: "route,brick-engine,app.py,config.py,docker-compose.yml"
           target: "/home/${{ secrets.USERNAME }}/brickers-ai"
+          overwrite: true
 
       - name: Execute remote commands via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -75,9 +111,7 @@ jobs:
             AWS_REGION=${{ secrets.AWS_REGION }}
             AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
             AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            # (선택) 없으면 자동 생성
             S3_PUBLIC_BASE_URL=${{ secrets.S3_PUBLIC_BASE_URL }}
-            # (선택)
             S3_PREFIX=uploads/ai-generated
 
             # --- Timeouts ---
@@ -85,14 +119,23 @@ jobs:
             TRIPO_WAIT_TIMEOUT_SEC=780
             EOF
 
-            echo "🔐 Docker Hub login..."
-            echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+            # 베이스 이미지가 없으면 pull (최초 1회만)
+            if ! sudo docker images | grep -q "brickers-ai.*base"; then
+              echo "🔐 Docker Hub login..."
+              echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-            echo "📦 Pull latest image..."
-            sudo -E docker compose pull
+              echo "📦 Pull base image (first time only)..."
+              sudo docker pull ${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
+            fi
 
-            echo "🔁 Restart..."
-            sudo -E docker compose up -d
+            # requirements.txt 변경된 경우에만 이미지 갱신
+            if [ "${{ needs.check-requirements.outputs.requirements_changed }}" = "true" ]; then
+              echo "📦 Requirements changed - pulling new base image..."
+              echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+              sudo docker pull ${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
+            fi
 
-            echo "🧹 Prune..."
-            sudo docker image prune -f
+            echo "🔁 Restarting container..."
+            sudo -E docker compose restart
+
+            echo "✅ Deployment complete!"

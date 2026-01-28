@@ -1,20 +1,27 @@
-# docker-compose.yml (AI repo)
+# docker-compose.yml (최적화 버전)
 services:
   app:
-    image: ${DOCKER_USERNAME}/brickers-ai:latest
+    # 로컬 빌드 사용 (또는 수동으로 빌드한 이미지)
+    build:
+      context: .
+      dockerfile: Dockerfile.optimized
+    image: brickers-ai:base
     container_name: brickers-ai-container
     restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
+      # ✅ 핵심: 소스코드를 볼륨 마운트 (패키지는 이미지에 설치됨)
+      - ./route:/app/route
+      - ./brick-engine:/app/brick-engine
+      - ./app.py:/app/app.py
+      - ./config.py:/app/config.py
       - ./.env:/app/.env
+      # public 폴더 (선택사항)
+      - ./public:/app/public
     environment:
-      # ✅ 전체 작업 총 제한 (Spring보다 조금 짧게)
       - KIDS_TOTAL_TIMEOUT_SEC=840
-      # ✅ Tripo 대기 제한 (무한대기 방지)
       - TRIPO_WAIT_TIMEOUT_SEC=780
-
-      # ✅ S3 업로드 프리픽스 (선택)
       - S3_PREFIX=uploads/ai-generated
-      # ✅ (선택) base url 직접 주고 싶으면 사용
-      # - S3_PUBLIC_BASE_URL=https://YOUR_BUCKET.s3.YOUR_REGION.amazonaws.com
+      # PYTHONUNBUFFERED: 로그 즉시 출력
+      - PYTHONUNBUFFERED=1
