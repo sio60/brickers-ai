@@ -105,6 +105,9 @@ jobs:
             fi
 
             cat > .env <<'EOF'
+            # --- 시간대 설정 (한국) ---
+            TZ=Asia/Seoul
+
             # --- API Keys ---
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             TRIPO_API_KEY=${{ secrets.TRIPO_API_KEY }}
