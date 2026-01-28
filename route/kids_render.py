@@ -652,7 +652,7 @@ async def process_kids_request_internal(
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
                 # ✅ image_to_model: Nano Banana 이미지를 직접 Tripo에 전달
-                task_id = await client.image_to_model(file=str(corrected_path))
+                task_id = await client.image_to_model(image=str(corrected_path))
                 print(f"   🔄 Tripo 작업 생성됨 | taskId={task_id}")
 
                 # ✅ Tripo 대기 타임아웃
