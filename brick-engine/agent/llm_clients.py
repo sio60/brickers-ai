@@ -5,7 +5,7 @@
 # ============================================================================
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union, Callable
 import json
 import os
 from pathlib import Path
@@ -74,6 +74,18 @@ class BaseLLMClient(ABC):
             파싱된 JSON 딕셔너리
         """
         pass
+
+    def bind_tools(self, tools: List[Any]) -> Any:
+        """
+        LLM에 도구를 바인딩함 (Function Calling)
+        
+        Args:
+            tools: LangChain Tool 객체 리스트 또는 함수 리스트
+            
+        Returns:
+            도구가 바인딩된 Runnable 객체
+        """
+        raise NotImplementedError("이 클라이언트는 아직 툴 바인딩을 지원하지 않습니다.")
 
 
 class GroqClient(BaseLLMClient):
@@ -247,6 +259,7 @@ class GeminiClient(BaseLLMClient):
         # JSON 파싱 시도
         try:
             cleaned = response_text.strip()
+
             # 코드 블록 제거 (```json ... ``` 형태로 올 수 있음)
             if "```" in cleaned:
                 if "```json" in cleaned:
@@ -258,6 +271,13 @@ class GeminiClient(BaseLLMClient):
         except (json.JSONDecodeError, IndexError) as e:
             print(f"[경고] Gemini JSON 파싱 실패: {e}")
             return {"error": str(e), "raw_response": response_text}
+
+    def bind_tools(self, tools: List[Any]) -> Any:
+        """
+        Gemini 모델에 툴 바인딩 (LangChain 활용)
+        """
+        llm = self._get_model()
+        return llm.bind_tools(tools)
 
 
 
