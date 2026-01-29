@@ -4,31 +4,30 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
-import config
 from db import get_db, get_parts_collection
 from vectordb.seed import seed_dummy_parts
 from vectordb.search import parts_vector_search
 from ldr.import_to_mongo import import_ldr_bom_with_steps, import_car_ldr
 
+import asyncio
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter
 
-# ✅ kids router
+import config
 from route import kids_render
+from route.sqs_consumer import start_consumer
 
 # ✅ instructions routers
 from route.instructions_pdf import router as instructions_router
 from route.instructions_upload import router as instructions_upload_router
 
 
-app = FastAPI(title="Brickers AI API", version="0.1.0")
+app = FastAPI(title="Brickers AI API - Kids Mode", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["*"],  # ✅ 배포/로컬 모두 허용 (보안상 필요시 도메인 지정)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,7 +77,7 @@ class LdrImportRequest(BaseModel):
 
 @api.get("/health", tags=["system"])
 def health():
-    return {"status": "ok", "env": getattr(config, "ENV", "unknown")}
+    return {"status": "ok", "mode": "kids-only", "env": getattr(config, "ENV", "unknown")}
 
 
 @api.get("/mongo/ping", tags=["system"])
@@ -137,3 +136,17 @@ app.include_router(kids_render.router, prefix="/api/v1/kids", tags=["kids"])
 # (라우터 파일 내부 prefix="/api/instructions" 이므로 프론트는 /api/instructions/...로 호출)
 app.include_router(instructions_router)
 app.include_router(instructions_upload_router)
+@app.on_event("startup")
+async def startup_event():
+    """FastAPI 시작 시 SQS Consumer 백그라운드 태스크 시작"""
+    print("=" * 70)
+    print("[FastAPI] 🚀 Application Startup")
+    print("=" * 70)
+
+    # SQS Consumer 백그라운드 태스크 시작
+    asyncio.create_task(start_consumer())
+    print("[FastAPI] ✅ SQS Consumer 백그라운드 태스크 시작")
+
+
+# ✅ Kids Mode router 연결
+# app.include_router(kids_render.router)
