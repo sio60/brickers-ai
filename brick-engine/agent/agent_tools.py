@@ -8,7 +8,6 @@ class TuneParameters(BaseModel):
     """
     target: int = Field(..., description="목표 스터드 크기 (기본값: 25). 크기가 클수록 디테일이 살지만 불안정할 수 있음.")
     budget: int = Field(..., description="최대 브릭 사용 개수 (기본값: 150).")
-    shrink: float = Field(..., description="브릭 축소 비율 (0.8 ~ 1.0). 값이 작을수록 결합이 헐거워지고, 클수록 빡빡해짐. (기본값: 0.85)")
     interlock: bool = Field(..., description="인터락(엇갈려 쌓기) 활성화 여부. 안정성을 위해 필수적임.")
     fill: bool = Field(..., description="내부 채움 활성화 여부. 끄면 속이 비어 가벼워지지만 약해짐.")
     smart_fix: bool = Field(..., description="스마트 보정 활성화 여부.")
