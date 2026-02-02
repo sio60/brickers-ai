@@ -1,4 +1,4 @@
-name: Deploy to Raspberry Pi (Optimized)
+name: Deploy to Raspberry Pi
 
 on:
   push:
@@ -6,96 +6,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ============================================
-  # Job 1: 패키지 변경 시에만 이미지 빌드
-  # - requirements.txt 변경 감지
-  # - 변경된 경우에만 Docker 이미지 빌드
-  # ============================================
-  check-requirements:
-    runs-on: ubuntu-latest
-    outputs:
-      requirements_changed: ${{ steps.check.outputs.changed }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Check if requirements.txt changed
-        id: check
-        run: |
-          if git diff --name-only HEAD HEAD~1 | grep -q "requirements.txt"; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
-
-  build-base-image:
-    needs: check-requirements
-    if: needs.check-requirements.outputs.requirements_changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build and push base image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.optimized
-          push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
-          platforms: linux/arm64
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
-          cache-to: type=inline
-
-  # ============================================
-  # Job 2: 소스코드 배포 (매번 실행)
-  # - 소스코드만 복사
-  # - 컨테이너 재시작
-  # ============================================
   deploy:
-    needs: [check-requirements, build-base-image]
-    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Copy source files to Raspberry Pi
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.KEY }}
-          port: ${{ secrets.PORT }}
-          source: "route,brick-engine,app.py,config.py,docker-compose.yml,Dockerfile,requirements.txt,wheels,__init__.py"
-          target: "/home/${{ secrets.USERNAME }}/brickers-ai"
-          overwrite: true
-
-      - name: Execute remote commands via SSH
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
+          timeout: 30m
           script: |
             set -euo pipefail
-            export DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
             cd /home/${{ secrets.USERNAME }}/brickers-ai
+
+            echo "📥 Pulling latest code from GitHub..."
+            git fetch origin main
+            git reset --hard origin/main
 
             echo "📄 Writing .env..."
             # .env가 디렉토리면 삭제
@@ -140,12 +68,11 @@ jobs:
             TRIPO_WAIT_TIMEOUT_SEC=900
             EOF
 
-            echo "🔨 Building and restarting containers..."
-            sudo -E docker compose down
-            sudo -E docker compose build
-            sudo -E docker compose up -d
+            echo "🔨 Running build script..."
+            chmod +x build.sh
+            sudo -E ./build.sh
 
-            echo "📋 Showing logs..."
-            sudo docker ps | grep brickers-ai
+            echo "📋 Showing container status..."
+            sudo docker ps | grep brickers-ai || true
 
             echo "✅ Deployment complete!"
