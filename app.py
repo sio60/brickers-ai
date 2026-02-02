@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import config
 from route import kids_render
 from route.sqs_consumer import start_consumer
+from route import color_variant
 
 
 app = FastAPI(title="Brickers AI API - Kids Mode", version="0.2.0")
@@ -54,3 +55,6 @@ async def startup_event():
 
 # ✅ Kids Mode router 연결
 app.include_router(kids_render.router)
+
+# ✅ Color Variant router 연결
+app.include_router(color_variant.router)
