@@ -54,7 +54,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile.optimized
+          file: Dockerfile.base
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/brickers-ai:base
           platforms: linux/arm64

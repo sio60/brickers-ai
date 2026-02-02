@@ -1,0 +1,46 @@
+# ============================================
+# Stage 1: Builder (빌드 의존성만 포함)
+# ============================================
+FROM python:3.11.9-slim AS builder
+
+WORKDIR /build
+
+# 빌드 도구만 설치
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libfreetype6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# requirements 복사 및 wheel 빌드
+COPY requirements.txt .
+
+# wheel 파일로 빌드 (의존성 미리 컴파일)
+RUN pip wheel --no-cache-dir --wheel-dir /build/wheels -r requirements.txt
+
+# ============================================
+# Stage 2: Runtime (실행만 가능한 최소 이미지)
+# ============================================
+FROM python:3.11.9-slim AS runtime
+
+WORKDIR /app
+
+# 런타임 라이브러리만 설치 (빌드 도구 제외)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libatlas-base-dev \
+    libgfortran5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# builder에서 빌드한 wheel만 복사
+COPY --from=builder /build/wheels /tmp/wheels
+COPY requirements.txt .
+
+# wheel에서 설치 (컴파일 불필요)
+RUN pip install --no-cache-dir --find-links=/tmp/wheels -r requirements.txt \
+    && rm -rf /tmp/wheels
+
+# 소스코드는 볼륨 마운트
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
