@@ -10,6 +10,46 @@ from route import kids_render
 from route.sqs_consumer import start_consumer
 
 
+import os
+import httpx
+
+from chat.router import router as chat_router
+from chat.memory import InMemoryConversationStore
+from chat.service import ChatService
+
+app = FastAPI()
+
+
+@app.on_event("startup")
+async def startup():
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY 환경변수가 없습니다.")
+
+    app.state.openai_http = httpx.AsyncClient(
+        base_url="https://api.openai.com",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0),
+    )
+
+    store = InMemoryConversationStore(
+        max_messages=int(os.getenv("CHAT_MAX_MESSAGES", "20")),
+        ttl_seconds=int(os.getenv("CHAT_TTL_SECONDS", "3600")),
+    )
+
+    app.state.chat_service = ChatService(http=app.state.openai_http, store=store)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await app.state.openai_http.aclose()
+
+
+app.include_router(chat_router)
+
 app = FastAPI(title="Brickers AI API - Kids Mode", version="0.2.0")
 
 app.add_middleware(
@@ -37,7 +77,11 @@ app.mount(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mode": "kids-only", "env": getattr(config, "ENV", "unknown")}
+    return {
+        "status": "ok",
+        "mode": "kids-only",
+        "env": getattr(config, "ENV", "unknown"),
+    }
 
 
 @app.on_event("startup")
