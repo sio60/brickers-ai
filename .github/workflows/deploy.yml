@@ -9,21 +9,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Copy source files to Raspberry Pi
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.KEY }}
-          port: ${{ secrets.PORT }}
-          source: "route,brick-engine,app.py,config.py,docker-compose.yml,Dockerfile,requirements.txt,build.sh,__init__.py"
-          target: "/home/${{ secrets.USERNAME }}/brickers-ai"
-          overwrite: true
-
-      - name: Execute remote commands via SSH
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
@@ -34,6 +20,10 @@ jobs:
           script: |
             set -euo pipefail
             cd /home/${{ secrets.USERNAME }}/brickers-ai
+
+            echo "📥 Pulling latest code from GitHub..."
+            git fetch origin main
+            git reset --hard origin/main
 
             echo "📄 Writing .env..."
             # .env가 디렉토리면 삭제
