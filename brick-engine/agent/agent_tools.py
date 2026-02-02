@@ -1,6 +1,12 @@
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
+
+# ============================================================================
+# 에이전트 도구 스키마 정의
+# LLM이 Function Calling으로 사용할 수 있는 도구들의 입출력 형식 정의
+# ============================================================================
+
 class TuneParameters(BaseModel):
     """
     구조물 안정성을 개선하기 위해 GLB-to-LDR 변환 파라미터를 조정합니다.
@@ -14,6 +20,7 @@ class TuneParameters(BaseModel):
     plates_per_voxel: int = Field(..., description="복셀당 플레이트 수 (1~3). 3이면 정밀하지만 브릭 수가 늘어남.")
     reasoning: str = Field(..., description="이 파라미터를 선택한 이유에 대한 간략한 설명.")
 
+
 class FixFloatingBricks(BaseModel):
     """
     물리 검증 결과 공중에 떠 있거나(Floating) 불안정한 브릭들을 삭제합니다.
@@ -21,3 +28,21 @@ class FixFloatingBricks(BaseModel):
     """
     bricks_to_delete: List[str] = Field(..., description="삭제할 브릭의 ID 목록.")
     reasoning: str = Field(..., description="삭제 대상 선정 이유.")
+
+
+class MergeBricks(BaseModel):
+    """
+    같은 색상의 인접 1x1 브릭들을 큰 브릭(1x2, 1x3, 1x4)으로 병합합니다.
+    병합하면 연결이 강화되어 구조적 안정성이 향상됩니다.
+    색상이 다른 브릭은 병합되지 않습니다.
+    """
+    target_brick_ids: Optional[List[str]] = Field(
+        default=None, 
+        description="병합할 대상 브릭 ID 목록. None이면 모든 1x1 브릭을 대상으로 합니다."
+    )
+    min_merge_count: int = Field(
+        default=2, 
+        description="최소 병합 개수 (2~4). 2면 1x2, 3이면 1x3, 4면 1x4 브릭으로 병합."
+    )
+    reasoning: str = Field(..., description="병합이 필요한 이유에 대한 설명.")
+
