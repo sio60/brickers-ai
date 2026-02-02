@@ -114,6 +114,9 @@ class PyBulletVerifier:
         
         self._init_simulation()
         
+        # 이전 세션의 브릭 바디 매핑 초기화 (수정된 LDR 파일 로드 시 필수)
+        self.brick_bodies = {}
+        
         bricks = self.plan.get_all_bricks()
         
         # 사전 처리: Z축 위치를 계산하고 지면에 맞추기 위한 최소 오프셋 찾기

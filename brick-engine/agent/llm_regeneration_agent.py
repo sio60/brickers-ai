@@ -19,7 +19,9 @@ import json
 # LangGraph & LangChain imports
 try:
     from langgraph.graph import StateGraph, END
+    from langgraph.graph.message import add_messages
     from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage, ToolMessage
+    from typing import Annotated
 except ImportError:
     print("❌ LangGraph 또는 LangChain이 설치되지 않았습니다. 'pip install langgraph langchain-core'를 실행하세요.")
     sys.exit(1)
@@ -81,6 +83,8 @@ class VerificationFeedback:
     total_bricks: int = 0
     fallen_bricks_count: int = 0
     floating_bricks_count: int = 0
+    floating_brick_ids: List[str] = field(default_factory=list)  # 공중부양 브릭 ID 목록
+    fallen_brick_ids: List[str] = field(default_factory=list)    # 떨어진 브릭 ID 목록
     failure_ratio: float = 0.0
     first_failure_brick: Optional[str] = None
     max_drift: float = 0.0
@@ -113,6 +117,8 @@ def extract_verification_feedback(result, total_bricks: int) -> VerificationFeed
     
     feedback.fallen_bricks_count = len(fallen_bricks)
     feedback.floating_bricks_count = len(floating_bricks)
+    feedback.floating_brick_ids = list(floating_bricks)  # ID 목록 저장
+    feedback.fallen_brick_ids = list(fallen_bricks)      # ID 목록 저장
     feedback.first_failure_brick = first_failure
     feedback.collision_count = collision_count
     
@@ -136,6 +142,11 @@ def _format_feedback(feedback: VerificationFeedback) -> str:
         ])
         if feedback.first_failure_brick:
             lines.append(f"- 최초 붕괴 브릭: {feedback.first_failure_brick}")
+        # LLM이 FixFloatingBricks 사용 시 명확히 알 수 있도록 ID 목록 제공
+        if feedback.floating_brick_ids:
+            lines.append(f"- 공중부양 브릭 ID 목록: {feedback.floating_brick_ids}")
+        if feedback.fallen_brick_ids:
+            lines.append(f"- 떨어진 브릭 ID 목록: {feedback.fallen_brick_ids}")
     if feedback.collision_count > 0:
         lines.append(f"- 충돌 감지: {feedback.collision_count}건")
     
@@ -158,11 +169,12 @@ class AgentState(TypedDict):
     
     # 실행 상태
     attempts: int
-    messages: List[BaseMessage] # 대화 기록 (History)
+    messages: Annotated[List[BaseMessage], add_messages] # 대화 기록 (History)
     
     # 검증 결과 캐시 (Tool 실행 시 참조용)
     verification_raw_result: Any 
     floating_bricks_ids: List[str] # 공중부양 브릭 ID 목록 캐시
+    verification_errors: int  # 검증 에러 재시도 카운터
 
     # 다음 노드 제어
     next_action: Literal["generate", "verify", "model", "tool", "end"]
@@ -244,14 +256,16 @@ class RegenerationGraph:
             plan = loader.load_from_file(state['ldr_path'])
             total_bricks = len(plan.bricks)
             
-            verifier = None
-            if self.verifier is None:
-                verifier = PyBulletVerifier(plan, gui=state['gui'])
-                self.verifier = verifier
-            else:
-                verifier = self.verifier
-                # 기존 연결 유지하면서 새로운 플랜 로드 (Sim 리셋 포함)
-                verifier.load_bricks(plan)
+            # 이전 verifier가 있으면 세션 닫기 (PyBullet 상태 충돌 방지)
+            if self.verifier is not None:
+                try:
+                    self.verifier._close_simulation()
+                except:
+                    pass
+            
+            # 항상 새 verifier 생성 (LDR 파일 수정 후에도 깨끗한 상태 유지)
+            verifier = PyBulletVerifier(plan, gui=state['gui'])
+            self.verifier = verifier
             
             stab_result = verifier.run_stability_check(duration=state['verification_duration'], auto_close=False)
             
@@ -292,7 +306,22 @@ class RegenerationGraph:
             
         except Exception as e:
             print(f"  ❌ 검증 중 에러: {e}")
-            return {"messages": [HumanMessage(content=f"검증 시스템 에러: {e}")], "next_action": "model"}
+            # 검증 에러 시 LLM에게 맡기지 않고 재시도 (FixFloatingBricks 결과 보존)
+            verification_errors = state.get('verification_errors', 0) + 1
+            if verification_errors >= 3:
+                # 3회 이상 실패 시 재생성으로 전환
+                print(f"  ⚠️ 검증 에러 {verification_errors}회 - 재생성으로 전환합니다.")
+                return {
+                    "messages": [HumanMessage(content=f"검증 시스템 에러가 반복됨: {e}")],
+                    "verification_errors": 0,
+                    "next_action": "model"
+                }
+            else:
+                # 재시도
+                print(f"  🔄 검증 재시도 ({verification_errors}/3)...")
+                import time
+                time.sleep(1)  # PyBullet 안정화 대기
+                return {"verification_errors": verification_errors, "next_action": "verifier"}
 
     def node_model(self, state: AgentState) -> Dict[str, Any]:
         """LLM 의사결정 노드 (Tool Binding)"""
@@ -370,6 +399,8 @@ class RegenerationGraph:
                 # 파라미터 업데이트
                 new_params = state['params'].copy()
                 new_params.update(args)
+                # shrink는 내부 최적화 파라미터이므로 고정값 사용 (LLM이 조정 불가)
+                new_params['shrink'] = 0.7
                 result_content = f"파라미터가 업데이트되었습니다. ({args})"
                 
                 # 파라미터가 바뀌었으니 재생성(Generator)으로 이동
@@ -477,6 +508,7 @@ def regeneration_loop(
         messages=[system_msg], # History 시작
         verification_raw_result=None,
         floating_bricks_ids=[],
+        verification_errors=0,  # 검증 에러 카운터 초기화
         next_action="generate" 
     )
     
