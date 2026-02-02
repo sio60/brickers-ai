@@ -59,6 +59,10 @@ echo "🐳 Building Docker image..."
 docker compose build
 
 echo ""
+echo "🛑 Stopping existing container..."
+docker compose down
+
+echo ""
 echo "🚀 Starting container..."
 docker compose up -d
 
