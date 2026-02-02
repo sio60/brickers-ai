@@ -1,41 +1,31 @@
 # ============================================
 # AI Server Runtime
-# 베이스 이미지를 미리 빌드해두면 빠른 시작 가능
+# 로컬 wheels에서 패키지 설치 → 빠른 빌드
 # ============================================
 
-# ✅ 미리 빌드된 베이스 이미지 사용 (Docker Hub에 푸시해둔 경우)
-# FROM johnbyeon/brickers-ai-base:latest AS runtime
-
-# ⚠️ 베이스 이미지가 없으면 로컬에서 빌드 (느림)
-FROM python:3.11.9-slim AS base
+FROM python:3.11.9-slim
 
 WORKDIR /app
 
-# 시스템 의존성 설치
-RUN apt-get update && apt-get install -y \
-    build-essential \
+# 런타임 라이브러리만 설치 (빌드 도구 제외)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libatlas-base-dev \
     libgfortran5 \
-    pkg-config \
-    libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 로컬 wheels 폴더 복사
+# 로컬 wheels 복사 (미리 빌드된 패키지)
 COPY ./wheels /tmp/wheels
 
-# requirements.txt 복사 및 패키지 설치
+# requirements.txt 복사
 COPY requirements.txt .
 
+# wheels에서 설치 (컴파일 불필요 → 빠름)
 RUN pip install --no-cache-dir \
     --find-links=/tmp/wheels \
-    -r requirements.txt
+    -r requirements.txt \
+    && rm -rf /tmp/wheels
 
-# ============================================
-# Runtime Stage
-# ============================================
-FROM base AS runtime
-
-WORKDIR /app
+# 소스코드는 볼륨 마운트 (docker-compose.yml에서 설정)
 
 EXPOSE 8000
 

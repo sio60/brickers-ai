@@ -12,3 +12,6 @@ public
 # Backup files
 *.old
 *.old.yml
+
+# Wheels (빌드된 패키지 - 용량 큼)
+wheels/*.whl
