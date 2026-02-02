@@ -1,29 +1,48 @@
 # ============================================
-# AI Server Base Image - 패키지만 미리 설치
-# 한 번 빌드 후 Docker Hub에 푸시하면 재사용 가능
+# AI Server Base Image (멀티스테이지 최적화)
+# 패키지 추가/변경 시에만 빌드 → Docker Hub 푸시
 # ============================================
-FROM python:3.11.9-slim
 
-WORKDIR /app
+# Stage 1: Builder (빌드 도구만 포함)
+FROM python:3.11.9-slim AS builder
 
-# 시스템 의존성 설치
-RUN apt-get update && apt-get install -y \
+WORKDIR /build
+
+# 빌드 도구만 설치
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libatlas-base-dev \
-    libgfortran5 \
     pkg-config \
     libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 로컬 wheels 폴더 복사 (pybullet 등 미리 빌드된 패키지)
+# 로컬 wheels 복사 (pybullet 등 미리 빌드된 패키지)
 COPY ./wheels /tmp/wheels
 
-# requirements.txt 복사 및 패키지 설치
+# requirements 복사 및 wheel 빌드
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir \
+# wheel 파일로 빌드 (의존성 미리 컴파일)
+RUN pip wheel --no-cache-dir --wheel-dir /build/wheels \
     --find-links=/tmp/wheels \
     -r requirements.txt
 
-# wheels 정리 (이미지 크기 줄이기)
-RUN rm -rf /tmp/wheels
+# ============================================
+# Stage 2: Runtime (실행만 가능한 최소 이미지)
+# ============================================
+FROM python:3.11.9-slim AS runtime
+
+WORKDIR /app
+
+# 런타임 라이브러리만 설치 (빌드 도구 제외)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libatlas-base-dev \
+    libgfortran5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# builder에서 빌드한 wheel만 복사
+COPY --from=builder /build/wheels /tmp/wheels
+COPY requirements.txt .
+
+# wheel에서 설치 (컴파일 불필요 → 빠름)
+RUN pip install --no-cache-dir --find-links=/tmp/wheels -r requirements.txt \
+    && rm -rf /tmp/wheels
