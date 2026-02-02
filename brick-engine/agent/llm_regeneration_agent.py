@@ -40,10 +40,10 @@ for p in (_THIS_DIR, _BRICK_ENGINE_DIR, _PROJECT_ROOT, _PHYSICAL_VERIFICATION_DI
 # LLM 클라이언트 & 도구 임포트
 try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
-    from .agent_tools import TuneParameters, FixFloatingBricks
+    from .agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
-    from agent_tools import TuneParameters, FixFloatingBricks
+    from agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
 
 
 # ============================================================================
@@ -89,6 +89,9 @@ class VerificationFeedback:
     first_failure_brick: Optional[str] = None
     max_drift: float = 0.0
     collision_count: int = 0
+    # 1x1 브릭 비율 정보 (MergeBricks 판단용)
+    small_brick_count: int = 0      # 1x1 브릭 개수
+    small_brick_ratio: float = 0.0  # 1x1 브릭 비율 (0.0 ~ 1.0)
 
 def extract_verification_feedback(result, total_bricks: int) -> VerificationFeedback:
     """PyBullet VerificationResult를 LLM 피드백 형식으로 변환"""
@@ -134,6 +137,13 @@ def _format_feedback(feedback: VerificationFeedback) -> str:
         f"- 상태: {status}",
         f"- 총 브릭 수: {feedback.total_bricks}개",
     ]
+    
+    # 1x1 브릭 비율 정보 (MergeBricks 판단용)
+    if feedback.small_brick_count > 0:
+        lines.append(f"- 1x1 브릭: {feedback.small_brick_count}개 ({feedback.small_brick_ratio * 100:.1f}%)")
+        if feedback.small_brick_ratio > 0.3:  # 30% 이상이면 권장
+            lines.append(f"  → 💡 1x1 브릭 비율이 높습니다. MergeBricks로 연결 강화를 권장합니다.")
+    
     if not feedback.stable:
         lines.extend([
             f"- 떨어진 브릭: {feedback.fallen_bricks_count}개",
@@ -176,6 +186,17 @@ class AgentState(TypedDict):
     floating_bricks_ids: List[str] # 공중부양 브릭 ID 목록 캐시
     verification_errors: int  # 검증 에러 재시도 카운터
 
+    # 무한 루프 방지용 도구 사용 추적
+    tool_usage_count: Dict[str, int]  # {"TuneParameters": 2, "MergeBricks": 1, ...}
+    last_tool_used: Optional[str]     # 마지막 사용 도구
+    consecutive_same_tool: int        # 같은 도구 연속 사용 횟수
+    
+    # 도구 효과 측정용 이전 상태 저장
+    previous_metrics: Dict[str, Any]  # {"failure_ratio": 0.15, "1x1_ratio": 0.45, ...}
+    
+    # 최종 결과 리포트
+    final_report: Dict[str, Any]  # 최종 결과 요약
+
     # 다음 노드 제어
     next_action: Literal["generate", "verify", "model", "tool", "end"]
 
@@ -195,15 +216,21 @@ class RegenerationGraph:
         self.SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
 주어진 3D 모델(GLB)을 레고(LDR)로 변환하는 과정에서 발생하는 구조적 불안정성 문제를 해결해야 합니다.
 
-당신에게는 두 가지 도구가 있습니다:
+당신에게는 세 가지 도구가 있습니다:
 1. `TuneParameters`: 전체적인 구조적 결함(와르르 무너짐, 연결 없음 등)을 해결하기 위해 변환 파라미터를 조정하여 처음부터 다시 생성합니다.
 2. `FixFloatingBricks`: 전체적으로는 괜찮지만 일부 공중부양하거나 불안정한 브릭이 있을 때, 해당 브릭을 *삭제*하여 정리합니다.
+3. `MergeBricks`: 같은 색상의 인접한 1x1 브릭들을 큰 브릭(1x2~1x8)으로 병합합니다. 연결이 강화되어 안정성이 향상됩니다. 색상이 다른 브릭은 병합되지 않습니다.
 
 **의사결정 알고리즘 (Decision Logic):**
 1. **실패율(Failure Ratio) 확인**:
-   - **20% 미만 (Low Risk)**: 전체 구조는 튼튼합니다. `TuneParameters`로 다시 만들면 오히려 더 나쁜 결과가 나올 위험이 큽니다. 무조건 `FixFloatingBricks`를 선택하여 불안정한 브릭만 제거하세요.
+   - **20% 미만 (Low Risk)**: 전체 구조는 튼튼합니다. `TuneParameters`로 다시 만들면 오히려 더 나쁜 결과가 나올 위험이 큽니다.
    - **20% ~ 50% (Medium Risk)**: 상황을 판단하세요. 중요 부위가 무너졌다면 재생성, 외곽만 무너졌다면 삭제.
-   - **50% 이상 (High Risk)**: 현재 파라미터로는 불가능합니다. `TuneParameters`로 설정을 변경(shrink 증가, interlock 활성화 등)하여 다시 시도하세요.
+   - **50% 이상 (High Risk)**: 현재 파라미터로는 불가능합니다. `TuneParameters`로 설정을 변경하여 다시 시도하세요.
+
+2. **MergeBricks vs FixFloatingBricks 선택 기준** (실패율 < 20%일 때):
+   - **공중부양/떨어진 브릭 ID가 명확히 있으면** → `FixFloatingBricks`로 해당 브릭 삭제
+   - **1x1 브릭이 많아 연결이 약하다는 징후가 있으면** → `MergeBricks`로 보강 (1x1들을 큰 브릭으로 통합)
+   - **둘 다 해당되면** → 먼저 `MergeBricks`로 보강 → 재검증 후 필요시 `FixFloatingBricks`
 
 목표: 물리적으로 안정적(Stable)인 레고 구조물을 만드는 것.
 이전 시도의 실패 원인과 통계(실패율, 부동 브릭 수)를 분석하고, 위 논리에 따라 가장 합리적인 도구를 선택하세요.
@@ -256,6 +283,16 @@ class RegenerationGraph:
             plan = loader.load_from_file(state['ldr_path'])
             total_bricks = len(plan.bricks)
             
+            # 1x1 브릭 비율 계산 (MergeBricks 판단용)
+            small_brick_parts = {"3005.dat", "3024.dat"}  # 1x1 브릭, 1x1 플레이트
+            small_brick_count = 0
+            for b in plan.bricks:
+                # 브릭 객체의 part_id 속성 안전하게 접근
+                part_id = getattr(b, 'part_id', None) or (b.get('part') if isinstance(b, dict) else None)
+                if part_id in small_brick_parts:
+                    small_brick_count += 1
+            small_brick_ratio = small_brick_count / total_bricks if total_bricks > 0 else 0.0
+            
             # 이전 verifier가 있으면 세션 닫기 (PyBullet 상태 충돌 방지)
             if self.verifier is not None:
                 try:
@@ -270,6 +307,10 @@ class RegenerationGraph:
             stab_result = verifier.run_stability_check(duration=state['verification_duration'], auto_close=False)
             
             feedback = extract_verification_feedback(stab_result, total_bricks)
+            # 1x1 브릭 비율 정보 추가
+            feedback.small_brick_count = small_brick_count
+            feedback.small_brick_ratio = small_brick_ratio
+            
             feedback_text = _format_feedback(feedback)
             
             print(f"  결과: {'✅ 안정' if feedback.stable else '❌ 불안정'}")
@@ -282,6 +323,16 @@ class RegenerationGraph:
                 if ev.type == "FLOATING_BRICK" and ev.brick_ids:
                     floating_ids.extend(ev.brick_ids)
             
+            # 현재 메트릭 저장 (도구 효과 측정용)
+            current_metrics = {
+                "failure_ratio": feedback.failure_ratio,
+                "small_brick_ratio": small_brick_ratio,
+                "small_brick_count": small_brick_count,
+                "total_bricks": total_bricks,
+                "floating_count": feedback.floating_bricks_count,
+                "fallen_count": feedback.fallen_bricks_count,
+            }
+            
             # 성공 판정
             is_success = (
                 feedback.stable or 
@@ -290,17 +341,34 @@ class RegenerationGraph:
             
             if is_success:
                 print("🎉 목표 달성! 프로세스를 종료합니다.")
-                return {"next_action": "end"}
+                # 최종 리포트 생성
+                final_report = {
+                    "success": True,
+                    "total_attempts": state['attempts'],
+                    "tool_usage": state.get('tool_usage_count', {}),
+                    "final_metrics": current_metrics,
+                    "message": "안정적인 구조물 생성 완료"
+                }
+                return {"next_action": "end", "final_report": final_report}
             
             if state['attempts'] >= state['max_retries']:
                 print("💥 최대 시도 횟수 초과.")
-                return {"next_action": "end"}
+                # 최종 리포트 생성 (실패)
+                final_report = {
+                    "success": False,
+                    "total_attempts": state['attempts'],
+                    "tool_usage": state.get('tool_usage_count', {}),
+                    "final_metrics": current_metrics,
+                    "message": "최대 시도 횟수 초과로 종료"
+                }
+                return {"next_action": "end", "final_report": final_report}
 
-            # 결과를 LLM에게 피드백으로 전달
+            # 결과를 LLM에게 피드백으로 전달 (이전 메트릭도 함께 전달)
             return {
                 "verification_raw_result": stab_result,
                 "floating_bricks_ids": floating_ids,
                 "messages": [HumanMessage(content=feedback_text)],
+                "previous_metrics": current_metrics,  # 다음 도구 효과 측정용
                 "next_action": "model"
             }
             
@@ -328,7 +396,7 @@ class RegenerationGraph:
         print("\n[Co-Scientist] 상황 분석 중...")
         
         # 사용 가능한 도구 정의
-        tools = [TuneParameters, FixFloatingBricks]
+        tools = [TuneParameters, FixFloatingBricks, MergeBricks]
     
         # --- [전략 가이드 주입] ---
         # 실패율이 낮으면 FixFloatingBricks를 권장하는 힌트 메시지 추가 (강제 X)
@@ -386,12 +454,43 @@ class RegenerationGraph:
         tool_results = []
         next_step = "model" # 기본값
         
+        # 도구 사용 추적 초기화
+        tool_usage_count = state.get('tool_usage_count', {})
+        last_tool_used = state.get('last_tool_used', None)
+        consecutive_same_tool = state.get('consecutive_same_tool', 0)
+        previous_metrics = state.get('previous_metrics', {})
+        
         for tool_call in last_message.tool_calls:
             tool_name = tool_call['name']
             args = tool_call['args']
             tool_call_id = tool_call['id']
             
-            print(f"\n[Tool Execution] {tool_name} 실행...")
+            # 무한 루프 방지: 같은 도구 연속 사용 체크
+            if tool_name == last_tool_used:
+                consecutive_same_tool += 1
+            else:
+                consecutive_same_tool = 1
+            
+            # 3회 연속 같은 도구 사용 시 경고
+            if consecutive_same_tool >= 3:
+                print(f"  ⚠️ 경고: {tool_name}을(를) {consecutive_same_tool}회 연속 사용 중!")
+                warning_msg = f"'{tool_name}'을(를) 3회 연속 사용했습니다. 다른 전략을 고려해주세요."
+                tool_results.append(ToolMessage(
+                    content=warning_msg,
+                    tool_call_id=tool_call_id
+                ))
+                return {
+                    "messages": tool_results,
+                    "next_action": "model",
+                    "tool_usage_count": tool_usage_count,
+                    "last_tool_used": tool_name,
+                    "consecutive_same_tool": consecutive_same_tool,
+                }
+            
+            # 도구 사용 횟수 업데이트
+            tool_usage_count[tool_name] = tool_usage_count.get(tool_name, 0) + 1
+            
+            print(f"\n[Tool Execution] {tool_name} 실행... (총 {tool_usage_count[tool_name]}회)")
             
             result_content = ""
             
@@ -424,10 +523,37 @@ class RegenerationGraph:
                     try:
                         stats = apply_llm_decisions(state['ldr_path'], decisions)
                         result_content = f"수정 완료: {stats['deleted']}개 브릭 삭제됨."
+                        # 이전 메트릭 대비 효과 예상 표시
+                        if previous_metrics:
+                            prev_floating = previous_metrics.get('floating_count', 0)
+                            result_content += f" (이전 공중부양: {prev_floating}개 → 삭제 후 재검증 필요)"
                         # 수정했으니 다시 검증(Verifier)으로 이동 parameter 조정 불필요
                         next_step = "verifier"
                     except Exception as e:
                         result_content = f"수정 실패: {e}"
+            
+            elif tool_name == "MergeBricks":
+                # 브릭 병합 로직 수행
+                from ldr_modifier import merge_small_bricks
+                
+                target_brick_ids = args.get('target_brick_ids', None)
+                min_merge_count = args.get('min_merge_count', 2)
+                
+                try:
+                    stats = merge_small_bricks(
+                        state['ldr_path'],
+                        target_brick_ids=target_brick_ids,
+                        min_merge_count=min_merge_count
+                    )
+                    result_content = f"병합 완료: {stats['merged']}개 그룹 병합됨 (원본 {stats['original_count']}개 -> 신규 {stats['new_count']}개)"
+                    # 이전 메트릭 대비 효과 표시
+                    if previous_metrics:
+                        prev_ratio = previous_metrics.get('small_brick_ratio', 0)
+                        result_content += f" (이전 1x1 비율: {prev_ratio*100:.1f}% → 병합 후 재검증 필요)"
+                    # 병합했으니 다시 검증(Verifier)으로 이동
+                    next_step = "verifier"
+                except Exception as e:
+                    result_content = f"병합 실패: {e}"
             
             else:
                 result_content = f"알 수 없는 도구: {tool_name}"
@@ -440,11 +566,13 @@ class RegenerationGraph:
             ))
             
         # ToolMessage들을 History에 추가하고, 다음 단계로 이동
-        # params가 업데이트 된 경우 state에 반영되어야 함 (RegenerationGraph는 state 업데이트 방식이 return dict merge임)
         return {
             "messages": tool_results, 
             "next_action": next_step, 
-            "params": state['params'] # 갱신된 파라미터 전달
+            "params": state['params'],
+            "tool_usage_count": tool_usage_count,
+            "last_tool_used": tool_name,
+            "consecutive_same_tool": consecutive_same_tool,
         }
 
 
@@ -465,7 +593,7 @@ class RegenerationGraph:
             
         # 엣지 정의
         workflow.add_conditional_edges("generator", route_next, {"verify": "verifier", "model": "model"})
-        workflow.add_conditional_edges("verifier", route_next, {"model": "model", "end": END})
+        workflow.add_conditional_edges("verifier", route_next, {"model": "model", "end": END, "verifier": "verifier"})  # verifier 재시도 지원
         workflow.add_conditional_edges("model", route_next, {"tool": "tool_executor", "model": "model", "end": END})
         workflow.add_conditional_edges("tool_executor", route_next, {"generator": "generator", "verifier": "verifier", "model": "model"})
         
@@ -509,6 +637,12 @@ def regeneration_loop(
         verification_raw_result=None,
         floating_bricks_ids=[],
         verification_errors=0,  # 검증 에러 카운터 초기화
+        # 새로 추가된 필드들
+        tool_usage_count={},      # 도구 사용 횟수 추적
+        last_tool_used=None,      # 마지막 사용 도구
+        consecutive_same_tool=0,  # 같은 도구 연속 사용 횟수
+        previous_metrics={},      # 이전 메트릭 (효과 측정용)
+        final_report={},          # 최종 결과 리포트
         next_action="generate" 
     )
     
@@ -516,10 +650,37 @@ def regeneration_loop(
     final_state = app.invoke(initial_state)
     
     print("\n" + "=" * 60)
-    print("📋 최종 결과")
+    print("📋 최종 결과 리포트")
     print("=" * 60)
     
-    print(f"총 시도: {final_state['attempts']}회")
+    # 최종 리포트 출력
+    report = final_state.get('final_report', {})
+    if report:
+        success = report.get('success', False)
+        status = "✅ 성공" if success else "❌ 실패"
+        print(f"상태: {status}")
+        print(f"총 시도: {report.get('total_attempts', final_state['attempts'])}회")
+        
+        # 도구 사용 통계
+        tool_usage = report.get('tool_usage', {})
+        if tool_usage:
+            print(f"도구 사용 현황:")
+            for tool, count in tool_usage.items():
+                print(f"  - {tool}: {count}회")
+        
+        # 최종 메트릭
+        metrics = report.get('final_metrics', {})
+        if metrics:
+            print(f"최종 메트릭:")
+            print(f"  - 실패율: {metrics.get('failure_ratio', 0) * 100:.1f}%")
+            print(f"  - 1x1 비율: {metrics.get('small_brick_ratio', 0) * 100:.1f}%")
+            print(f"  - 총 브릭: {metrics.get('total_bricks', 0)}개")
+        
+        print(f"메시지: {report.get('message', '')}")
+    else:
+        print(f"총 시도: {final_state['attempts']}회")
+    
+    print("=" * 60)
     return final_state
 
 
