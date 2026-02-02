@@ -37,6 +37,7 @@ for p in (_THIS_DIR, _BRICK_ENGINE_DIR, _PROJECT_ROOT, _PHYSICAL_VERIFICATION_DI
     if sp not in sys.path:
         sys.path.insert(0, sp)
 
+
 # LLM 클라이언트 & 도구 임포트
 try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
@@ -44,6 +45,65 @@ try:
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
+
+# DB 연결
+try:
+    from yang_db import get_db
+except ImportError:
+    print("⚠️ yang_db.py를 찾을 수 없습니다. Memory 영속화 기능이 비활성화됩니다.")
+    get_db = None
+
+# ============================================================================
+# Memory DB Helper Functions
+# ============================================================================
+
+def get_memory_collection():
+    if get_db is None:
+        return None
+    try:
+        db = get_db()
+        return db["co_scientist_memory"]
+    except Exception as e:
+        print(f"⚠️ DB 연결 실패: {e}")
+        return None
+
+def load_memory_from_db(model_id: str) -> Dict[str, Any]:
+    """DB에서 해당 모델의 Memory를 로드합니다."""
+    col = get_memory_collection()
+    if col is None:
+        return {}
+        
+    try:
+        doc = col.find_one({"_id": model_id})
+        if doc:
+            # MongoDB의 _id 필드는 제외하고 dict 반환
+            memory = {k: v for k, v in doc.items() if k != "_id"}
+            print(f"📚 [Memory] '{model_id}'에 대한 학습 데이터를 불러왔습니다.")
+            return memory
+    except Exception as e:
+        print(f"⚠️ [Memory] 로드 실패: {e}")
+    
+    return {}
+
+def save_memory_to_db(model_id: str, memory: Dict[str, Any]):
+    """Memory를 DB에 저장(Upsert)합니다."""
+    col = get_memory_collection()
+    if col is None:
+        return
+        
+    try:
+        from datetime import datetime
+        update_data = memory.copy()
+        update_data["last_updated"] = datetime.utcnow()
+        
+        col.update_one(
+            {"_id": model_id},
+            {"$set": update_data},
+            upsert=True
+        )
+        print(f"💾 [Memory] '{model_id}' 학습 데이터 저장 완료.")
+    except Exception as e:
+        print(f"⚠️ [Memory] 저장 실패: {e}")
 
 
 # ============================================================================
@@ -131,7 +191,14 @@ def extract_verification_feedback(result, total_bricks: int) -> VerificationFeed
     return feedback
 
 def _format_feedback(feedback: VerificationFeedback) -> str:
-    status = "✅ 안정" if feedback.stable else "❌ 불안정"
+    # 상태 판정 로직 강화
+    if feedback.stable and feedback.floating_bricks_count == 0:
+        status = "✅ 안정"
+    elif feedback.stable and feedback.floating_bricks_count > 0:
+        status = "⚠️ 부분 안정 (공중부양 존재)"
+    else:
+        status = "❌ 불안정"
+        
     lines = [
         f"검증 결과:",
         f"- 상태: {status}",
@@ -144,7 +211,8 @@ def _format_feedback(feedback: VerificationFeedback) -> str:
         if feedback.small_brick_ratio > 0.3:  # 30% 이상이면 권장
             lines.append(f"  → 💡 1x1 브릭 비율이 높습니다. MergeBricks로 연결 강화를 권장합니다.")
     
-    if not feedback.stable:
+    # 상세 불안정 정보 (공중부양 포함)
+    if not feedback.stable or feedback.floating_bricks_count > 0:
         lines.extend([
             f"- 떨어진 브릭: {feedback.fallen_bricks_count}개",
             f"- 공중부양 브릭: {feedback.floating_bricks_count}개",
@@ -157,6 +225,7 @@ def _format_feedback(feedback: VerificationFeedback) -> str:
             lines.append(f"- 공중부양 브릭 ID 목록: {feedback.floating_brick_ids}")
         if feedback.fallen_brick_ids:
             lines.append(f"- 떨어진 브릭 ID 목록: {feedback.fallen_brick_ids}")
+            
     if feedback.collision_count > 0:
         lines.append(f"- 충돌 감지: {feedback.collision_count}건")
     
@@ -191,14 +260,23 @@ class AgentState(TypedDict):
     last_tool_used: Optional[str]     # 마지막 사용 도구
     consecutive_same_tool: int        # 같은 도구 연속 사용 횟수
     
-    # 도구 효과 측정용 이전 상태 저장
-    previous_metrics: Dict[str, Any]  # {"failure_ratio": 0.15, "1x1_ratio": 0.45, ...}
+    # 도구 효과 측정용 상태 저장
+    previous_metrics: Dict[str, Any]  # 도구 실행 전 메트릭
+    current_metrics: Dict[str, Any]   # 검증 후 현재 메트릭 (Reflect에서 비교용)
     
     # 최종 결과 리포트
     final_report: Dict[str, Any]  # 최종 결과 요약
+    
+    # Co-Scientist Memory (학습 메모리)
+    memory: Dict[str, Any]  # {
+    #     "failed_approaches": ["MergeBricks on layer 5 failed"],
+    #     "successful_patterns": ["FixFloatingBricks after MergeBricks"],
+    #     "lessons": ["1x1 비율 30% 이상일 때 MergeBricks 효과적"],
+    #     "consecutive_failures": 0
+    # }
 
     # 다음 노드 제어
-    next_action: Literal["generate", "verify", "model", "tool", "end"]
+    next_action: Literal["generate", "verify", "model", "tool", "reflect", "end"]
 
 
 # ============================================================================
@@ -234,6 +312,15 @@ class RegenerationGraph:
 
 목표: 물리적으로 안정적(Stable)인 레고 구조물을 만드는 것.
 이전 시도의 실패 원인과 통계(실패율, 부동 브릭 수)를 분석하고, 위 논리에 따라 가장 합리적인 도구를 선택하세요.
+
+**🔬 Co-Scientist 사고 프로세스 (반드시 따르세요):**
+도구를 선택하기 전에 아래 순서로 생각하고, 응답에 포함하세요:
+1. 🔍 **관찰 (Observation)**: 현재 검증 결과에서 무엇이 문제인가? (실패율, 공중부양 수, 1x1 비율 등)
+2. 💭 **가설 (Hypothesis)**: 왜 이 문제가 발생했는가? (예: "1x1 비율이 높아 연결이 약함", "지지대가 부족함")
+3. 🧪 **실험 (Experiment)**: 가설을 검증하기 위해 어떤 도구를 사용할 것인가?
+4. 📈 **예상 (Prediction)**: 도구 실행 후 어떤 변화가 예상되는가? (예: "1x1 비율 50% → 20%로 감소 예상")
+
+이 과정을 거친 후, 가장 적합한 도구를 호출하세요.
 """
 
         self.verifier = None
@@ -313,9 +400,22 @@ class RegenerationGraph:
             
             feedback_text = _format_feedback(feedback)
             
-            print(f"  결과: {'✅ 안정' if feedback.stable else '❌ 불안정'}")
-            if not feedback.stable:
-                 print(f"  요약: {feedback_text.replace(chr(10), ', ')}")
+            # 상태 메시지 결정
+            if feedback.stable and feedback.floating_bricks_count == 0:
+                short_status = "✅ 안정"
+            elif feedback.stable and feedback.floating_bricks_count > 0:
+                short_status = "⚠️ 부분 안정 (공중부양 존재)"
+            else:
+                short_status = "❌ 불안정"
+            
+            print(f"  결과: {short_status}")
+            
+            # 불안정하거나 부분 안정이면 상세 내용 출력 (디버깅용)
+            if not feedback.stable or feedback.floating_bricks_count > 0:
+                 summary_text = feedback_text.replace('\n', ', ').replace('\r', '')
+                 if len(summary_text) > 200:
+                     summary_text = summary_text[:200] + "..."
+                 print(f"  요약: {summary_text}")
             
             # 공중부양 브릭 ID 캐싱 (Tool에서 사용)
             floating_ids = []
@@ -333,11 +433,14 @@ class RegenerationGraph:
                 "fallen_count": feedback.fallen_bricks_count,
             }
             
-            # 성공 판정
-            is_success = (
-                feedback.stable or 
-                (feedback.failure_ratio <= state['acceptable_failure_ratio'] and feedback.floating_bricks_count == 0)
-            )
+            # 성공 판정: 
+            # 1. 물리적으로 안정적이거나 실패율이 허용치 이내여야 함
+            is_physically_okay = feedback.stable or (feedback.failure_ratio <= state['acceptable_failure_ratio'])
+            # 2. 단, 공중부양(Floating) 브릭은 절대 없어야 함 (Zero Tolerance)
+            is_success = is_physically_okay and (feedback.floating_bricks_count == 0)
+            
+            if is_success and not feedback.stable:
+                 print(f"  (참고: 불안정 판정이나 실패율 {feedback.failure_ratio*100:.1f}%가 허용치 이내이며 공중부양 없음 -> 성공 간주)")
             
             if is_success:
                 print("🎉 목표 달성! 프로세스를 종료합니다.")
@@ -363,13 +466,20 @@ class RegenerationGraph:
                 }
                 return {"next_action": "end", "final_report": final_report}
 
-            # 결과를 LLM에게 피드백으로 전달 (이전 메트릭도 함께 전달)
+            # 결과를 Reflect 노드로 전달 (실제 결과 분석용)
+            # 주의: previous_metrics는 Reflect에서 비교 후 업데이트해야 하므로 여기선 건드리지 않음
+            
+            # LLM에게 전달할 메시지 보강
+            custom_feedback = feedback_text
+            if feedback.floating_bricks_count > 0:
+                custom_feedback += "\n\n⚠️ **중요: 아직 공중부양(Floating) 브릭이 남아있습니다. 이 상태로는 절대 작업을 완료할 수 없습니다. 반드시 FixFloatingBricks 도구를 사용하거나 파라미터를 조정하여 해결하세요.**"
+            
             return {
                 "verification_raw_result": stab_result,
                 "floating_bricks_ids": floating_ids,
-                "messages": [HumanMessage(content=feedback_text)],
-                "previous_metrics": current_metrics,  # 다음 도구 효과 측정용
-                "next_action": "model"
+                "messages": [HumanMessage(content=custom_feedback)],
+                "current_metrics": current_metrics,   # Reflect에서 실제 결과 분석용
+                "next_action": "reflect"  # Verify 후 Reflect로 이동
             }
             
         except Exception as e:
@@ -392,7 +502,11 @@ class RegenerationGraph:
                 return {"verification_errors": verification_errors, "next_action": "verifier"}
 
     def node_model(self, state: AgentState) -> Dict[str, Any]:
-        """LLM 의사결정 노드 (Tool Binding)"""
+        """LLM이 상황을 분석하고 도구를 선택하는 노드"""
+        import time
+        # API Rate Limit (429) 방지를 위한 짧은 딜레이 (특히 Free Tier 사용 시)
+        time.sleep(2) 
+        
         print("\n[Co-Scientist] 상황 분석 중...")
         
         # 사용 가능한 도구 정의
@@ -402,25 +516,65 @@ class RegenerationGraph:
         # 실패율이 낮으면 FixFloatingBricks를 권장하는 힌트 메시지 추가 (강제 X)
         messages_to_send = state['messages'][:]
         
+        # --- [Memory 정보 주입] ---
+        # 이전 경험을 LLM에게 전달하여 학습 기반 의사결정 유도
+        memory = state.get('memory', {})
+        lessons = memory.get('lessons', [])
+        failed_approaches = memory.get('failed_approaches', [])
+        
+        if lessons or failed_approaches:
+            memory_info = "\n**📚 이전 경험 (Memory):**\n"
+            if lessons:
+                memory_info += "- 최근 교훈: " + "; ".join(lessons[-3:]) + "\n"
+            if failed_approaches:
+                memory_info += "- 피해야 할 접근법: " + "; ".join(failed_approaches[-3:]) + "\n"
+            
+            memory_msg = SystemMessage(content=memory_info)
+            messages_to_send.append(memory_msg)
+            print(f"  📚 Memory 정보 {len(lessons)}개 교훈 전달됨")
+        
         # 직전 검증 결과 확인
         last_msg = messages_to_send[-1]
         
         if isinstance(last_msg, HumanMessage) and "검증 결과" in str(last_msg.content):
             content = str(last_msg.content)
-            if "❌ 불안정" in content and "실패율" in content:
-                try:
-                    # 실패율 파싱 (간이)
-                    import re
-                    match = re.search(r"실패율: ([\d.]+)%", content)
-                    if match:
-                        ratio = float(match.group(1))
-                        # 20% 미만이면 부분 수정 권장
-                        if ratio < 20.0: 
-                            print(f"  💡 [Strategy Hint] 낮은 실패율({ratio}%) 감지 -> FixFloatingBricks 권장")
-                            hint_msg = SystemMessage(content=f"현재 실패율이 {ratio}%로 낮습니다. 전체 재생성보다는 `FixFloatingBricks`로 문제 브릭만 정리하는 것이 효율적일 수 있습니다.")
-                            messages_to_send.append(hint_msg)
-                except Exception:
-                    pass
+            floating_ids = state.get('floating_bricks_ids', [])
+            
+            # 실패율 파싱 (간이)
+            ratio = 0.0
+            import re
+            match = re.search(r"실패율: ([\d.]+)%", content)
+            if match:
+                ratio = float(match.group(1))
+
+            # 상황별 전략 힌트 (Strategy Hint) - 논리적 설득 강화
+            hints = []
+            
+            # 1. 공중부양 브릭이 있는 경우 (가장 중요)
+            if floating_ids:
+                print(f"  💡 [Strategy Hint] 공중부양 브릭({len(floating_ids)}개) 감지 -> 정밀 수리 권장")
+                advice = f"""**⚠️ 상황 분석 및 도구 추천:**
+현재 공중부양 브릭이 {len(floating_ids)}개 발견되었습니다. (ID: {floating_ids})
+전체 실패율은 {ratio}%입니다.
+
+**논리적 판단 가이드:**
+1. **실패율이 낮음 (<20%)**: 전체적인 구조는 튼튼합니다.
+2. **국소적 문제**: 문제는 일부 브릭의 뜸(Floating) 현상뿐입니다.
+3. **도구 선택**:
+   - `TuneParameters`: 전체를 다시 만듭니다. 현재의 튼튼한 구조를 잃을 위험이 있습니다. (비권장 ❌)
+   - `FixFloatingBricks`: 문제 있는 브릭만 정확히 제거합니다. 현재 구조를 유지하며 안정성을 확보합니다. (강력 권장 ✅)
+   
+따라서 **FixFloatingBricks**를 사용하여 해결하세요."""
+                hints.append(advice)
+            
+            # 2. 실패율이 낮은 경우
+            elif ratio > 0 and ratio < 20.0:
+                print(f"  💡 [Strategy Hint] 낮은 실패율({ratio}%) 감지 -> 부분 수정 권장")
+                hints.append(f"현재 실패율이 {ratio}%로 매우 낮습니다. 구조가 거의 완성되었으므로 무분별한 재생성보다는 정밀한 도구 사용을 고려하세요.")
+            
+            if hints:
+                hint_msg = SystemMessage(content="\n".join(hints))
+                messages_to_send.append(hint_msg)
 
         # 모델 바인딩 및 호출
             
@@ -434,14 +588,31 @@ class RegenerationGraph:
                 print(f"  🔨 도구 선택: {[tc['name'] for tc in response.tool_calls]}")
                 return {"messages": [response], "next_action": "tool"}
             else:
+                # 도구를 선택하지 않은 경우 (끝났다고 판단)
                 print(f"  💭 LLM 의견: {response.content}")
-                # 도구를 안 불렀으면 그냥 메시지만 추가하고 다시 Model로 가거나(무한루프 위험), 힌트를 줌
-                # 여기서는 힌트를 주고 다시 Model 호출
-                hint = HumanMessage(content="도구를 사용하여 문제를 해결하세요. 파라미터를 조정하거나 브릭을 삭제하세요.")
-                return {"messages": [response, hint], "next_action": "model"}
+                
+                # 실제 성공 여부 재확인
+                current_metrics = state.get('current_metrics', {})
+                floating_count = current_metrics.get('floating_count', 0)
+                failure_ratio = current_metrics.get('failure_ratio', 0)
+                
+                # 공중부양이 없고 실패율이 낮으면 종료 허용
+                if floating_count == 0 and failure_ratio <= state['acceptable_failure_ratio']:
+                    print("🎉 모든 조건 충족. 종료합니다.")
+                    return {"messages": [response], "next_action": "end"}
+                else:
+                    # 아직 문제가 남았는데 종료하려고 하면 힌트를 주고 재시도
+                    print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 재지시 중...")
+                    error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. 'FixFloatingBricks' 도구를 사용하거나 파라미터를 교체하여 모든 브릭이 연결되도록 하세요."
+                    hint = HumanMessage(content=error_feedback)
+                    return {"messages": [response, hint], "next_action": "model"}
                 
         except Exception as e:
             print(f"  ⚠️ LLM 호출 에러: {e}")
+            if "429" in str(e):
+                print("  💤 API 할당량 초과. 잠시 대기 후 재시도합니다...")
+                time.sleep(10)
+                return {"next_action": "model"}
             return {"next_action": "end"}
 
     def node_tool_executor(self, state: AgentState) -> Dict[str, Any]:
@@ -566,13 +737,126 @@ class RegenerationGraph:
             ))
             
         # ToolMessage들을 History에 추가하고, 다음 단계로 이동
+        # verifier로 바로 이동 (Verify 후 Reflect에서 실제 결과 분석)
+        
         return {
             "messages": tool_results, 
-            "next_action": next_step, 
+            "next_action": next_step,  # verifier 또는 generator로 직접 이동
             "params": state['params'],
             "tool_usage_count": tool_usage_count,
             "last_tool_used": tool_name,
             "consecutive_same_tool": consecutive_same_tool,
+        }
+
+    def node_reflect(self, state: AgentState) -> Dict[str, Any]:
+        """
+        회고 노드: 검증 결과를 분석하고 성공/실패를 Memory에 기록합니다.
+        Co-Scientist의 핵심 학습 메커니즘입니다.
+        
+        이제 Verify 후에 호출되므로 실제 결과를 알 수 있습니다.
+        """
+        print("\n[Reflect] 실제 결과 분석 중...")
+        
+        # Memory 초기화 (없으면)
+        memory = state.get('memory', {
+            "failed_approaches": [],
+            "successful_patterns": [],
+            "lessons": [],
+            "consecutive_failures": 0
+        })
+        
+        previous_metrics = state.get('previous_metrics', {})
+        current_metrics = state.get('current_metrics', {})
+        last_tool = state.get('last_tool_used', 'unknown')
+        
+        # 이전 메트릭이 없으면 첫 실행
+        # 이전 메트릭이 없으면 첫 실행 (비교 대상 없음)
+        if not previous_metrics:
+            print("  (첫 검증 - 기준점 설정)")
+            return {
+                "memory": memory, 
+                "previous_metrics": current_metrics, # 기준점 설정
+                "next_action": "model"
+            }
+        
+        # 메트릭 비교
+        prev_failure = previous_metrics.get('failure_ratio', 0)
+        curr_failure = current_metrics.get('failure_ratio', 0)
+        prev_floating = previous_metrics.get('floating_count', 0)
+        curr_floating = current_metrics.get('floating_count', 0)
+        prev_small_ratio = previous_metrics.get('small_brick_ratio', 0)
+        curr_small_ratio = current_metrics.get('small_brick_ratio', 0)
+        
+        # 효과 판정
+        failure_improved = curr_failure < prev_failure
+        floating_improved = curr_floating < prev_floating
+        small_ratio_improved = curr_small_ratio < prev_small_ratio
+        
+        overall_improved = failure_improved or floating_improved
+        
+        # 도구별 결과 분석 및 기록
+        if last_tool == "MergeBricks":
+            if small_ratio_improved:
+                pattern = f"✅ MergeBricks 성공: 1x1 비율 {prev_small_ratio*100:.1f}% → {curr_small_ratio*100:.1f}%"
+                memory["successful_patterns"].append(f"MergeBricks: 1x1 비율 감소 효과 확인")
+                memory["consecutive_failures"] = 0
+                print(f"  {pattern}")
+            else:
+                pattern = f"❌ MergeBricks 효과 없음: 1x1 비율 변화 없음"
+                memory["failed_approaches"].append(f"MergeBricks: 효과 미미")
+                memory["consecutive_failures"] += 1
+                print(f"  {pattern}")
+            memory["lessons"].append(pattern)
+            
+        elif last_tool == "FixFloatingBricks":
+            if floating_improved:
+                pattern = f"✅ FixFloatingBricks 성공: 공중부양 {prev_floating}개 → {curr_floating}개"
+                memory["successful_patterns"].append(f"FixFloatingBricks: 공중부양 감소 효과 확인")
+                memory["consecutive_failures"] = 0
+                print(f"  {pattern}")
+            else:
+                pattern = f"❌ FixFloatingBricks 효과 없음: 공중부양 감소 안됨"
+                memory["failed_approaches"].append(f"FixFloatingBricks: 효과 미미")
+                memory["consecutive_failures"] += 1
+                print(f"  {pattern}")
+            memory["lessons"].append(pattern)
+            
+        elif last_tool == "TuneParameters":
+            if failure_improved:
+                pattern = f"✅ TuneParameters 성공: 실패율 {prev_failure*100:.1f}% → {curr_failure*100:.1f}%"
+                memory["successful_patterns"].append(f"TuneParameters: 파라미터 조정 효과 확인")
+                memory["consecutive_failures"] = 0
+                print(f"  {pattern}")
+            else:
+                pattern = f"❌ TuneParameters 효과 없음: 실패율 개선 안됨"
+                memory["failed_approaches"].append(f"TuneParameters: 파라미터 조정 실패")
+                memory["consecutive_failures"] += 1
+                print(f"  {pattern}")
+            memory["lessons"].append(pattern)
+        
+        # 연속 실패 경고
+        if memory["consecutive_failures"] >= 3:
+            print(f"  ⚠️ 경고: {memory['consecutive_failures']}회 연속 실패! 전략 변경 필요")
+            memory["lessons"].append(f"⚠️ {memory['consecutive_failures']}회 연속 실패 - 전략 전환 권장")
+        
+        # 리스트 최대 크기 유지
+        memory["lessons"] = memory["lessons"][-10:]
+        memory["failed_approaches"] = memory["failed_approaches"][-5:]
+        memory["successful_patterns"] = memory["successful_patterns"][-5:]
+        
+        # DB에 저장 (영속화)
+        try:
+            from pathlib import Path
+            # GLB 파일명을 ID로 사용
+            model_id = Path(state['glb_path']).name
+            save_memory_to_db(model_id, memory)
+        except Exception as e:
+            print(f"⚠️ [Memory] 저장 중 에러: {e}")
+        
+        return {
+            "memory": memory, 
+            "previous_metrics": current_metrics, # 다음 턴을 위해 현재 메트릭 승격
+            "next_action": "model"
         }
 
 
@@ -586,6 +870,7 @@ class RegenerationGraph:
         workflow.add_node("verifier", self.node_verifier)
         workflow.add_node("model", self.node_model)
         workflow.add_node("tool_executor", self.node_tool_executor)
+        workflow.add_node("reflect", self.node_reflect)  # Co-Scientist 회고 노드
         
         # 라우팅 로직
         def route_next(state: AgentState):
@@ -593,9 +878,19 @@ class RegenerationGraph:
             
         # 엣지 정의
         workflow.add_conditional_edges("generator", route_next, {"verify": "verifier", "model": "model"})
-        workflow.add_conditional_edges("verifier", route_next, {"model": "model", "end": END, "verifier": "verifier"})  # verifier 재시도 지원
+        workflow.add_conditional_edges("verifier", route_next, {
+            "model": "model", 
+            "end": END, 
+            "verifier": "verifier",
+            "reflect": "reflect"  # Verify 후 Reflect로
+        })
         workflow.add_conditional_edges("model", route_next, {"tool": "tool_executor", "model": "model", "end": END})
-        workflow.add_conditional_edges("tool_executor", route_next, {"generator": "generator", "verifier": "verifier", "model": "model"})
+        workflow.add_conditional_edges("tool_executor", route_next, {
+            "generator": "generator", 
+            "verifier": "verifier", 
+            "model": "model",
+        })
+        workflow.add_conditional_edges("reflect", route_next, {"model": "model"})  # 회고 후 Model로
         
         workflow.set_entry_point("generator")
         
@@ -624,6 +919,21 @@ def regeneration_loop(
     # 시스템 메시지 및 초기 설정
     system_msg = SystemMessage(content=graph_builder.SYSTEM_PROMPT)
     
+    # DB에서 Memory 로드
+    initial_memory = {
+        "failed_approaches": [],
+        "successful_patterns": [],
+        "lessons": [],
+        "consecutive_failures": 0
+    }
+    try:
+        model_id = Path(glb_path).name
+        loaded_mem = load_memory_from_db(model_id)
+        if loaded_mem:
+            initial_memory.update(loaded_mem)
+    except Exception as e:
+        print(f"⚠️ [Memory] 초기 로드 실패: {e}")
+
     initial_state = AgentState(
         glb_path=glb_path,
         ldr_path=output_ldr_path,
@@ -642,7 +952,10 @@ def regeneration_loop(
         last_tool_used=None,      # 마지막 사용 도구
         consecutive_same_tool=0,  # 같은 도구 연속 사용 횟수
         previous_metrics={},      # 이전 메트릭 (효과 측정용)
+        current_metrics={},       # 현재 메트릭 (Reflect에서 비교용)
         final_report={},          # 최종 결과 리포트
+        # Co-Scientist Memory 초기화 (DB 로드 반영)
+        memory=initial_memory,
         next_action="generate" 
     )
     
