@@ -3,6 +3,8 @@
 .env.local
 docker-compose.local.yml
 docker-compose.local.yaml
+docker-compose-local.yml
+docker-compose-local.yaml
 __pycache__/
 *.pyc
 uploads/
