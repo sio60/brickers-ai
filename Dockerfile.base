@@ -1,0 +1,29 @@
+# ============================================
+# AI Server Base Image - 패키지만 미리 설치
+# 한 번 빌드 후 Docker Hub에 푸시하면 재사용 가능
+# ============================================
+FROM python:3.11.9-slim
+
+WORKDIR /app
+
+# 시스템 의존성 설치
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libatlas-base-dev \
+    libgfortran5 \
+    pkg-config \
+    libfreetype6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 로컬 wheels 폴더 복사 (pybullet 등 미리 빌드된 패키지)
+COPY ./wheels /tmp/wheels
+
+# requirements.txt 복사 및 패키지 설치
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir \
+    --find-links=/tmp/wheels \
+    -r requirements.txt
+
+# wheels 정리 (이미지 크기 줄이기)
+RUN rm -rf /tmp/wheels
