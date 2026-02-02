@@ -114,6 +114,9 @@ class PyBulletVerifier:
         
         self._init_simulation()
         
+        # 이전 세션의 브릭 바디 매핑 초기화 (수정된 LDR 파일 로드 시 필수)
+        self.brick_bodies = {}
+        
         bricks = self.plan.get_all_bricks()
         
         # 사전 처리: Z축 위치를 계산하고 지면에 맞추기 위한 최소 오프셋 찾기
@@ -308,7 +311,7 @@ class PyBulletVerifier:
             
         return result
 
-    def run_stability_check(self, duration: float = 2.0) -> VerificationResult:
+    def run_stability_check(self, duration: float = 2.0, auto_close: bool = True) -> VerificationResult:
         """
         중력 시뮬레이션을 실행하여 안정성을 확인합니다.
         접촉점(Contact Points)을 사용하여 제약 조건(Glue)을 자동 생성합니다.
@@ -565,7 +568,7 @@ class PyBulletVerifier:
         print(f" - 📏 최대 이동(Drift): {max_drift:.2f} (허용치: {drift_threshold})")
         print("-" * 40)
         
-        if result.score == 100: 
+        if result.is_valid: 
             print(" ✅ 최종 판정: [합격] (SUCCESS)")
             print("    \"이 모델은 튼튼합니다!\"")
         else:
@@ -576,7 +579,7 @@ class PyBulletVerifier:
                 if ev.type == "FIRST_FAILURE" and ev.brick_ids:
                     culprit = ev.brick_ids[0]
                     break
-            print(f"    💥 최초 붕괴 시작점: {culprit}")
+            print(f"    💥 최초 붕괴 시작점: {culprit}")                                            
             
             # 다른 피해 브릭 목록
             victims = []
@@ -595,7 +598,8 @@ class PyBulletVerifier:
             print("[PyBullet] 시뮬레이션 종료. 창을 닫으려면 엔터를 누르세요...")
             input()
 
-        self._close_simulation()
+        if auto_close:
+            self._close_simulation()
         return result
 
 # ============================================================================

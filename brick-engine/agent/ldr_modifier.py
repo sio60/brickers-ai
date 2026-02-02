@@ -6,8 +6,20 @@
 
 import re
 import os
+import logging
 from typing import Tuple, Optional, List, Dict, Any
 from pathlib import Path
+from collections import defaultdict
+
+# ============================================================================
+# 로깅 설정
+# ============================================================================
+logger = logging.getLogger(__name__)
+
+# LDU 상수 (브릭 병합용)
+STUD_SPACING = 20.0  # X/Z 그리드 간격
+BRICK_HEIGHT = 24.0  # 일반 브릭 높이
+PLATE_HEIGHT = 8.0   # 플레이트 높이
 
 
 def parse_ldr_line(line: str) -> Optional[dict]:
@@ -72,7 +84,7 @@ def apply_llm_decisions(
     path = Path(ldr_path)
     
     if not path.exists():
-        print(f"[LDR] 파일 없음: {ldr_path}")
+        logger.warning(f"파일 없음: {ldr_path}")
         return stats
 
     # 1. 파일 전체 읽기
@@ -99,7 +111,7 @@ def apply_llm_decisions(
         action = decision.get("action", "keep")
         
         if brick_id not in id_to_index:
-            print(f"[LDR] 찾을 수 없는 브릭 ID: {brick_id} (건너뜜)")
+            logger.warning(f"찾을 수 없는 브릭 ID: {brick_id} (건너뛰)")
             stats["failed"] += 1
             continue
             
@@ -139,14 +151,14 @@ def apply_llm_decisions(
                 )
                 lines.append(new_line + "\n")
                 stats["added"] += 1
-                print(f"[LDR] 지지 브릭 추가 완료: {part} at {position}")
+                logger.debug(f"지지 브릭 추가 완료: {part} at {position}")
             else:
                 stats["failed"] += 1
                 
         elif action == "delete":
             lines[line_idx] = None  # 삭제 표시
             stats["deleted"] += 1
-            print(f"[LDR] 브릭 삭제 처리 완료: {brick_id}")
+            logger.debug(f"브릭 삭제 처리 완료: {brick_id}")
             
         elif action == "keep":
             stats["kept"] += 1
@@ -156,8 +168,8 @@ def apply_llm_decisions(
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
         
-    print(f"[LDR] 수정 완료: {ldr_path}")
-    print(f"      - 결과: 추가 {stats['added']}, 이동 {stats['moved']}, 삭제 {stats['deleted']}, 유지 {stats['kept']}, 실패 {stats['failed']}")
+    logger.info(f"LDR 수정 완료: {ldr_path}")
+    logger.info(f"결과: 추가 {stats['added']}, 이동 {stats['moved']}, 삭제 {stats['deleted']}, 유지 {stats['kept']}, 실패 {stats['failed']}")
     
     return stats
 
@@ -170,3 +182,177 @@ def modify_brick_position(ldr_path: str, brick_id: str, new_position: Tuple[floa
 def remove_brick(ldr_path: str, brick_id: str) -> bool:
     res = apply_llm_decisions(ldr_path, [{"brick_id": brick_id, "action": "delete"}])
     return res["deleted"] > 0
+
+
+# ============================================================================
+# 브릭 병합 기능 (MergeBricks)
+# 같은 색상의 인접 1x1 브릭들을 큰 브릭으로 통합하여 구조적 안정성 향상
+# ============================================================================
+
+# 병합 가능한 1x1 브릭 파트 번호
+SMALL_BRICK_PARTS = {"3005.dat", "3024.dat"}  # 1x1 브릭, 1x1 플레이트
+
+# 큰 브릭으로 교체할 매핑 (길이 -> 파트 번호)
+# 플레이트는 사용하지 않음 (1x5, 1x7 브릭은 레고에 존재하지 않아 제외)
+MERGE_TARGET_BRICKS = {
+    2: "3004.dat",   # 1x2 브릭
+    3: "3622.dat",   # 1x3 브릭
+    4: "3010.dat",   # 1x4 브릭
+    6: "3009.dat",   # 1x6 브릭
+    8: "3008.dat",   # 1x8 브릭
+}
+
+
+def merge_small_bricks(
+    ldr_path: str,
+    target_brick_ids: Optional[List[str]] = None,
+    min_merge_count: int = 2
+) -> dict:
+    """
+    같은 색상의 인접 1x1 브릭들을 큰 브릭으로 병합합니다.
+    색상이 다른 브릭은 병합하지 않습니다.
+    
+    Args:
+        ldr_path: LDR 파일 경로
+        target_brick_ids: 병합 대상 브릭 ID 리스트 (None이면 모든 1x1 브릭 대상)
+        min_merge_count: 최소 병합 개수 (기본값: 2)
+        
+    Returns:
+        {"merged": 병합된 그룹 수, "original_count": 원본 브릭 수, "new_count": 병합 후 브릭 수}
+    """
+    stats = {"merged": 0, "original_count": 0, "new_count": 0}
+    path = Path(ldr_path)
+    
+    if not path.exists():
+        logger.warning(f"파일 없음: {ldr_path}")
+        return stats
+    
+    # 1. 파일 읽기 및 브릭 파싱
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    
+    # 브릭 정보 수집 (ID 포함)
+    bricks = []
+    brick_counter = 0
+    for i, line in enumerate(lines):
+        parsed = parse_ldr_line(line)
+        if parsed is None:
+            continue
+        
+        brick_id = f"{parsed['part']}_{brick_counter}"
+        parsed["brick_id"] = brick_id
+        parsed["line_idx"] = i
+        
+        # 대상 브릭 필터링
+        if target_brick_ids is None or brick_id in target_brick_ids:
+            # 1x1 브릭만 병합 대상
+            if parsed["part"] in SMALL_BRICK_PARTS:
+                bricks.append(parsed)
+        
+        brick_counter += 1
+    
+    stats["original_count"] = len(bricks)
+    logger.info(f"병합 대상 1x1 브릭 수: {len(bricks)}")
+    
+    if len(bricks) < min_merge_count:
+        stats["new_count"] = len(bricks)
+        return stats
+    
+    # 2. 동일 레이어(Y)와 색상 기준으로 그룹화
+    # key = (y좌표, 색상) -> 브릭 리스트
+    layer_color_groups = defaultdict(list)
+    for brick in bricks:
+        key = (brick["y"], brick["color"])
+        layer_color_groups[key].append(brick)
+    
+    # 3. 각 그룹에서 X 또는 Z 방향으로 인접한 브릭 찾기
+    merged_line_indices = set()  # 삭제할 라인 인덱스
+    new_bricks = []  # 새로 생성할 브릭 라인
+    
+    for (y, color), group_bricks in layer_color_groups.items():
+        if len(group_bricks) < min_merge_count:
+            continue
+        
+        # X 방향 병합 시도 (같은 Z에서)
+        z_groups = defaultdict(list)
+        for b in group_bricks:
+            z_groups[b["z"]].append(b)
+        
+        for z, z_bricks in z_groups.items():
+            if len(z_bricks) < min_merge_count:
+                continue
+            
+            # X 좌표 기준 정렬
+            z_bricks.sort(key=lambda b: b["x"])
+            
+            # 연속된 브릭 그룹 찾기
+            i = 0
+            while i < len(z_bricks):
+                # 연속 시퀀스 시작
+                sequence = [z_bricks[i]]
+                
+                j = i + 1
+                while j < len(z_bricks):
+                    # 인접 여부 확인 (X 방향으로 STUD_SPACING 간격)
+                    prev_x = sequence[-1]["x"]
+                    curr_x = z_bricks[j]["x"]
+                    
+                    if abs(curr_x - prev_x - STUD_SPACING) < 0.1:
+                        sequence.append(z_bricks[j])
+                        j += 1
+                    else:
+                        break
+                
+                # 병합 가능한 시퀀스 처리
+                seq_len = len(sequence)
+                if seq_len >= min_merge_count and seq_len in MERGE_TARGET_BRICKS:
+                    # 시퀀스의 첫 번째 브릭 위치를 기준으로 새 브릭 생성
+                    first_brick = sequence[0]
+                    new_part = MERGE_TARGET_BRICKS[seq_len]
+                    
+                    # 새 브릭 라인 생성 (첫 번째 브릭 위치 사용)
+                    new_line = build_ldr_line(
+                        color,
+                        first_brick["x"],
+                        first_brick["y"],
+                        first_brick["z"],
+                        first_brick["matrix"],
+                        new_part
+                    )
+                    new_bricks.append(new_line + "\n")
+                    
+                    # 원본 브릭들 삭제 표시
+                    for b in sequence:
+                        merged_line_indices.add(b["line_idx"])
+                    
+                    stats["merged"] += 1
+                    logger.debug(f"병합 완료: {seq_len}개 1x1 -> 1x{seq_len} (색상: {color})")
+                
+                i = j
+    
+    # 4. 파일 업데이트
+    if merged_line_indices:
+        # 삭제할 라인 제외하고 새 라인 추가
+        new_lines = []
+        for i, line in enumerate(lines):
+            if i not in merged_line_indices:
+                new_lines.append(line)
+        
+        # 새 브릭 추가
+        new_lines.extend(new_bricks)
+        
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+        
+        # 최종 브릭 수 계산
+        final_brick_count = sum(1 for l in new_lines if l.strip().startswith("1 "))
+        stats["new_count"] = stats["original_count"] - len(merged_line_indices) + len(new_bricks)
+        
+        logger.info(f"브릭 병합 완료: {stats['merged']}개 그룹 병합됨")
+        logger.info(f"원본 1x1 브릭: {len(merged_line_indices)}개 -> 새 브릭: {len(new_bricks)}개")
+    else:
+        stats["new_count"] = stats["original_count"]
+        logger.info("병합 가능한 브릭 그룹이 없습니다.")
+    
+    return stats
+

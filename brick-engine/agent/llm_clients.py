@@ -5,10 +5,34 @@
 # ============================================================================
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union, Callable
 import json
 import os
+import logging
+import time
 from pathlib import Path
+
+# 재시도 로직용 tenacity (없으면 폴백)
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+    TENACITY_AVAILABLE = True
+except ImportError:
+    TENACITY_AVAILABLE = False
+
+# ============================================================================
+# 로깅 설정
+# ============================================================================
+logger = logging.getLogger(__name__)
+
+# 로깅 포맷 설정 (이미 설정되어 있지 않은 경우에만)
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler()
+        ]
+    )
 
 # .env 파일에서 환경변수 자동 로드
 try:
@@ -21,7 +45,7 @@ try:
     
     if _ENV_PATH.exists():
         load_dotenv(_ENV_PATH, override=True) # override=True로 설정하여 강제로 덮어씀
-        print(f"[LLM] .env 파일 로드됨: {_ENV_PATH}")
+        logger.info(f".env 파일 로드됨: {_ENV_PATH}")
         
         # 랭스미스 연동 확인 로그
         tracing = os.environ.get("LANGCHAIN_TRACING_V2")
@@ -30,15 +54,15 @@ try:
         
         if tracing == "true":
             masked_key = f"{api_key[:10]}..." if api_key else "None"
-            print(f"[LLM] 랭스미스 트레이싱 활성화됨 (Project: {project}, API Key: {masked_key})")
+            logger.info(f"랭스미스 트레이싱 활성화됨 (Project: {project}, API Key: {masked_key})")
         else:
-            print("[LLM] 랭스미스 트레이싱이 비활성화 상태입니다. (.env 설정을 확인하세요)")
+            logger.debug("랭스미스 트레이싱이 비활성화 상태입니다. (.env 설정을 확인하세요)")
     else:
-        print(f"[LLM] .env 파일을 찾을 수 없습니다: {_ENV_PATH}")
+        logger.warning(f".env 파일을 찾을 수 없습니다: {_ENV_PATH}")
 except ImportError:
     pass  # python-dotenv가 없으면 OS 환경변수만 사용
 except Exception as e:
-    print(f"[LLM] .env 로드 중 에러 발생: {e}")
+    logger.error(f".env 로드 중 에러 발생: {e}")
 
 
 class BaseLLMClient(ABC):
@@ -74,6 +98,18 @@ class BaseLLMClient(ABC):
             파싱된 JSON 딕셔너리
         """
         pass
+
+    def bind_tools(self, tools: List[Any]) -> Any:
+        """
+        LLM에 도구를 바인딩함 (Function Calling)
+        
+        Args:
+            tools: LangChain Tool 객체 리스트 또는 함수 리스트
+            
+        Returns:
+            도구가 바인딩된 Runnable 객체
+        """
+        raise NotImplementedError("이 클라이언트는 아직 툴 바인딩을 지원하지 않습니다.")
 
 
 class GroqClient(BaseLLMClient):
@@ -156,8 +192,8 @@ class GroqClient(BaseLLMClient):
             
             return json.loads(cleaned)
         except json.JSONDecodeError as e:
-            print(f"[경고] JSON 파싱 실패: {e}")
-            print(f"원본 응답: {response_text[:500]}...")
+            logger.warning(f"JSON 파싱 실패: {e}")
+            logger.debug(f"원본 응답: {response_text[:500]}...")
             # 파싱 실패 시 빈 딕셔너리 + 오류 정보 반환
             return {"error": str(e), "raw_response": response_text}
 
@@ -209,6 +245,14 @@ class GeminiClient(BaseLLMClient):
     def generate(self, prompt: str, system_prompt: str = "") -> str:
         """
         LangChain을 통해 텍스트 생성 (자동 Tracing 포함)
+        재시도 로직 및 에러 핸들링 적용
+        """
+        return self._generate_with_retry(prompt, system_prompt)
+    
+    def _generate_with_retry(self, prompt: str, system_prompt: str = "", max_retries: int = 3) -> str:
+        """
+        재시도 로직이 포함된 내부 생성 메서드
+        tenacity 라이브러리가 없으면 수동 재시도 폴백
         """
         llm = self._get_model()
         
@@ -218,20 +262,44 @@ class GeminiClient(BaseLLMClient):
             messages.append(SystemMessage(content=system_prompt))
         messages.append(HumanMessage(content=prompt))
         
-        response = llm.invoke(messages)
-        content = response.content
+        last_error = None
         
-        # content가 리스트인 경우 (멀티파트 등) 문자열로 변합
-        if isinstance(content, list):
-            texts = []
-            for part in content:
-                if isinstance(part, dict) and "text" in part:
-                    texts.append(part["text"])
-                elif isinstance(part, str):
-                    texts.append(part)
-            content = "".join(texts)
-            
-        return content
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"LLM 호출 시도 {attempt + 1}/{max_retries}")
+                
+                # API 호출
+                response = llm.invoke(messages)
+                content = response.content
+                
+                # content가 리스트인 경우 (멀티파트 등) 문자열로 변환
+                if isinstance(content, list):
+                    texts = []
+                    for part in content:
+                        if isinstance(part, dict) and "text" in part:
+                            texts.append(part["text"])
+                        elif isinstance(part, str):
+                            texts.append(part)
+                    content = "".join(texts)
+                
+                logger.debug("LLM 호출 성공")
+                return content
+                
+            except Exception as e:
+                last_error = e
+                error_type = type(e).__name__
+                logger.warning(f"LLM 호출 실패 (시도 {attempt + 1}/{max_retries}): {error_type} - {e}")
+                
+                # Rate Limit이거나 네트워크 오류인 경우 재시도
+                if attempt < max_retries - 1:
+                    # 지수 백오프: 1초, 2초, 4초...
+                    wait_time = min(2 ** attempt, 10)
+                    logger.info(f"{wait_time}초 후 재시도합니다...")
+                    time.sleep(wait_time)
+        
+        # 모든 재시도 실패
+        logger.error(f"LLM 호출이 {max_retries}회 모두 실패했습니다: {last_error}")
+        raise last_error
 
     def generate_json(self, prompt: str, system_prompt: str = "") -> Dict[str, Any]:
         """
@@ -247,6 +315,7 @@ class GeminiClient(BaseLLMClient):
         # JSON 파싱 시도
         try:
             cleaned = response_text.strip()
+
             # 코드 블록 제거 (```json ... ``` 형태로 올 수 있음)
             if "```" in cleaned:
                 if "```json" in cleaned:
@@ -256,8 +325,15 @@ class GeminiClient(BaseLLMClient):
             
             return json.loads(cleaned)
         except (json.JSONDecodeError, IndexError) as e:
-            print(f"[경고] Gemini JSON 파싱 실패: {e}")
+            logger.warning(f"Gemini JSON 파싱 실패: {e}")
             return {"error": str(e), "raw_response": response_text}
+
+    def bind_tools(self, tools: List[Any]) -> Any:
+        """
+        Gemini 모델에 툴 바인딩 (LangChain 활용)
+        """
+        llm = self._get_model()
+        return llm.bind_tools(tools)
 
 
 
