@@ -70,3 +70,4 @@ langchain-google-genai
 langchain-core
 langsmith
 boto3
+langchain-openai
