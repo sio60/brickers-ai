@@ -120,7 +120,7 @@ async def apply_color_variant(req: ColorVariantRequest):
                 apply_color_mapping,
                 COLOR_THEMES
             )
-            from ldr_converter import ldr_to_brick_model, model_to_ldr
+            from ldr_converter import ldr_to_brick_model, model_to_ldr, STEP_MODE_LAYER
 
             # 파츠 DB 로드
             parts_db = load_parts_db()
@@ -155,8 +155,8 @@ async def apply_color_variant(req: ColorVariantRequest):
             changed = apply_color_mapping(model, mapping)
             print(f"[ColorVariant] Changed {changed} bricks")
 
-            # 4. LDR 출력
-            ldr_output = model_to_ldr(model, parts_db, skip_validation=True, skip_physics=True)
+            # 4. LDR 출력 (STEP 마커 포함)
+            ldr_output = model_to_ldr(model, parts_db, skip_validation=True, skip_physics=True, step_mode=STEP_MODE_LAYER)
             ldr_bytes = ldr_output.encode('utf-8')
             ldr_data = base64.b64encode(ldr_bytes).decode('utf-8')
 
