@@ -568,9 +568,15 @@ class PyBulletVerifier:
         print(f" - 📏 최대 이동(Drift): {max_drift:.2f} (허용치: {drift_threshold})")
         print("-" * 40)
         
-        if result.is_valid: 
+        if result.is_valid and not floating: 
             print(" ✅ 최종 판정: [합격] (SUCCESS)")
             print("    \"이 모델은 튼튼합니다!\"")
+        elif result.is_valid and floating:
+            print(f" ❌ 최종 판정: [불합격] (FAIL - 공중부양 {len(floating)}개 감지)")
+            print(f"    \"모델은 무너지지 않았지만, {len(floating)}개의 브릭이 허공에 떠 있어 불완전합니다.\"")
+            print(f"    - 공중부양 브릭: {floating[:5]}...")
+            # 공중부양은 구조적 결함이므로 실패로 간주
+            result.is_valid = False
         else:
             print(" ❌ 최종 판정: [불합격] (FAIL)")
             # 원인 분석
