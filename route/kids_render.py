@@ -495,15 +495,15 @@ async def render_one_image_async(img_bytes: bytes, mime: str) -> bytes:
 # -----------------------------
 # Brickify engine loader
 # -----------------------------
-AGE_TO_BUDGET = {"4-5": 150, "6-7": 200, "8-10": 250}
+AGE_TO_BUDGET = {"4-5": 50, "6-7": 100, "8-10": 150}
 
 def _budget_to_start_target(eff_budget: int) -> int:
-    # Frontend budgets: 150 / 200 / 250
-    if eff_budget <= 150:
-        return 40
-    if eff_budget <= 200:
+    # Frontend budgets: 50 / 100 / 150 (L1/L2/L3)
+    if eff_budget <= 50:
         return 50
-    return 60
+    if eff_budget <= 100:
+        return 100
+    return 150
 
 def _load_engine_convert():
     """
@@ -748,7 +748,7 @@ async def process_kids_request_internal(
             # 4) Brickify 실행 (CPU heavy -> thread)
             # -----------------
             step_start = time.time()
-            eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 60))
+            eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
             start_target = _budget_to_start_target(eff_budget)
             log(f"📌 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
 
