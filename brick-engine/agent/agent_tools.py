@@ -18,6 +18,7 @@ class TuneParameters(BaseModel):
     fill: bool = Field(..., description="내부 채움 활성화 여부. 끄면 속이 비어 가벼워지지만 약해짐.")
     smart_fix: bool = Field(..., description="스마트 보정 활성화 여부.")
     plates_per_voxel: int = Field(..., description="복셀당 플레이트 수 (1~3). 3이면 정밀하지만 브릭 수가 늘어남.")
+    auto_remove_1x1: bool = Field(..., description="True면 1x1 브릭을 자동 삭제하여 안정성을 확보합니다. 디테일이 중요하다면 False로 설정하세요.")
     reasoning: str = Field(..., description="이 파라미터를 선택한 이유에 대한 간략한 설명.")
 
 

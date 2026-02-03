@@ -47,55 +47,16 @@ except ImportError:
     get_db = None
 
 # ============================================================================
-# Memory DB Helper Functions
+# Memory & DB Helper Functions
 # ============================================================================
 
-def get_memory_collection():
-    if get_db is None:
-        return None
-    try:
-        db = get_db()
-        return db["co_scientist_memory"]
-    except Exception as e:
-        print(f"⚠️ DB 연결 실패: {e}")
-        return None
+import config  # This registers AGENT_DIR in sys.path
+from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
 
-def load_memory_from_db(model_id: str) -> Dict[str, Any]:
-    """DB에서 해당 모델의 Memory를 로드합니다."""
-    col = get_memory_collection()
-    if col is None:
-        return {}
-        
-    try:
-        doc = col.find_one({"_id": model_id})
-        if doc:
-            memory = {k: v for k, v in doc.items() if k != "_id"}
-            print(f"📚 [Memory] '{model_id}'에 대한 학습 데이터를 불러왔습니다.")
-            return memory
-    except Exception as e:
-        print(f"⚠️ [Memory] 로드 실패: {e}")
-    
-    return {}
-
-def save_memory_to_db(model_id: str, memory: Dict[str, Any]):
-    """Memory를 DB에 저장(Upsert)합니다."""
-    col = get_memory_collection()
-    if col is None:
-        return
-        
-    try:
-        from datetime import datetime
-        update_data = memory.copy()
-        update_data["last_updated"] = datetime.utcnow()
-        
-        col.update_one(
-            {"_id": model_id},
-            {"$set": update_data},
-            upsert=True
-        )
-        print(f"💾 [Memory] '{model_id}' 학습 데이터 저장 완료.")
-    except Exception as e:
-        print(f"⚠️ [Memory] 저장 실패: {e}")
+# Legacy functions (kept for compatibility)
+def get_memory_collection(): return memory_manager.collection_exps if memory_manager else None
+def load_memory_from_db(model_id: str): return {}
+def save_memory_to_db(model_id: str, memory: Dict): pass
 
 # ============================================================================
 # 기본 파라미터 정의
@@ -229,6 +190,7 @@ class AgentState(TypedDict):
     gui: bool
     
     attempts: int
+    session_id: str
     messages: Annotated[List[BaseMessage], add_messages]
     
     verification_raw_result: Any 
@@ -415,7 +377,21 @@ LDR 3D 모델의 구조적 불안정성 문제를 해결해야 합니다.
     
         messages_to_send = state['messages'][:]
         
-        # Memory 주입
+        if memory_manager:
+            last_msg = messages_to_send[-1]
+            obs = last_msg.content if isinstance(last_msg, HumanMessage) else ""
+            similar_cases = memory_manager.search_similar_cases(obs, limit=3)
+            
+            if similar_cases:
+                memory_info = "\n**📚 유사한 과거 실험 사례 (RAG):**\n"
+                for i, case in enumerate(similar_cases, 1):
+                    tool = case['experiment'].get('tool', 'Unknown')
+                    result = case['verification'].get('numerical_analysis', 'N/A')
+                    outcome = "성공" if case.get('result_success') else "실패"
+                    memory_info += f"[{i}] {outcome} ({tool}): {result}\n"
+                messages_to_send.append(SystemMessage(content=memory_info))
+
+        # Legacy Memory (Fallback)
         memory = state.get('memory', {})
         lessons = memory.get('lessons', [])
         failed_approaches = memory.get('failed_approaches', [])
@@ -526,14 +502,72 @@ LDR 3D 모델의 구조적 불안정성 문제를 해결해야 합니다.
         memory = state.get('memory', {"failed_approaches": [], "successful_patterns": [], "lessons": [], "consecutive_failures": 0})
         current_metrics = state.get('current_metrics', {})
         
-        # Memory update logics... (생략하거나 간단히 구현)
-        # ID 저장
+        # 이전 메트릭 가져오기
+        previous_metrics = state.get('previous_metrics', {})
+        if not previous_metrics:
+            return {"memory": memory, "previous_metrics": current_metrics, "next_action": "model"}
+
+        # 메트릭 비교
+        prev_floating = previous_metrics.get('floating_count', 0)
+        curr_floating = current_metrics.get('floating_count', 0)
+        floating_improved = curr_floating < prev_floating
+        
+        last_tool = state.get('last_tool_used', 'unknown')
+        
+        # 간단한 성공 판정
+        success = floating_improved
+        lesson = f"{last_tool}: 공중부양 {prev_floating}->{curr_floating} ({'성공' if success else '실패'})"
+        
+        if success:
+             memory["successful_patterns"].append(f"{last_tool}: 효과 확인")
+             memory["consecutive_failures"] = 0
+        else:
+             memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
+             memory["consecutive_failures"] += 1
+             
+        memory["lessons"].append(lesson)
+
+        # Unified Logging (표준화된 헬퍼 함수 사용)
+        if memory_manager:
+            try:
+                # 상세 observation 생성
+                detailed_obs = f"floating={prev_floating}, ratio={previous_metrics.get('small_brick_ratio', 0):.2f}, total={previous_metrics.get('total_bricks', 0)}"
+                
+                memory_manager.log_experiment(
+                    session_id=state.get('session_id', 'ldr_session'),
+                    model_id=Path(state['ldr_path']).name,
+                    agent_type="ldr_only",
+                    iteration=state['attempts'],
+                    hypothesis=build_hypothesis(
+                        observation=detailed_obs,
+                        hypothesis=f"{last_tool} 적용으로 floating 감소 기대",
+                        reasoning=f"Memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}",
+                        prediction=f"floating: {prev_floating}→{curr_floating} 예상"
+                    ),
+                    experiment=build_experiment(
+                        tool=last_tool,
+                        parameters=state.get('params', {}),
+                        model_name="gemini-2.5-flash"
+                    ),
+                    verification=build_verification(
+                        passed=success,
+                        metrics_before=previous_metrics,
+                        metrics_after=current_metrics,
+                        numerical_analysis=f"floating {prev_floating}→{curr_floating} ({curr_floating - prev_floating:+d}), ratio {previous_metrics.get('small_brick_ratio', 0):.2f}→{current_metrics.get('small_brick_ratio', 0):.2f}"
+                    ),
+                    improvement=build_improvement(
+                        lesson_learned=lesson,
+                        next_hypothesis="Continue" if success else "Try different tool"
+                    )
+                )
+            except Exception as e:
+                print(f"⚠️ [Memory] 로그 저장 실패: {e}")
+
+        # Legacy Save (Fallback)
         try:
-            from pathlib import Path
-            model_id = Path(state['ldr_path']).name
-            save_memory_to_db(model_id, memory)
-        except Exception as e:
-            print(f"⚠️ [Memory] 저장 중 에러: {e}")
+             model_id = Path(state['ldr_path']).name
+             save_memory_to_db(model_id, memory)
+        except: pass
         
         return {
             "memory": memory, 
@@ -598,6 +632,7 @@ def regeneration_loop(
         ldr_path=ldr_path,
         params=DEFAULT_PARAMS.copy(),
         attempts=0,
+        session_id=memory_manager.start_session(Path(ldr_path).name, "ldr_only") if memory_manager else "offline",
         max_retries=max_retries,
         acceptable_failure_ratio=0.1,
         verification_duration=2.0,
@@ -625,6 +660,20 @@ def regeneration_loop(
         print("✅ 성공")
     else:
         print("❌ 실패 또는 중단됨")
+    
+    # 📊 세션 피드백 보고서 생성
+    if memory_manager:
+        try:
+            session_id = final_state.get('session_id', '')
+            if session_id and session_id != 'offline':
+                feedback_report = memory_manager.generate_session_report(session_id)
+                if 'error' not in feedback_report:
+                    print("\n📊 [Co-Scientist] 세션 피드백 보고서 생성 완료")
+                    print(f"   - 총 반복: {feedback_report.get('statistics', {}).get('total_iterations', 0)}회")
+                    print(f"   - 성공률: {feedback_report.get('statistics', {}).get('success_rate', 0)}%")
+                    print(f"   - 권장사항: {feedback_report.get('final_recommendation', '')}")
+        except Exception as e:
+            print(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
     
     return final_state
 

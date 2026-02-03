@@ -1,11 +1,16 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
-from pathlib import Path
 
 # ✅ 실행 위치와 상관없이 ai/.env 로드
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+# ✅ 전역 Import 경로 등록 (memory_utils 등을 어디서든 import 가능)
+AGENT_DIR = BASE_DIR / "brick-engine" / "agent"
+if str(AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(AGENT_DIR))
 
 ENV = os.getenv("ENV", "local")
 
@@ -20,9 +25,10 @@ PARTS_COLLECTION = os.getenv("PARTS_COLLECTION", "ldraw_parts")
 # Atlas Vector Search (옵션)
 ################################
 ATLAS_VECTOR_INDEX_PARTS = os.getenv("ATLAS_VECTOR_INDEX_PARTS", "")
+ATLAS_VECTOR_INDEX_MEMORY = os.getenv("ATLAS_VECTOR_INDEX_MEMORY", "co_scientist_memory_index") # Default index name for memory
 VECTOR_FIELD = os.getenv("VECTOR_FIELD", "embedding")
 EMBEDDING_DIMS = int(os.getenv("EMBEDDING_DIMS", "512"))
-HF_EMBED_MODEL = os.getenv("HF_EMBED_MODEL", "intfloat/multilingual-e5-small")
+HF_EMBED_MODEL = os.getenv("HF_EMBED_MODEL", "intfloat/multilingual-e5-small")  # 384차원 (경량화)
 
 ################################
 # Kids Render (옵션이지만 거의 필수)

@@ -38,6 +38,7 @@ class AgentState(TypedDict):
 
     # Tracking
     iteration: int
+    session_id: str
     total_removed: int
     action_history: List[Dict]
 

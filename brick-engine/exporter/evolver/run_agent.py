@@ -20,8 +20,12 @@ from ldr_converter import ldr_to_brick_model, model_to_ldr  # noqa: E402
 from agent import build_graph, AgentState  # noqa: E402
 from agent.tools import init_tools, load_parts_db, get_model_state, analyze_glb  # noqa: E402
 
+# Memory Utils Import
+import config  # This registers AGENT_DIR in sys.path
+from memory_utils import memory_manager
+
 def run_agent(ldr_path: str, glb_path: str = None):
-    """Run the evolver agent on an LDR file"""
+    # ... (print headers) ...
     print("=" * 60)
     print("LangGraph + CoScientist Evolver Agent")
     print("=" * 60)
@@ -49,6 +53,11 @@ def run_agent(ldr_path: str, glb_path: str = None):
             print(f"  Legs: {glb_ref.get('legs')}")
             print(f"  Features: {glb_ref.get('key_features')}")
 
+    # Session ID 생성
+    session_id = "offline_evolver"
+    if memory_manager:
+        session_id = memory_manager.start_session(model.name, "evolver")
+
     initial_state: AgentState = {
         "model": model,
         "model_backup": copy.deepcopy(model),
@@ -62,6 +71,8 @@ def run_agent(ldr_path: str, glb_path: str = None):
         "verification_score": 100.0,
         "verification_evidence": [],
         "iteration": 0,
+        "session_id": session_id,
+        "total_removed": 0,
         "total_removed": 0,
         "action_history": [],
         "strategy": "",

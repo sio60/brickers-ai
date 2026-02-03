@@ -54,56 +54,25 @@ except ImportError:
     get_db = None
 
 # ============================================================================
-# Memory DB Helper Functions
+# Memory & DB Helper Functions
 # ============================================================================
 
-def get_memory_collection():
-    if get_db is None:
-        return None
+try:
+    from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+except ImportError:
+    # 경로 문제 시 현재 폴더 추가 후 재시도
+    sys.path.append(str(_THIS_DIR))
     try:
-        db = get_db()
-        return db["co_scientist_memory"]
-    except Exception as e:
-        print(f"⚠️ DB 연결 실패: {e}")
-        return None
+        from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+    except ImportError:
+        print("⚠️ memory_utils.py를 찾을 수 없습니다.")
+        memory_manager = None
+        build_hypothesis = build_experiment = build_verification = build_improvement = None
 
-def load_memory_from_db(model_id: str) -> Dict[str, Any]:
-    """DB에서 해당 모델의 Memory를 로드합니다."""
-    col = get_memory_collection()
-    if col is None:
-        return {}
-        
-    try:
-        doc = col.find_one({"_id": model_id})
-        if doc:
-            # MongoDB의 _id 필드는 제외하고 dict 반환
-            memory = {k: v for k, v in doc.items() if k != "_id"}
-            print(f"📚 [Memory] '{model_id}'에 대한 학습 데이터를 불러왔습니다.")
-            return memory
-    except Exception as e:
-        print(f"⚠️ [Memory] 로드 실패: {e}")
-    
-    return {}
-
-def save_memory_to_db(model_id: str, memory: Dict[str, Any]):
-    """Memory를 DB에 저장(Upsert)합니다."""
-    col = get_memory_collection()
-    if col is None:
-        return
-        
-    try:
-        from datetime import datetime
-        update_data = memory.copy()
-        update_data["last_updated"] = datetime.utcnow()
-        
-        col.update_one(
-            {"_id": model_id},
-            {"$set": update_data},
-            upsert=True
-        )
-        print(f"💾 [Memory] '{model_id}' 학습 데이터 저장 완료.")
-    except Exception as e:
-        print(f"⚠️ [Memory] 저장 실패: {e}")
+# Legacy functions (하위 호환성을 위해 남겨두거나 삭제 가능)
+def get_memory_collection(): return memory_manager.collection_exps if memory_manager else None
+def load_memory_from_db(model_id: str): return {} # Legacy 로드 비활성화 (RAG로 대체)
+def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활성화
 
 
 # ============================================================================
@@ -129,6 +98,7 @@ DEFAULT_PARAMS = {
     "smart_fix": True,         # 스마트 보정 활성화
     "fill": True,              # 내부 채움 활성화
     "step_order": "bottomup",  # 조립 순서
+    "auto_remove_1x1": True,   # 기본값: 안전하게 1x1 삭제
 }
 
 
@@ -248,6 +218,7 @@ class AgentState(TypedDict):
     
     # 실행 상태
     attempts: int
+    session_id: str # 오케스트레이션용 세션 ID
     messages: Annotated[List[BaseMessage], add_messages] # 대화 기록 (History)
     
     # 검증 결과 캐시 (Tool 실행 시 참조용)
@@ -275,8 +246,13 @@ class AgentState(TypedDict):
     #     "consecutive_failures": 0
     # }
 
+    # [v2] Co-Scientist 아키텍처 추가 필드
+    current_hypothesis: Optional[Dict[str, Any]]  # node_hypothesize 결과
+    strategy_plan: Optional[Dict[str, Any]]       # node_strategy 결과
+    llm_config: Optional[Dict[str, str]]          # {"model": "gpt-4o"}
+
     # 다음 노드 제어
-    next_action: Literal["generate", "verify", "model", "tool", "reflect", "end"]
+    next_action: Literal["generate", "verify", "model", "tool", "reflect", "hypothesize", "strategy", "end"]
 
 
 # ============================================================================
@@ -285,10 +261,12 @@ class AgentState(TypedDict):
 
 class RegenerationGraph:
     def __init__(self, llm_client: Optional[BaseLLMClient] = None):
-        if llm_client is None:
-            self.llm_client = GeminiClient()
-        else:
-            self.llm_client = llm_client
+        # 기본 클라이언트는 Gemini (비용 효율성)
+        self.gemini_client = GeminiClient()
+        self.default_client = llm_client if llm_client else self.gemini_client
+        
+        # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
+        self.gpt_client = None
             
         # 초기 시스템 프롬프트 (Tool 사용 권장)
         self.SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
@@ -300,7 +278,12 @@ class RegenerationGraph:
 3. `MergeBricks`: 같은 색상의 인접한 1x1 브릭들을 큰 브릭(1x2~1x8)으로 병합합니다. 연결이 강화되어 안정성이 향상됩니다. 색상이 다른 브릭은 병합되지 않습니다.
 
 **의사결정 알고리즘 (Decision Logic):**
-1. **실패율(Failure Ratio) 확인**:
+1. **1x1 브릭 처리 전략 (Smart 1x1 Strategy)**:
+   - **기본 상태**: 안전을 위해 `auto_remove_1x1=True` (삭제)로 시작합니다.
+   - **디테일 복구**: 만약 눈, 코, 입 등 중요 디테일이 사라졌다면 `TuneParameters`를 호출하여 `auto_remove_1x1=False`로 변경하세요.
+   - **조건부 유지**: `auto_remove_1x1=False`로 할 경우, 반드시 `MergeBricks` 사용을 염두에 두어야 합니다. (유지 후 합치기)
+
+2. **실패율(Failure Ratio) 확인**:
    - **20% 미만 (Low Risk)**: 전체 구조는 튼튼합니다. `TuneParameters`로 다시 만들면 오히려 더 나쁜 결과가 나올 위험이 큽니다.
    - **20% ~ 50% (Medium Risk)**: 상황을 판단하세요. 중요 부위가 무너졌다면 재생성, 외곽만 무너졌다면 삭제.
    - **50% 이상 (High Risk)**: 현재 파라미터로는 불가능합니다. `TuneParameters`로 설정을 변경하여 다시 시도하세요.
@@ -312,20 +295,157 @@ class RegenerationGraph:
 
 목표: 물리적으로 안정적(Stable)인 레고 구조물을 만드는 것.
 이전 시도의 실패 원인과 통계(실패율, 부동 브릭 수)를 분석하고, 위 논리에 따라 가장 합리적인 도구를 선택하세요.
-
-**🔬 Co-Scientist 사고 프로세스 (반드시 따르세요):**
-도구를 선택하기 전에 아래 순서로 생각하고, 응답에 포함하세요:
-1. 🔍 **관찰 (Observation)**: 현재 검증 결과에서 무엇이 문제인가? (실패율, 공중부양 수, 1x1 비율 등)
-2. 💭 **가설 (Hypothesis)**: 왜 이 문제가 발생했는가? (예: "1x1 비율이 높아 연결이 약함", "지지대가 부족함")
-3. 🧪 **실험 (Experiment)**: 가설을 검증하기 위해 어떤 도구를 사용할 것인가?
-4. 📈 **예상 (Prediction)**: 도구 실행 후 어떤 변화가 예상되는가? (예: "1x1 비율 50% → 20%로 감소 예상")
-
-이 과정을 거친 후, 가장 적합한 도구를 호출하세요.
 """
 
         self.verifier = None
         
     # --- Nodes ---
+
+    def _rerank_and_filter_cases(self, observation: str, cases: List[Dict]) -> List[Dict]:
+        """[신규] LLM 기반 RAG Re-ranking (Semantic Scoring)"""
+        if not cases:
+            return []
+            
+        print(f"  🔍 Re-ranking: {len(cases)}개 후보 분석 중...")
+        
+        # 후보군 텍스트 변환
+        candidates_text = ""
+        for i, case in enumerate(cases):
+            candidates_text += f"""
+[Case {i}]
+- Observation: {case['hypothesis'].get('observation', '')[:200]}...
+- Action: {case['experiment'].get('tool', '')}
+- Result: {case['result_success']} ({case['verification'].get('numerical_analysis', '')})
+--------------------------------------------------"""
+
+        prompt = f"""
+현재 상황(Current Observation)과 가장 전략적으로 유사한 과거 사례를 선별하세요.
+단순 키워드 매칭이 아니라, '실패/성공 원인'과 '구조적 문제'가 유사한지 분석해야 합니다.
+
+현재 상황:
+{observation}
+
+후보 사례 목록:
+{candidates_text}
+
+분석 후 가장 참고 가치가 높은 Top 3 사례를 다음 JSON 포맷으로 선정하세요:
+{{
+    "top_cases": [
+        {{
+            "case_index": 0,
+            "relevance_score": 0.95, (0.0~1.0)
+            "reason": "현재 상황(~한 문제)과 동일한 실패 패턴을 보임"
+        }},
+        ...
+    ]
+}}
+"""
+        try:
+            response = self.default_client.generate_json(prompt)
+            top_cases = response.get("top_cases", [])
+            
+            # 인덱스로 원본 찾아서 반환 (점수순 정렬)
+            reranked_results = []
+            for item in sorted(top_cases, key=lambda x: x.get('relevance_score', 0), reverse=True):
+                idx = item.get("case_index")
+                if 0 <= idx < len(cases):
+                    case = cases[idx]
+                    # 메타데이터에 Re-ranking 점수와 이유 추가
+                    case['_rerank_score'] = item.get('relevance_score')
+                    case['_rerank_reason'] = item.get('reason')
+                    reranked_results.append(case)
+            
+            print(f"  ✨ Re-ranking 완료: Top {len(reranked_results)} 선정 (Max Score: {reranked_results[0]['_rerank_score'] if reranked_results else 0})")
+            return reranked_results
+            
+        except Exception as e:
+            print(f"  ⚠️ Re-ranking 실패 (Fallback to raw vector rank): {e}")
+            return cases[:3]  # 실패 시 그냥 벡터 상위 3개 반환
+
+    def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
+        """[신규] 가설 생성 노드: RAG 검색 및 구체적 가설 수립"""
+        print("\n[Hypothesize] 가설 수립 및 RAG 검색 중...")
+        
+        # 1. RAG 검색
+        current_observation = ""
+        last_msg = state['messages'][-1]
+        if isinstance(last_msg, HumanMessage):
+            current_observation = str(last_msg.content)[:500]
+            
+        similar_cases = []
+        if memory_manager:
+            # 1. 넓은 범위 검색 (Top 10) - 메트릭 정보 포함하여 검색 정확도 향상
+            verification_metrics = state.get("verification_result")
+            raw_cases = memory_manager.search_similar_cases(
+                current_observation, 
+                limit=10, 
+                min_score=0.5,
+                verification_metrics=verification_metrics
+            )
+            # 2. LLM Re-ranking (Top 3 선별)
+            similar_cases = self._rerank_and_filter_cases(current_observation, raw_cases)
+            print(f"  📚 유사 실패 사례 {len(similar_cases)}건 선정 (Re-ranked)")
+            
+        # 2. 가설 생성 (Gemini Fast 사용)
+        rag_context = ""
+        for case in similar_cases:
+            rag_context += f"- {case.get('model_id')}: {case['experiment'].get('tool')} 사용 -> {case['verification'].get('numerical_analysis')}\n"
+            
+        prompt = f"""
+현재 상황:
+{current_observation}
+
+유사 과거 사례:
+{rag_context}
+
+위 상황을 분석하여 다음 JSON 형식으로 가설을 수립하세요:
+{{
+    "observation": "현재 문제 상황 요약 (1문장)",
+    "hypothesis": "구체적인 해결 가설 (어떤 도구가 왜 효과적일지)",
+    "reasoning": "가설의 근거 (과거 사례 또는 논리적 추론)",
+    "difficulty": "Easy|Medium|Hard" (문제 난이도 평가)
+}}
+"""
+        try:
+            # 가설 생성은 빠른 Gemini 사용
+            response = self.gemini_client.generate_json(prompt)
+            print(f"  💭 가설: {response.get('hypothesis')}")
+            print(f"  📊 난이도: {response.get('difficulty')}")
+            
+            return {
+                "current_hypothesis": response,
+                "next_action": "strategy"
+            }
+        except Exception as e:
+            print(f"  ⚠️ 가설 생성 실패: {e}")
+            # 실패 시 기본 가설로 진행
+            return {
+                "current_hypothesis": {"observation": "분석 실패", "difficulty": "Medium"},
+                "next_action": "strategy"
+            }
+
+    def node_strategy(self, state: AgentState) -> Dict[str, Any]:
+        """[신규] 전략 결정 노드: 난이도에 따른 LLM 모델 선택"""
+        hypothesis = state.get("current_hypothesis", {})
+        difficulty = hypothesis.get("difficulty", "Medium")
+        
+        # [Rollback] GPT 사용 안 함 -> 무조건 Gemini 선택
+        model_selection = "gemini-2.5-flash"
+        
+        if difficulty == "Hard":
+             reason = "난이도 높음 (Hard) - Gemini 집중 모드 권장"
+        elif difficulty == "Easy":
+            reason = "난이도 낮음 (Easy)"
+        else:
+            reason = "일반 난이도"
+                
+        print(f"\n[Strategy] 전략 결정: {model_selection} ({reason})")
+        
+        return {
+            "llm_config": {"model": model_selection},
+            "strategy_plan": {"selected_model": model_selection, "reason": reason},
+            "next_action": "model"
+        }
 
     def node_generator(self, state: AgentState) -> Dict[str, Any]:
         """GLB -> LDR 변환 노드"""
@@ -338,7 +458,8 @@ class RegenerationGraph:
             conv_result = convert_glb_to_ldr(
                 state['glb_path'],
                 state['ldr_path'],
-                auto_remove_1x1=False,
+                # state['params']에 있는 auto_remove_1x1 값 사용 (기본값 True)
+                auto_remove_1x1=state['params'].get('auto_remove_1x1', True),
                 **state['params']
             )
             print(f"  ✅ 변환 완료: {conv_result.get('parts', 0)}개 브릭")
@@ -516,8 +637,43 @@ class RegenerationGraph:
         # 실패율이 낮으면 FixFloatingBricks를 권장하는 힌트 메시지 추가 (강제 X)
         messages_to_send = state['messages'][:]
         
-        # --- [Memory 정보 주입] ---
-        # 이전 경험을 LLM에게 전달하여 학습 기반 의사결정 유도
+        # --- [Memory 정보 주입 (RAG)] ---
+        # Vector Search를 통해 현재 상황과 가장 유사한 과거 사례를 검색
+        
+        # 현재 관찰 요약 (검색 쿼리용)
+        last_human_msg = next((m for m in reversed(messages_to_send) if isinstance(m, HumanMessage)), None)
+        current_observation = last_human_msg.content if last_human_msg else ""
+        
+        if memory_manager:
+            # 1. 넓은 범위 검색 (Top 10) - 메트릭 포함
+            verification_metrics = state.get("verification_result")
+            raw_cases = memory_manager.search_similar_cases(
+                current_observation, 
+                limit=10, 
+                min_score=0.5,
+                verification_metrics=verification_metrics
+            )
+            # 2. LLM Re-ranking (Top 3 선별)
+            similar_cases = self._rerank_and_filter_cases(current_observation, raw_cases)
+            
+            if similar_cases:
+                memory_info = "\n**📚 유사한 과거 실험 사례 (RAG):**\n"
+                for i, case in enumerate(similar_cases, 1):
+                    # RAG 검색 결과 포맷팅
+                    tool = case['experiment'].get('tool', 'Unknown')
+                    result = case['verification'].get('numerical_analysis', 'N/A')
+                    lesson = case['improvement'].get('lesson_learned', 'No lesson')
+                    outcome = "성공" if case.get('result_success') else "실패"
+                    
+                    memory_info += f"[{i}] {outcome} 사례 (도구: {tool})\n"
+                    memory_info += f"    결과: {result}\n"
+                    memory_info += f"    교훈: {lesson}\n"
+                
+                memory_info += "\n위 사례를 참고하여 성공 확률이 높은 전략을 수립하세요.\n"
+                messages_to_send.append(SystemMessage(content=memory_info))
+                print(f"  📚 RAG 검색 결과 {len(similar_cases)}건 주입됨")
+        
+        # Legacy Memory (Fallback)
         memory = state.get('memory', {})
         lessons = memory.get('lessons', [])
         failed_approaches = memory.get('failed_approaches', [])
@@ -577,10 +733,12 @@ class RegenerationGraph:
                 messages_to_send.append(hint_msg)
 
         # 모델 바인딩 및 호출
-            
-        # 모델 바인딩 및 호출
         try:
-            model_with_tools = self.llm_client.bind_tools(tools)
+            # [Rollback] 무조건 Gemini 사용
+            client_to_use = self.gemini_client
+            print(f"  🤖 Active Model: Gemini-2.5-Flash (Fixed)")
+            
+            model_with_tools = client_to_use.bind_tools(tools)
             response = model_with_tools.invoke(messages_to_send)
             
             # 응답 확인
@@ -776,7 +934,7 @@ class RegenerationGraph:
             return {
                 "memory": memory, 
                 "previous_metrics": current_metrics, # 기준점 설정
-                "next_action": "model"
+                "next_action": "hypothesize"
             }
         
         # 메트릭 비교
@@ -795,68 +953,66 @@ class RegenerationGraph:
         overall_improved = failure_improved or floating_improved
         
         # 도구별 결과 분석 및 기록
-        if last_tool == "MergeBricks":
-            if small_ratio_improved:
-                pattern = f"✅ MergeBricks 성공: 1x1 비율 {prev_small_ratio*100:.1f}% → {curr_small_ratio*100:.1f}%"
-                memory["successful_patterns"].append(f"MergeBricks: 1x1 비율 감소 효과 확인")
-                memory["consecutive_failures"] = 0
-                print(f"  {pattern}")
-            else:
-                pattern = f"❌ MergeBricks 효과 없음: 1x1 비율 변화 없음"
-                memory["failed_approaches"].append(f"MergeBricks: 효과 미미")
-                memory["consecutive_failures"] += 1
-                print(f"  {pattern}")
-            memory["lessons"].append(pattern)
-            
-        elif last_tool == "FixFloatingBricks":
-            if floating_improved:
-                pattern = f"✅ FixFloatingBricks 성공: 공중부양 {prev_floating}개 → {curr_floating}개"
-                memory["successful_patterns"].append(f"FixFloatingBricks: 공중부양 감소 효과 확인")
-                memory["consecutive_failures"] = 0
-                print(f"  {pattern}")
-            else:
-                pattern = f"❌ FixFloatingBricks 효과 없음: 공중부양 감소 안됨"
-                memory["failed_approaches"].append(f"FixFloatingBricks: 효과 미미")
-                memory["consecutive_failures"] += 1
-                print(f"  {pattern}")
-            memory["lessons"].append(pattern)
-            
-        elif last_tool == "TuneParameters":
-            if failure_improved:
-                pattern = f"✅ TuneParameters 성공: 실패율 {prev_failure*100:.1f}% → {curr_failure*100:.1f}%"
-                memory["successful_patterns"].append(f"TuneParameters: 파라미터 조정 효과 확인")
-                memory["consecutive_failures"] = 0
-                print(f"  {pattern}")
-            else:
-                pattern = f"❌ TuneParameters 효과 없음: 실패율 개선 안됨"
-                memory["failed_approaches"].append(f"TuneParameters: 파라미터 조정 실패")
-                memory["consecutive_failures"] += 1
-                print(f"  {pattern}")
-            memory["lessons"].append(pattern)
-        
-        # 연속 실패 경고
-        if memory["consecutive_failures"] >= 3:
-            print(f"  ⚠️ 경고: {memory['consecutive_failures']}회 연속 실패! 전략 변경 필요")
-            memory["lessons"].append(f"⚠️ {memory['consecutive_failures']}회 연속 실패 - 전략 전환 권장")
-        
-        # 리스트 최대 크기 유지
-        memory["lessons"] = memory["lessons"][-10:]
-        memory["failed_approaches"] = memory["failed_approaches"][-5:]
-        memory["successful_patterns"] = memory["successful_patterns"][-5:]
-        
-        # DB에 저장 (영속화)
-        try:
-            from pathlib import Path
-            # GLB 파일명을 ID로 사용
-            model_id = Path(state['glb_path']).name
-            save_memory_to_db(model_id, memory)
-        except Exception as e:
-            print(f"⚠️ [Memory] 저장 중 에러: {e}")
+        # 2. 결과 분석 및 통합 로그 저장 (Unified Log)
+        if memory_manager:
+            try:
+                # 관찰 (Observation)
+                observation = f"ratio={prev_small_ratio:.2f}, floating={prev_floating}, failure={prev_failure:.2f}"
+                
+                # 간단한 성공/실패 판정 및 메시지
+                if overall_improved:
+                    lesson = f"✅ {last_tool} 성공: {current_hypothesis} (Gained Improvement)"
+                    memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
+                    memory["consecutive_failures"] = 0
+                    print(f"  {lesson}")
+                else:
+                    lesson = f"❌ {last_tool} 실패: {current_hypothesis} (No Improvement)"
+                    memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
+                    memory["consecutive_failures"] += 1
+                    print(f"  {lesson}")
+                
+                memory["lessons"].append(lesson)
+                
+                # 리스트 관리
+                memory["lessons"] = memory["lessons"][-10:]
+                memory["failed_approaches"] = memory["failed_approaches"][-5:]
+                memory["successful_patterns"] = memory["successful_patterns"][-5:]
+
+                # DB & Vector Store 저장 (표준화된 헬퍼 함수 사용)
+                memory_manager.log_experiment(
+                    session_id=state.get('session_id', 'unknown_session'),
+                    model_id=Path(state['glb_path'] or state['ldr_path']).name,
+                    agent_type="main_agent",
+                    iteration=state['attempts'],
+                    hypothesis=build_hypothesis(
+                        observation=observation,
+                        hypothesis=current_hypothesis,
+                        reasoning=f"Based on memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}",
+                        prediction=f"floating: {prev_floating}→{curr_floating}, ratio: {prev_small_ratio:.2f}→?"
+                    ) if build_hypothesis else {"observation": observation},
+                    experiment=build_experiment(
+                        tool=last_tool,
+                        parameters=state.get('params', {}),
+                        model_name="gemini-2.5-flash"
+                    ) if build_experiment else {"tool": last_tool},
+                    verification=build_verification(
+                        passed=overall_improved,
+                        metrics_before=previous_metrics,
+                        metrics_after=current_metrics,
+                        numerical_analysis=f"floating {prev_floating}→{curr_floating}, ratio {prev_small_ratio:.2f}→{curr_small_ratio:.2f}, failure {prev_failure:.2f}→{curr_failure:.2f}"
+                    ) if build_verification else {"passed": overall_improved},
+                    improvement=build_improvement(
+                        lesson_learned=lesson,
+                        next_hypothesis="Maintain strategy" if overall_improved else "Change strategy"
+                    ) if build_improvement else {"lesson_learned": lesson}
+                )
+            except Exception as e:
+                print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
         
         return {
             "memory": memory, 
             "previous_metrics": current_metrics, # 다음 턴을 위해 현재 메트릭 승격
-            "next_action": "model"
+            "next_action": "hypothesize"
         }
 
 
@@ -870,27 +1026,48 @@ class RegenerationGraph:
         workflow.add_node("verifier", self.node_verifier)
         workflow.add_node("model", self.node_model)
         workflow.add_node("tool_executor", self.node_tool_executor)
-        workflow.add_node("reflect", self.node_reflect)  # Co-Scientist 회고 노드
+        workflow.add_node("reflect", self.node_reflect)      # 회고 (학습)
+        workflow.add_node("hypothesize", self.node_hypothesize)  # [v2] 가설 생성
+        workflow.add_node("strategy", self.node_strategy)        # [v2] 전략 결정
         
         # 라우팅 로직
         def route_next(state: AgentState):
             return state['next_action']
             
         # 엣지 정의
+        # 1. Generator -> Verify
         workflow.add_conditional_edges("generator", route_next, {"verify": "verifier", "model": "model"})
+        
+        # 2. Verifier -> Reflect (성공 시 End)
         workflow.add_conditional_edges("verifier", route_next, {
-            "model": "model", 
-            "end": END, 
-            "verifier": "verifier",
-            "reflect": "reflect"  # Verify 후 Reflect로
+            "model": "model",       # 에러 등 예외 시
+            "end": END,             # 성공 또는 포기 시
+            "verifier": "verifier", # 재시도 시
+            "reflect": "reflect"    # 검증 완료 후 회고로 이동
         })
+        
+        # 3. Reflect -> Hypothesize (v2 핵심: 회고 후 바로 모델이 아니라 가설 수립으로)
+        # 단, 첫 실행이라 비교할 게 없으면 바로 Strategy나 Model로 갈 수도 있음
+        workflow.add_conditional_edges("reflect", route_next, {
+            "model": "model",             # 바로 모델로 가는 경우 (Legacy)
+            "hypothesize": "hypothesize"  # 보통 가설 생성으로 이동
+        })
+        
+        # 4. Hypothesize -> Strategy
+        workflow.add_conditional_edges("hypothesize", route_next, {"strategy": "strategy"})
+        
+        # 5. Strategy -> Model (모델 설정 후 도구 선택)
+        workflow.add_conditional_edges("strategy", route_next, {"model": "model"})
+        
+        # 6. Model -> Tool
         workflow.add_conditional_edges("model", route_next, {"tool": "tool_executor", "model": "model", "end": END})
+        
+        # 7. Tool -> Generator or Verifier
         workflow.add_conditional_edges("tool_executor", route_next, {
             "generator": "generator", 
             "verifier": "verifier", 
             "model": "model",
         })
-        workflow.add_conditional_edges("reflect", route_next, {"model": "model"})  # 회고 후 Model로
         
         workflow.set_entry_point("generator")
         
@@ -939,6 +1116,7 @@ def regeneration_loop(
         ldr_path=output_ldr_path,
         params=DEFAULT_PARAMS.copy(),
         attempts=0,
+        session_id=memory_manager.start_session(Path(glb_path).name, "main_agent") if memory_manager else "offline",
         max_retries=max_retries,
         acceptable_failure_ratio=acceptable_failure_ratio,
         verification_duration=2.0,
@@ -994,6 +1172,21 @@ def regeneration_loop(
         print(f"총 시도: {final_state['attempts']}회")
     
     print("=" * 60)
+    
+    # 📊 세션 피드백 보고서 생성
+    if memory_manager:
+        try:
+            session_id = final_state.get('session_id', '')
+            if session_id and session_id != 'offline':
+                feedback_report = memory_manager.generate_session_report(session_id)
+                if 'error' not in feedback_report:
+                    print("\n📊 [Co-Scientist] 세션 피드백 보고서 생성 완료")
+                    print(f"   - 총 반복: {feedback_report.get('statistics', {}).get('total_iterations', 0)}회")
+                    print(f"   - 성공률: {feedback_report.get('statistics', {}).get('success_rate', 0)}%")
+                    print(f"   - 권장사항: {feedback_report.get('final_recommendation', '')}")
+        except Exception as e:
+            print(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
+    
     return final_state
 
 
