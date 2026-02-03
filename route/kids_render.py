@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import base64
 import uuid
 import traceback
@@ -518,6 +519,8 @@ def _load_engine_convert():
         raise RuntimeError("failed to load spec for glb_to_ldr_embedded")
 
     mod = importlib.util.module_from_spec(spec)
+    # Ensure module is registered for dataclasses/type resolution
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)  # type: ignore
     if not hasattr(mod, "convert_glb_to_ldr"):
         raise RuntimeError("convert_glb_to_ldr not found in engine module")
