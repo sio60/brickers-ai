@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import base64
 import uuid
 import traceback
@@ -494,13 +495,14 @@ async def render_one_image_async(img_bytes: bytes, mime: str) -> bytes:
 # -----------------------------
 # Brickify engine loader
 # -----------------------------
-AGE_TO_BUDGET = {"4-5": 20, "6-7": 60, "8-10": 120}
+AGE_TO_BUDGET = {"4-5": 150, "6-7": 200, "8-10": 250}
 
 def _budget_to_start_target(eff_budget: int) -> int:
-    if eff_budget <= 25:
-        return 24
-    if eff_budget <= 70:
-        return 45
+    # Frontend budgets: 150 / 200 / 250
+    if eff_budget <= 150:
+        return 40
+    if eff_budget <= 200:
+        return 50
     return 60
 
 def _load_engine_convert():
@@ -518,6 +520,8 @@ def _load_engine_convert():
         raise RuntimeError("failed to load spec for glb_to_ldr_embedded")
 
     mod = importlib.util.module_from_spec(spec)
+    # Ensure module is registered for dataclasses/type resolution
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)  # type: ignore
     if not hasattr(mod, "convert_glb_to_ldr"):
         raise RuntimeError("convert_glb_to_ldr not found in engine module")
