@@ -11,7 +11,15 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # ✅ 데이터 및 환경 설정
+
+      # ✅ 소스코드 마운트
+      - ./route:/app/route
+      - ./brick-engine:/app/brick-engine
+      - ./chat:/app/chat
+      - ./app.py:/app/app.py
+      - ./config.py:/app/config.py
+      - ./db.py:/app/db.py
+
       - ./.env:/app/.env
       - ./public:/app/public
       # ✅ HuggingFace 모델 캐시 (재시작 시 다시 다운로드 방지)
