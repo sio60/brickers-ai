@@ -495,16 +495,16 @@ async def render_one_image_async(img_bytes: bytes, mime: str) -> bytes:
 # -----------------------------
 # Brickify engine loader
 # -----------------------------
-AGE_TO_BUDGET = {"4-5": 50, "6-7": 100, "8-10": 150}
+AGE_TO_BUDGET = {"4-5": 400, "6-7": 450, "8-10": 500}
 
 
 def _budget_to_start_target(eff_budget: int) -> int:
-    # Frontend budgets: 50 / 100 / 150 (L1/L2/L3)
-    if eff_budget <= 50:
-        return 25
-    if eff_budget <= 100:
-        return 35
-    return 45
+    # Frontend budgets: 400 / 450 / 500 (L1/L2/L3)
+    if eff_budget <= 400:
+        return 60
+    if eff_budget <= 450:
+        return 65
+    return 70
 
 def _load_engine_convert():
     """
