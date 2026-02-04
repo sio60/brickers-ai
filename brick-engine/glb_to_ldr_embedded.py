@@ -10,6 +10,7 @@ import numpy as np
 import trimesh
 from scipy.spatial import KDTree
 
+
 import sys
 from pathlib import Path
 
@@ -1338,6 +1339,11 @@ def convert_glb_to_ldr(
     best_under = parts <= budget_int if budget_int > 0 else False
 
     if budget_int > 0:
+        # tighter budget convergence
+        if shrink_val > 0.75:
+            shrink_val = 0.75
+        if search_iters < 10:
+            search_iters = 10
         if parts > budget_int:
             hi_target = last_target
             t = last_target
