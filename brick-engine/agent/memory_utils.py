@@ -265,7 +265,7 @@ class MemoryUtils:
         if self._vector_index_verified:
             return True
             
-        if not self.collection_exps:
+        if self.collection_exps is None:
             return False
             
         try:
@@ -660,7 +660,7 @@ class MemoryUtils:
             }
             
             # DB에 보고서 저장 (sessions 컬렉션 업데이트)
-            if self.collection_sessions:
+            if self.collection_sessions is not None:
                 self.collection_sessions.update_one(
                     {"_id": session_id},
                     {"$set": {
