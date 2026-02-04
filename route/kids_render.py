@@ -216,7 +216,7 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
     log(f"🚀 [Kids-Internal] Start | jobId={job_id} | age={age}")
     
     try:
-        async with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
+        with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
             # 1. Image
             img_bytes = await _download_from_s3(source_image_url)
             corrected_bytes = await render_one_image_async(img_bytes, "image/png")
