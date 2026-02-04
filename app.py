@@ -7,7 +7,7 @@ from typing import List, Optional
 from db import get_db, get_parts_collection
 from vectordb.seed import seed_dummy_parts
 from vectordb.search import parts_vector_search
-from ldr.import_to_mongo import import_ldr_bom_with_steps, import_car_ldr
+from ldr.import_to_mongo import import_ldr_bom_with_steps
 
 import asyncio
 import os
@@ -160,10 +160,10 @@ def mongo_ping():
 
 @api.post("/ldr/import", tags=["ldr"])
 def api_ldr_import(req: LdrImportRequest):
-    if req.ldr_path:
-        result = import_ldr_bom_with_steps(job_id=req.job_id, ldr_path=req.ldr_path)
-    else:
-        result = import_car_ldr(job_id=req.job_id)
+    if not req.ldr_path:
+        raise HTTPException(status_code=400, detail="ldr_path is required")
+    
+    result = import_ldr_bom_with_steps(job_id=req.job_id, ldr_path=req.ldr_path)
     return {"ok": True, **result}
 
 
