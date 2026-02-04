@@ -1306,25 +1306,122 @@ def convert_glb_to_ldr(
     bricks_only = (kind != "plate")
     cap_mode = "off" if bricks_only else "all"
 
-    result = convert_glb_to_ldr_v3_inline(
-        input_path=glb_path,
-        output_path=out_ldr_path,
-        mode="pro",
-        target_studs=max(1, int(target)),
-        symmetry="auto",
-        color_smooth=1,
-        optimize_bonds=True,
-        support_ratio=0.3,
-        solid=bool(solid),
-        bricks_only=bricks_only,
-        small_side_contact=False,
-        step_mode=step_mode,
-        cap_mode=cap_mode,
-        use_mesh_color=bool(use_mesh_color),
-        solid_color=int(solid_color),
-    )
+    target = max(1, int(target))
+    min_target = max(1, int(min_target))
+    budget_int = int(budget) if budget is not None else 0
+    shrink_val = float(shrink) if 0.0 < float(shrink) < 1.0 else 0.85
+    search_iters = max(1, int(search_iters))
 
-    return {"out": out_ldr_path, "parts": int(result.total_bricks), "final_target": int(target)}
+    def _run_v3(t: int):
+        res = convert_glb_to_ldr_v3_inline(
+            input_path=glb_path,
+            output_path=out_ldr_path,
+            mode="pro",
+            target_studs=max(1, int(t)),
+            symmetry="auto",
+            color_smooth=1,
+            optimize_bonds=True,
+            support_ratio=0.3,
+            solid=bool(solid),
+            bricks_only=bricks_only,
+            small_side_contact=False,
+            step_mode=step_mode,
+            cap_mode=cap_mode,
+            use_mesh_color=bool(use_mesh_color),
+            solid_color=int(solid_color),
+        )
+        return res, int(res.total_bricks), int(t)
+
+    result, parts, last_target = _run_v3(target)
+    best_target = last_target
+    best_parts = parts
+    best_under = parts <= budget_int if budget_int > 0 else False
+
+    if budget_int > 0:
+        # tighter budget convergence
+        if shrink_val > 0.75:
+            shrink_val = 0.75
+        if search_iters < 10:
+            search_iters = 10
+        if parts > budget_int:
+            hi_target = last_target
+            t = last_target
+            for _ in range(search_iters):
+                t = int(max(min_target, round(t * shrink_val)))
+                if t >= hi_target:
+                    t = hi_target - 1
+                if t < min_target:
+                    t = min_target
+
+                result, parts, last_target = _run_v3(t)
+                if parts < best_parts:
+                    best_parts = parts
+                    best_target = t
+                if parts <= budget_int:
+                    best_target = t
+                    best_parts = parts
+                    best_under = True
+                    break
+
+                hi_target = t
+                if t <= min_target:
+                    break
+
+            if best_under and best_target < hi_target:
+                lo = best_target
+                hi = hi_target
+                for _ in range(search_iters):
+                    mid = (lo + hi) // 2
+                    if mid == lo or mid == hi:
+                        break
+                    res_mid, parts_mid, last_target = _run_v3(mid)
+                    if parts_mid <= budget_int:
+                        result = res_mid
+                        best_target = mid
+                        best_parts = parts_mid
+                        best_under = True
+                        lo = mid
+                    else:
+                        hi = mid
+        else:
+            best_target = last_target
+            best_parts = parts
+            best_under = True
+            hi = last_target
+            for _ in range(search_iters):
+                cand = int(round(hi / shrink_val))
+                if cand <= hi:
+                    cand = hi + 1
+                res_cand, parts_cand, last_target = _run_v3(cand)
+                if parts_cand <= budget_int:
+                    result = res_cand
+                    best_target = cand
+                    best_parts = parts_cand
+                    best_under = True
+                    hi = cand
+                else:
+                    lo = best_target
+                    hi = cand
+                    for _ in range(search_iters):
+                        mid = (lo + hi) // 2
+                        if mid == lo or mid == hi:
+                            break
+                        res_mid, parts_mid, last_target = _run_v3(mid)
+                        if parts_mid <= budget_int:
+                            result = res_mid
+                            best_target = mid
+                            best_parts = parts_mid
+                            best_under = True
+                            lo = mid
+                        else:
+                            hi = mid
+                    break
+
+    if best_target != last_target:
+        result, parts, last_target = _run_v3(best_target)
+        best_parts = parts
+
+    return {"out": out_ldr_path, "parts": int(best_parts), "final_target": int(best_target)}
 
 # -----------------------------------------------------------------------------
 # 9. CLI main
