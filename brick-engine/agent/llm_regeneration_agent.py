@@ -82,9 +82,9 @@ def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활�
 # ============================================================================
 
 DEFAULT_PARAMS = {
-    "target": 25,              # 목표 스터드 크기 (150 브릭 기준 25 정도가 적절)
+    "target": 60,              # 목표 스터드 크기 (kids_render: 400->60, 450->65, 500->70)
     "min_target": 5,           # 최소 스터드 크기
-    "budget": 150,             # 최대 브릭 수
+    "budget": 400,             # 최대 브릭 수 (kids 기본값)
     "shrink": 0.7,             # 축소 비율 (빠른 수렴을 위해 0.85 -> 0.7)
     "search_iters": 6,         # 이진 탐색 반복 횟수
     "flipx180": False,         # X축 180도 회전
@@ -272,31 +272,87 @@ class RegenerationGraph:
             
         # 초기 시스템 프롬프트 (Tool 사용 권장)
         self.SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
-주어진 3D 모델(GLB)을 레고(LDR)로 변환하는 과정에서 발생하는 구조적 불안정성 문제를 해결해야 합니다.
+주어진 3D 모델(GLB)을 레고(LDR)로 변환했을 때 발생하는 구조적 불안정(공중부양, 지지 부족, 분리/연결 끊김, 얇은 외피 붕괴)을 최소화해야 합니다.
+
+[파이프라인 현실(중요)]
+- 생성은 "Voxelize -> Greedy brick packing(large 먼저) -> detail packing(small) -> (optional) cap plates -> LDR" 흐름입니다.
+- 불안정의 주요 원인은 (1) 지지율 부족(support_ratio) (2) 작은 파트(특히 1x1/1x2)의 과다 사용 (3) 캔틸레버/측면 접촉만으로 버팀 (4) 상단 외피가 뚫린 채 마감 실패 입니다.
 
 당신에게는 세 가지 도구가 있습니다:
-1. `TuneParameters`: 전체적인 구조적 결함(와르르 무너짐, 연결 없음 등)을 해결하기 위해 변환 파라미터를 조정하여 처음부터 다시 생성합니다.
-2. `FixFloatingBricks`: 전체적으로는 괜찮지만 일부 공중부양하거나 불안정한 브릭이 있을 때, 해당 브릭을 *삭제*하여 정리합니다.
-3. `MergeBricks`: 같은 색상의 인접한 1x1 브릭들을 큰 브릭(1x2~1x8)으로 병합합니다. 연결이 강화되어 안정성이 향상됩니다. 색상이 다른 브릭은 병합되지 않습니다.
 
-**의사결정 알고리즘 (Decision Logic):**
-1. **1x1 브릭 처리 전략 (Smart 1x1 Strategy)**:
-   - **기본 상태**: 안전을 위해 `auto_remove_1x1=True` (삭제)로 시작합니다.
-   - **디테일 복구**: 만약 눈, 코, 입 등 중요 디테일이 사라졌다면 `TuneParameters`를 호출하여 `auto_remove_1x1=False`로 변경하세요.
-   - **조건부 유지**: `auto_remove_1x1=False`로 할 경우, 반드시 `MergeBricks` 사용을 염두에 두어야 합니다. (유지 후 합치기)
+1) TuneParameters (재생성 도구)
+- "처음부터 다시" 만들되, 단순 재시도가 아니라 구조 안정 파라미터를 바꿔서 재생성합니다.
+- 조정 가능한 대표 파라미터(코드 기반):
+  - target_studs ↓ : 해상도를 낮춰 큰 브릭 비율을 늘리고 연결을 강화
+  - support_ratio ↑ : 아래층(used[y-1]) 오버랩을 더 강하게 요구
+  - bricks_only=True 유지 : 플레이트/슬로프 남발 방지(필요 시 cap로 마감)
+  - small_side_contact : 디테일 단계에서 "측면 접촉 허용"을 제한/허용 전환
+  - cap_mode = off/top/all : 상단 마감(플레이트 캡)으로 구조 락킹
+  - optimize_bonds=True : 레이어마다 오프셋 배치로 결합 강도 증가
+  - symmetry=auto : 대칭 구조면 강제 대칭으로 연결성 개선
+  - solid=True : 내부 채움으로 기둥/코어 확보(얇은 쉘 붕괴 방지)
+  - (선택) color_smooth ↑ : 색 뭉침으로 Merge 효율↑ (단 디테일 감소 가능)
 
-2. **실패율(Failure Ratio) 확인**:
-   - **20% 미만 (Low Risk)**: 전체 구조는 튼튼합니다. `TuneParameters`로 다시 만들면 오히려 더 나쁜 결과가 나올 위험이 큽니다.
-   - **20% ~ 50% (Medium Risk)**: 상황을 판단하세요. 중요 부위가 무너졌다면 재생성, 외곽만 무너졌다면 삭제.
-   - **50% 이상 (High Risk)**: 현재 파라미터로는 불가능합니다. `TuneParameters`로 설정을 변경하여 다시 시도하세요.
+2) FixFloatingBricks (국소 안정화 도구)
+- 전체는 괜찮지만 일부가 공중부양/지지 부족이면 국소 조치합니다.
+- 두 가지 방식 중 상황에 맞게 선택:
+  A) 앵커링/심지(권장): 공중부양 브릭 주변에 앵커/브릿지 보강(= embed_floating_parts 같은 개념)
+  B) 제거(정리): 외곽 디테일이거나 전체 구조에 영향이 적은 부유 브릭은 삭제
+- 원칙: "핵심 구조(코어/바닥/기둥)에는 제거보다 앵커링 우선", "외곽 디테일은 제거 우선"
 
-2. **MergeBricks vs FixFloatingBricks 선택 기준** (실패율 < 20%일 때):
-   - **공중부양/떨어진 브릭 ID가 명확히 있으면** → `FixFloatingBricks`로 해당 브릭 삭제
-   - **1x1 브릭이 많아 연결이 약하다는 징후가 있으면** → `MergeBricks`로 보강 (1x1들을 큰 브릭으로 통합)
-   - **둘 다 해당되면** → 먼저 `MergeBricks`로 보강 → 재검증 후 필요시 `FixFloatingBricks`
+3) MergeBricks (결합 강화 도구)
+- 같은 색상의 인접 1x1(또는 작은 파편)들을 1x2~1x8로 병합해 결합 강도를 올립니다.
+- 특히 디테일 단계에서 생긴 1x1 군집은 연결 약화/붕괴를 유발하므로, 실패율이 낮아도 1x1 비율이 높으면 Merge가 최우선입니다.
+- 색상이 다른 경우 병합하지 않습니다.
 
-목표: 물리적으로 안정적(Stable)인 레고 구조물을 만드는 것.
-이전 시도의 실패 원인과 통계(실패율, 부동 브릭 수)를 분석하고, 위 논리에 따라 가장 합리적인 도구를 선택하세요.
+========================
+진단 지표(입력으로 주어진다고 가정)
+- failure_ratio: 물리 검증 실패 비율(%) 또는 붕괴/불안정 판정 비율
+- floating_count: 공중부양/지지부족 브릭 수
+- disconnected_count: 분리된 컴포넌트(연결 끊김) 수
+- one_by_one_ratio: 전체 중 1x1(및 극소 파트) 비율
+- notes: "눈/코/입 디테일 소실" 같은 품질 이슈
+
+========================
+의사결정 알고리즘 (UPDATED - 실패율 과민 반응 방지)
+
+0) 절대 규칙
+- Low~Medium 구간에서는 함부로 TuneParameters(재생성)하지 말 것.
+  (재생성은 해상도/색/디테일을 바꿔 결과가 더 나빠질 리스크가 큼)
+- 먼저 "Merge -> Fix" 순으로 국소 안정화 후 재검증한다.
+
+1) 실패율 기준 (새 기준)
+- Low Risk: failure_ratio < 30%
+- Medium Risk: 30% ≤ failure_ratio < 60%
+- High Risk: failure_ratio ≥ 60%
+
+2) Low Risk (<30%)
+- 기본 선택:
+  - (one_by_one_ratio 높음 OR 작은 파편 많음) -> MergeBricks 먼저
+  - floating_count가 명확히 존재 -> FixFloatingBricks(외곽은 제거, 코어는 앵커링)
+- 둘 다 해당 -> MergeBricks -> 재검증 -> 남은 부유만 Fix
+- 이 구간에서는 TuneParameters 금지에 가깝게(정말 코어가 무너질 때만 예외)
+
+3) Medium Risk (30~60%)
+- 원인 분기:
+  A) 분리(disconnected_count > 0) 또는 바닥/기둥 붕괴 -> TuneParameters
+     - target_studs ↓ (예: 20%~40% 감소)
+     - support_ratio ↑ (예: 0.30 -> 0.40~0.55)
+     - solid=True 유지(또는 더 강제)
+     - cap_mode=all (상단 락킹)
+  B) 전체 연결은 유지되나, 외곽/상단만 무너짐(floating_count 위주) -> MergeBricks -> FixFloatingBricks 순
+     - 가능하면 cap_mode=top 또는 all로 마감 추가(재생성 없이 가능한 옵션이면 우선)
+
+4) High Risk (>=60%)
+- 현재 설정/해상도로는 구조적으로 불가능에 가깝다 -> TuneParameters 필수
+  권장 패키지(강경 안정화):
+  - target_studs 크게 낮추기(예: 절반 수준까지)
+  - support_ratio 0.50 전후로 올리기
+  - bricks_only=True 유지 + small_side_contact=False(측면 억지 지지 금지)
+  - cap_mode=all
+  - symmetry=auto(가능하면)
+  - solid=True
+  - (디테일 필요하면) High Risk를 먼저 안정화로 낮춘 뒤에만 1x1 허용
 """
 
         self.verifier = None
@@ -457,17 +513,29 @@ class RegenerationGraph:
         print(f"  Params: target={state['params'].get('target')}, shrink={state['params'].get('shrink')}")
         
         try:
-            # v3_inline 함수 시그니처에 맞춰 호출
+            # convert_glb_to_ldr_v3_inline이 허용하는 파라미터만 필터링
+            # target_studs와 symmetry는 명시적으로 전달하므로 제외
+            VALID_V3_PARAMS = {
+                'mode', 'color_smooth', 'optimize_bonds',
+                'support_ratio', 'solid', 'bricks_only', 'small_side_contact',
+                'step_mode', 'cap_mode', 'use_mesh_color', 'solid_color'
+            }
+            
+            # state['params']에서 유효한 파라미터만 추출
+            filtered_params = {k: v for k, v in state['params'].items() if k in VALID_V3_PARAMS}
+            
+            # target -> target_studs 매핑
+            target_studs = state['params'].get('target', state['params'].get('target_studs', 25))
+            
             conv_result = convert_glb_to_ldr_v3_inline(
                 state['glb_path'],
                 state['ldr_path'],
-                # 기존 params를 unpack하여 전달 (함수 인자에 맞춰짐)
-                target_studs=state['params'].get('target', 25),
-                symmetry="auto" if not state['params'].get('symmetry') else state['params'].get('symmetry'),
-                **{k: v for k, v in state['params'].items() if k not in ['target', 'symmetry']}
+                target_studs=target_studs,
+                symmetry=state['params'].get('symmetry', 'auto'),
+                **filtered_params
             )
-            # conv_result는 ConversionResult 객체이거나 dict일 수 있음
-            brick_count = conv_result.total_bricks if hasattr(conv_result, 'total_bricks') else conv_result.get('total_bricks', 0)
+            # conv_result는 ConversionResult 객체
+            brick_count = conv_result.total_bricks if hasattr(conv_result, 'total_bricks') else 0
             
             print(f"  ✅ 변환 완료: {brick_count}개 브릭")
             # 변환 후에는 반드시 검증으로 감
@@ -561,14 +629,13 @@ class RegenerationGraph:
                 "fallen_count": feedback.fallen_bricks_count,
             }
             
-            # 성공 판정: 
-            # 1. 물리적으로 안정적이거나 실패율이 허용치 이내여야 함
-            is_physically_okay = feedback.stable or (feedback.failure_ratio <= state['acceptable_failure_ratio'])
-            # 2. 단, 공중부양(Floating) 브릭은 절대 없어야 함 (Zero Tolerance)
-            is_success = is_physically_okay and (feedback.floating_bricks_count == 0)
+            # 성공 판정 (엄격한 기준): 
+            # 1. 물리적으로 완전히 안정적 (fallen_bricks = 0)
+            # 2. 공중부양 브릭 없음 (floating = 0)
+            is_success = feedback.stable and (feedback.floating_bricks_count == 0) and (feedback.fallen_bricks_count == 0)
             
-            if is_success and not feedback.stable:
-                 print(f"  (참고: 불안정 판정이나 실패율 {feedback.failure_ratio*100:.1f}%가 허용치 이내이며 공중부양 없음 -> 성공 간주)")
+            if not is_success and feedback.failure_ratio > 0:
+                 print(f"  ⚠️ 실패율 {feedback.failure_ratio*100:.1f}% 발생 → 에이전트가 수정 시도합니다.")
             
             if is_success:
                 print("🎉 목표 달성! 프로세스를 종료합니다.")
