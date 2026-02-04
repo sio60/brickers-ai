@@ -271,7 +271,7 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
             await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2).encode("utf-8"))
             bom_url = _to_generated_url(out_bom, out_dir)
 
-            return {"correctedUrl": corrected_url, "modelUrl": model_url, "ldrUrl": ldr_url, "bomUrl": bom_url, "parts": result["parts"]}
+            return {"correctedUrl": corrected_url, "modelUrl": model_url, "ldrUrl": ldr_url, "bomUrl": bom_url, "parts": result["parts"], "finalTarget": result.get("final_target", 0)}
     except Exception as e:
         log(f"❌ Failed: {str(e)}"); traceback.print_exc(); raise RuntimeError(str(e))
 
