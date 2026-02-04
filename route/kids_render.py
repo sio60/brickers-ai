@@ -11,6 +11,7 @@ from typing import Dict, Optional, Any
 from datetime import datetime
 
 import anyio
+import asyncio
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 
@@ -222,7 +223,7 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
             
             # 1. Hybrid Enhancement (Gemini for Image, GPT for Context)
             log(f"   [AI] Running Hybrid Enhancement (Gemini + GPT)...")
-            gpt_prompt, corrected_bytes = await anyio.gather(
+            gpt_prompt, corrected_bytes = await asyncio.gather(
                 analyze_image_with_gpt_vision(img_bytes),
                 render_one_image_async(img_bytes, PROMPT_VOLUMETRIC)
             )
