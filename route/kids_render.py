@@ -21,14 +21,12 @@ def log(msg: str) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     print(f"[{ts}] {msg}")
 
+# ---- OpenAI ----
+from openai import AsyncOpenAI
 
 # ---- Tripo ----
 from tripo3d import TripoClient
 from tripo3d.models import TaskStatus
-
-# ---- Gemini (Nano Banana) ----
-from google import genai
-from google.genai import types as genai_types
 
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
@@ -38,10 +36,15 @@ router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").rstrip("/")
 
 async def update_job_stage(job_id: str, stage: str) -> None:
+    """
+    Backend에 Job stage 업데이트 요청
+    - SSL Error [WRONG_VERSION_NUMBER] 해결을 위해 verify=False 적용
+    """
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+            target_url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/stage"
             await client.patch(
-                f"{BACKEND_URL}/api/kids/jobs/{job_id}/stage",
+                target_url,
                 json={"stage": stage}
             )
         print(f"   ✅ [Stage Update] {stage}")
@@ -174,47 +177,48 @@ def _generate_bom_from_ldr(ldr_path: Path) -> Dict[str, Any]:
     bom_parts = [{"part_id": k.rsplit("_", 1)[0], "color": k.rsplit("_", 1)[1], "quantity": v} for k, v in pc.most_common()]
     return {"total_parts": sum(pc.values()), "parts": bom_parts}
 
-# --- Gemini Prompts ---
-# Plan A: High-quality volumetric enhancement for 3D depth
-PROMPT_VOLUMETRIC = """You are a master 3D artist specializing in cute, high-quality toy design.
-Your task is to transform the provided 2D drawing into a 3D-volumetric plastic toy.
-Rules:
-1. Maintain the exact character proportions and unique features of the input drawing.
-2. Add realistic volumetric shading and soft highlights to imply 3D depth and thickness.
-3. The style must be a smooth, glossy 'soft plastic' or '3D toy' aesthetic.
-4. MUST use a solid, plain white background with no ground shadows.
-5. NO text, people, body parts, logos, or background clutter.
-6. Ensure the object is complete and fully visible in the center."""
+# -----------------------------
+# OpenAI GPT Vision Analyzer
+# -----------------------------
+async def analyze_image_with_gpt_vision(img_bytes: bytes) -> str:
+    """GPT-4o Vision을 사용하여 이미지를 분석하고 Tripo용 고품질 텍스트 프롬프트 생성"""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key: raise RuntimeError("OPENAI_API_KEY is not set")
+    
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    client = AsyncOpenAI(api_key=api_key)
+    base64_image = base64.b64encode(img_bytes).decode('utf-8')
+    
+    prompt = """Analyze this child's drawing for 3D modeling.
+1. Identify the main subject (e.g., an elephant, a sports car).
+2. COLOR INFERENCE (CRITICAL): 
+   - If the drawing is just a sketch (outlines only, no colors), infer and suggest vibrant, child-friendly representative colors for the object (e.g., a blue whale, a green dinosaur).
+   - If it already has colors, maintain those colors but describe them vividly.
+3. Style Guide:
+   - Describe it as a 'vibrant, high-quality, volumetric 3D plastic toy'.
+   - Ensure the style is 'smooth 3D rendering' with clear color separation.
+4. Create a CONCISE but VIVID 3D generation prompt for Tripo AI.
 
-# Plan B: Safety-first enhancement focused on cleanup to avoid audit triggers
-PROMPT_SAFETY = """You are a clean image editor for 3D modeling.
-Prepare the image by removing the background and cleaning up the lines.
-Rules:
-1. Pure plain white background only.
-2. Clean up colors and improve contrast, but do not add complex artistic effects.
-3. Remove all text, human parts, or anything that isn't the main object.
-4. Strictly maintain the original drawing's shape."""
+Example for a sketch of a cat: 'A cute volumetric 3D plastic toy of a bright ginger cat with white paws, vibrant orange fur, smooth glossy finish, studio lighting'
+Just output the prompt text only."""
 
-def _render_one_image_sync(img_bytes: bytes, mime: str, prompt: str) -> bytes:
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if not key: raise RuntimeError("GEMINI_API_KEY missing")
-    model_name = os.environ.get("NANO_BANANA_MODEL", "gemini-2.0-flash-exp")
-    client = genai.Client(api_key=key)
-    resp = client.models.generate_content(
-        model=model_name, 
-        contents=[{"text": prompt}, {"inline_data": {"mime_type": mime, "data": img_bytes}}], 
-        config=genai_types.GenerateContentConfig(response_modalities=["Text", "Image"])
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{base64_image}"},
+                    },
+                ],
+            }
+        ],
+        max_tokens=150,
     )
-    for part in (resp.candidates[0].content.parts if resp.candidates else []):
-        inline = getattr(part, "inline_data", None)
-        if inline and getattr(inline, "data", None):
-            data = inline.data
-            if isinstance(data, str) and (data.startswith("iVBOR") or data.startswith("/9j/")): return base64.b64decode(data)
-            return data
-    raise ValueError("No image from Gemini")
-
-async def render_one_image_async(img_bytes: bytes, mime: str, prompt: str) -> bytes:
-    return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime, prompt)
+    return response.choices[0].message.content.strip()
 
 # -----------------------------
 # ✅ Engine Loader
@@ -239,58 +243,48 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
     
     try:
         with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
-            # 1. Image Enhancement (Initial: Volumetric)
+            # 1. GPT Vision Analysis (Color Inference included)
             img_bytes = await _download_from_s3(source_image_url)
-            corrected_bytes = await render_one_image_async(img_bytes, "image/png", PROMPT_VOLUMETRIC)
-            corrected_path = out_dir / "corrected.png"; await _write_bytes_async(corrected_path, corrected_bytes)
-            corrected_url = _to_generated_url(corrected_path, out_dir)
+            log(f"   [GPT] Analyzing drawing & inferring colors...")
+            gpt_prompt = await analyze_image_with_gpt_vision(img_bytes)
+            log(f"   ✅ [GPT] Generated 3D Prompt: {gpt_prompt}")
 
-            # 2. Tripo (with multi-stage retry)
+            # 2. Tripo (Text-to-3D)
             await update_job_stage(job_id, "THREE_D_PREVIEW")
-            async with TripoClient(api_key=os.environ.get("TRIPO_API_KEY", "")) as client:
-                tid = None
-                
-                # Attempt 1: Highly enhanced volumetric image
-                try:
-                    log(f"   [Tripo] Attempt 1: Volumetric enhancement...")
-                    tid = await client.image_to_model(image=str(corrected_path))
-                except Exception as e:
-                    if "2014" in str(e) or "auditing" in str(e).lower():
-                        # Attempt 2: Refined safety image
-                        log(f"   ⚠️ [Tripo Audit] Attempt 1 failed. Trying Attempt 2: Safety-focused enhancement...")
-                        safety_bytes = await render_one_image_async(img_bytes, "image/png", PROMPT_SAFETY)
-                        safety_path = out_dir / "safety_corrected.png"
-                        await _write_bytes_async(safety_path, safety_bytes)
-                        try:
-                            tid = await client.image_to_model(image=str(safety_path))
-                        except Exception as e2:
-                            if "2014" in str(e2) or "auditing" in str(e2).lower():
-                                # Final Attempt: Original Image fallback
-                                log(f"   ⚠️ [Tripo Audit] Attempt 2 failed. Final fallback: Original image...")
-                                original_path = out_dir / "original_fallback.png"
-                                await _write_bytes_async(original_path, img_bytes)
-                                tid = await client.image_to_model(image=str(original_path))
-                            else:
-                                raise e2
-                    else:
-                        raise e
-                
+            tripo_api_key = os.environ.get("TRIPO_API_KEY", "")
+            async with TripoClient(api_key=tripo_api_key) as client:
+                log(f"   [Tripo] Creating 3D model using Method B (Text-to-Model)...")
+                tid = await client.text_to_model(prompt=gpt_prompt)
                 log(f"   [Tripo] Task created: {tid}. Waiting for completion...")
                 task = await client.wait_for_task(tid)
+                
+                if task.status != TaskStatus.SUCCESS:
+                    raise RuntimeError(f"Tripo task failed with status: {task.status}")
+                
                 downloads = await client.download_task_models(task, str(out_dir))
             
             glb_path = Path(next(v for k,v in downloads.items() if "glb" in k.lower() or str(v).lower().endswith(".glb")))
             model_url = _to_generated_url(glb_path, out_dir)
+            
+            # Using original image as correctedUrl
+            corrected_url = source_image_url
 
             # 3. Brickify
             await update_job_stage(job_id, "MODEL")
-            eff_budget = budget if budget else AGE_TO_BUDGET.get(age, 450)
+            eff_budget = budget if budget else AGE_TO_BUDGET.get(age.strip(), 450)
             global _CONVERT_FN; 
             if not _CONVERT_FN: _CONVERT_FN = _load_engine_convert()
             
             out_ldr = out_dir / "result.ldr"
-            result = await anyio.to_thread.run_sync(lambda: _CONVERT_FN(str(glb_path), str(out_ldr), budget=int(eff_budget), target=60, smart_fix=True, mode="kids"))
+            result_obj = await anyio.to_thread.run_sync(lambda: _CONVERT_FN(str(glb_path), str(out_ldr), budget=int(eff_budget), target=60, smart_fix=True, mode="kids"))
             ldr_url = _to_generated_url(out_ldr, out_dir)
+            
+            # Extract parts count safely
+            parts_count = 0
+            if isinstance(result_obj, dict):
+                parts_count = result_obj.get("parts", 0)
+            else:
+                parts_count = getattr(result_obj, "total_bricks", 0)
 
             # 4. BOM
             bom_data = await anyio.to_thread.run_sync(_generate_bom_from_ldr, out_ldr)
@@ -298,12 +292,21 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
             await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2).encode("utf-8"))
             bom_url = _to_generated_url(out_bom, out_dir)
 
-            return {"correctedUrl": corrected_url, "modelUrl": model_url, "ldrUrl": ldr_url, "bomUrl": bom_url, "parts": result["parts"], "finalTarget": result.get("final_target", 0)}
+            return {
+                "correctedUrl": corrected_url, 
+                "modelUrl": model_url, 
+                "ldrUrl": ldr_url, 
+                "bomUrl": bom_url, 
+                "parts": parts_count, 
+                "finalTarget": 60
+            }
     except Exception as e:
-        log(f"❌ Failed: {str(e)}"); traceback.print_exc(); raise RuntimeError(str(e))
+        log(f"❌ Failed: {str(e)}")
+        traceback.print_exc()
+        raise RuntimeError(str(e))
 
 class KidsProcessRequest(BaseModel): sourceImageUrl: str; age: str = "6-7"; budget: Optional[int] = None
-class ProcessResp(BaseModel): ok: bool; reqId: str; correctedUrl: str; modelUrl: str; ldrUrl: str; bomUrl: str; parts: int
+class ProcessResp(BaseModel): ok: bool; reqId: str; correctedUrl: str; modelUrl: str; ldrUrl: str; bomUrl: str; parts: int; finalTarget: int
 
 @router.post("/process-all", response_model=ProcessResp)
 async def process(request: KidsProcessRequest):
