@@ -881,7 +881,7 @@ async def process_kids_request_internal(
             log(f"⏱️  총 소요시간: {total_elapsed:.2f}s ({total_elapsed/60:.1f}분)")
             log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
             log(f"   - Brickify: {brickify_elapsed:.2f}s")
-            log(f"📦 결과: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
+            log(f"📦 결과: parts={bom_data['total_parts']} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
             print("═" * 70)
 
             return {
@@ -889,8 +889,8 @@ async def process_kids_request_internal(
                 "modelUrl": model_url,
                 "ldrUrl": ldr_url,
                 "bomUrl": bom_url,
-                "parts": int(result.get("parts", 0)),
-                "finalTarget": int(result.get("final_target", 0)),
+                "parts": int(bom_data['total_parts']),
+                "finalTarget": int(start_target),
             }
 
     except Exception as e:
