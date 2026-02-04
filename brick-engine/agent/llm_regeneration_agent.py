@@ -449,7 +449,7 @@ class RegenerationGraph:
 
     def node_generator(self, state: AgentState) -> Dict[str, Any]:
         """GLB -> LDR 변환 노드"""
-        from glb_to_ldr_embedded_copy import convert_glb_to_ldr
+        from glb_to_ldr_embedded import convert_glb_to_ldr
         
         print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
         print(f"  Params: target={state['params'].get('target')}, shrink={state['params'].get('shrink')}")
