@@ -17,7 +17,6 @@ services:
       - ./chat:/app/chat
       - ./app.py:/app/app.py
       - ./config.py:/app/config.py
-      - ./db.py:/app/db.py
       - ./.env:/app/.env
       # public 폴더 (생성된 파일 저장소)
       - ./public:/app/public
