@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 EVOLVER_DIR = Path(__file__).parent
 EXPORTER_DIR = EVOLVER_DIR.parent
 sys.path.insert(0, str(EXPORTER_DIR))
+PROJECT_ROOT = EXPORTER_DIR.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 load_dotenv(EXPORTER_DIR.parent.parent / ".env")
 
@@ -20,8 +22,13 @@ from ldr_converter import ldr_to_brick_model, model_to_ldr  # noqa: E402
 from agent import build_graph, AgentState  # noqa: E402
 from agent.tools import init_tools, load_parts_db, get_model_state, analyze_glb  # noqa: E402
 
+# Memory Utils Import
+# Memory Utils Import
+import config  # This registers AGENT_DIR in sys.path
+from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+
 def run_agent(ldr_path: str, glb_path: str = None):
-    """Run the evolver agent on an LDR file"""
+    # ... (print headers) ...
     print("=" * 60)
     print("LangGraph + CoScientist Evolver Agent")
     print("=" * 60)
@@ -49,6 +56,11 @@ def run_agent(ldr_path: str, glb_path: str = None):
             print(f"  Legs: {glb_ref.get('legs')}")
             print(f"  Features: {glb_ref.get('key_features')}")
 
+    # Session ID 생성
+    session_id = "offline_evolver"
+    if memory_manager:
+        session_id = memory_manager.start_session(model.name, "evolver")
+
     initial_state: AgentState = {
         "model": model,
         "model_backup": copy.deepcopy(model),
@@ -62,6 +74,8 @@ def run_agent(ldr_path: str, glb_path: str = None):
         "verification_score": 100.0,
         "verification_evidence": [],
         "iteration": 0,
+        "session_id": session_id,
+        "total_removed": 0,
         "total_removed": 0,
         "action_history": [],
         "strategy": "",
@@ -104,7 +118,46 @@ def run_agent(ldr_path: str, glb_path: str = None):
     print(f"Reason: {final_state['finish_reason']}")
     print(f"Saved: {output}")
 
-    print("\n[Lessons Learned]")
+    # Log Success if fixed
+    if final_state['floating_count'] == 0 and final_state['finish_reason'] == "All fixed!":
+        success_lesson = "SUCCESS: Model is valid. No floating bricks or collisions found."
+        print(f"\n[Lessons Learned]\n  - {success_lesson}")
+        
+        # Log to DB
+        if memory_manager:
+            try:
+                # Log final success experiment
+                memory_manager.log_experiment(
+                    session_id=session_id,
+                    model_id=model.name,
+                    agent_type="evolver",
+                    iteration=final_state["iteration"],
+                    hypothesis=build_hypothesis(
+                        observation=f"Final State: floating={final_state['floating_count']}",
+                        hypothesis="Verification of final state",
+                        reasoning="All checks passed",
+                        prediction="Valid model"
+                    ),
+                    experiment=build_experiment(
+                        tool="finish",
+                        parameters={},
+                        model_name="rules"
+                    ),
+                    verification=build_verification(
+                        passed=True,
+                        metrics_before={},
+                        metrics_after={"floating": 0, "collisions": 0},
+                        numerical_analysis="Validation Success"
+                    ),
+                    improvement=build_improvement(
+                        lesson_learned=success_lesson,
+                        next_hypothesis="Task Complete"
+                    )
+                )
+            except Exception as e:
+                print(f"⚠️ [Run Agent] Log failed: {e}")
+
+    print("\n[Lessons Learned History]")
     for lesson in final_state["memory"]["lessons"]:
         print(f"  - {lesson}")
 

@@ -20,6 +20,10 @@ services:
       - ./.env:/app/.env
       # public 폴더 (생성된 파일 저장소)
       - ./public:/app/public
+      # ✅ Vector DB 모듈
+      - ./vectordb:/app/vectordb
+      # ✅ HuggingFace 모델 캐시 (재시작 시 다시 다운로드 방지)
+      - hf_cache:/root/.cache/huggingface
     environment:
       # ✅ 시간대 설정 (한국)
       - TZ=Asia/Seoul
@@ -40,3 +44,11 @@ services:
 
       # ✅ Backend 연동 (Stage 업데이트용)
       - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
+
+      # ✅ Co-Scientist Memory (RAG)
+      - ATLAS_VECTOR_INDEX_MEMORY=${ATLAS_VECTOR_INDEX_MEMORY:-co_scientist_memory_index}
+      - HF_EMBED_MODEL=${HF_EMBED_MODEL:-intfloat/multilingual-e5-small}
+
+# ✅ Named Volume 정의
+volumes:
+  hf_cache:

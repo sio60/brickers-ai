@@ -688,14 +688,18 @@ def model_to_ldr(
             lines.append(f"0 // Layer {current_layer}")
 
         # 브릭 라인 추가
-        ldr_line = brick_to_ldr_line(brick, parts_db)
-        lines.append(ldr_line)
+        try:
+            ldr_line = brick_to_ldr_line(brick, parts_db)
+            lines.append(ldr_line)
 
-        # brick 모드: 매 브릭마다 STEP (마지막 브릭 제외)
-        if step_mode == STEP_MODE_BRICK and i < len(sorted_bricks) - 1:
-            lines.append("")
-            lines.append("0 STEP")
-            lines.append("")
+            # brick 모드: 매 브릭마다 STEP (마지막 브릭 제외)
+            if step_mode == STEP_MODE_BRICK and i < len(sorted_bricks) - 1:
+                lines.append("")
+                lines.append("0 STEP")
+                lines.append("")
+        except ValueError as e:
+            l2_warnings.append(f"[WARNING] Skipped brick: {e}")
+            continue
 
     # 마지막 STEP 추가 (layer 모드)
     if step_mode == STEP_MODE_LAYER and len(sorted_bricks) > 0:

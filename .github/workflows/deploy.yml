@@ -63,6 +63,12 @@ jobs:
             # --- Backend URL (Stage 업데이트용) ---
             BACKEND_URL=${{ secrets.BACKEND_URL }}
 
+            # --- Co-Scientist Memory (RAG) ---
+            MONGODB_URI=${{ secrets.MONGODB_URI }}
+            MONGODB_DB=${{ secrets.MONGODB_DB }}
+            ATLAS_VECTOR_INDEX_MEMORY=co_scientist_memory_index
+            HF_EMBED_MODEL=intfloat/multilingual-e5-small
+
             # --- Timeouts ---
             KIDS_TOTAL_TIMEOUT_SEC=1800
             TRIPO_WAIT_TIMEOUT_SEC=900
