@@ -74,3 +74,4 @@ langsmith
 boto3
 langchain-openai
 langgraph
+reportlab
