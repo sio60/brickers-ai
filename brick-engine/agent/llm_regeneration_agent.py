@@ -42,9 +42,11 @@ for p in (_THIS_DIR, _BRICK_ENGINE_DIR, _PROJECT_ROOT, _PHYSICAL_VERIFICATION_DI
 try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from .agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
+    from .memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
+    from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
 
 # DB 연결
 try:
@@ -80,10 +82,10 @@ def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활�
 # ============================================================================
 
 DEFAULT_PARAMS = {
-    "target": 25,              # 목표 스터드 크기 (150 브릭 기준 25 정도가 적절)
+    "target": 60,              # 목표 스터드 크기 (400 브릭 기준 60 정도가 적절)
     "min_target": 5,           # 최소 스터드 크기
-    "budget": 150,             # 최대 브릭 수
-    "shrink": 0.7,             # 축소 비율 (빠른 수렴을 위해 0.85 -> 0.7)
+    "budget": 400,             # 최대 브릭 수 (Kids L1 기준)
+    "shrink": 0.85,            # 축소 비율 (0.85)
     "search_iters": 6,         # 이진 탐색 반복 횟수
     "flipx180": False,         # X축 180도 회전
     "flipy180": False,         # Y축 180도 회전
@@ -96,9 +98,21 @@ DEFAULT_PARAMS = {
     "use_mesh_color": True,    # 메시 색상 사용
     "invert_y": False,         # Y축 반전
     "smart_fix": True,         # 스마트 보정 활성화
-    "fill": True,              # 내부 채움 활성화
+    # 추가 파라미터 (Legacy Match)
+    "span": 4,
+    "max_new_voxels": 12000,
+    "refine_iters": 8,
+    "ensure_connected": True,
+    "min_embed": 2,
+    "erosion_iters": 1,        # 노이즈 제거
+    "fast_search": True,
+    "extend_catalog": True,
+    "max_len": 8,
+    "fill": True,              # 내부 채움 활성화 (안정적 모델 생성)
     "step_order": "bottomup",  # 조립 순서
     "auto_remove_1x1": True,   # 기본값: 안전하게 1x1 삭제
+    "support_ratio": 0.3,      # 기본 지지 비율 복구
+    "small_side_contact": True, # 작은 브릭 사이드 접촉 허용
 }
 
 
@@ -111,8 +125,8 @@ class VerificationFeedback:
     """PyBullet 검증 결과를 LLM에게 전달하기 위한 구조화된 피드백"""
     stable: bool = True
     total_bricks: int = 0
-    fallen_bricks_count: int = 0
-    floating_bricks_count: int = 0
+    fallen_bricks: int = 0
+    floating_bricks: int = 0
     floating_brick_ids: List[str] = field(default_factory=list)  # 공중부양 브릭 ID 목록
     fallen_brick_ids: List[str] = field(default_factory=list)    # 떨어진 브릭 ID 목록
     failure_ratio: float = 0.0
@@ -148,8 +162,8 @@ def extract_verification_feedback(result, total_bricks: int) -> VerificationFeed
         elif ev.type == "COLLISION":
             collision_count += 1
     
-    feedback.fallen_bricks_count = len(fallen_bricks)
-    feedback.floating_bricks_count = len(floating_bricks)
+    feedback.fallen_bricks = len(fallen_bricks)
+    feedback.floating_bricks = len(floating_bricks)
     feedback.floating_brick_ids = list(floating_bricks)  # ID 목록 저장
     feedback.fallen_brick_ids = list(fallen_bricks)      # ID 목록 저장
     feedback.first_failure_brick = first_failure
@@ -162,9 +176,9 @@ def extract_verification_feedback(result, total_bricks: int) -> VerificationFeed
 
 def _format_feedback(feedback: VerificationFeedback) -> str:
     # 상태 판정 로직 강화
-    if feedback.stable and feedback.floating_bricks_count == 0:
+    if feedback.stable and feedback.floating_bricks == 0:
         status = "✅ 안정"
-    elif feedback.stable and feedback.floating_bricks_count > 0:
+    elif feedback.stable and feedback.floating_bricks > 0:
         status = "⚠️ 부분 안정 (공중부양 존재)"
     else:
         status = "❌ 불안정"
@@ -182,10 +196,10 @@ def _format_feedback(feedback: VerificationFeedback) -> str:
             lines.append(f"  → 💡 1x1 브릭 비율이 높습니다. MergeBricks로 연결 강화를 권장합니다.")
     
     # 상세 불안정 정보 (공중부양 포함)
-    if not feedback.stable or feedback.floating_bricks_count > 0:
+    if not feedback.stable or feedback.floating_bricks > 0:
         lines.extend([
-            f"- 떨어진 브릭: {feedback.fallen_bricks_count}개",
-            f"- 공중부양 브릭: {feedback.floating_bricks_count}개",
+            f"- 떨어진 브릭: {feedback.fallen_bricks}개",
+            f"- 공중부양 브릭: {feedback.floating_bricks}개",
             f"- 실패율: {feedback.failure_ratio * 100:.1f}%",
         ])
         if feedback.first_failure_brick:
@@ -315,7 +329,7 @@ class RegenerationGraph:
 [Case {i}]
 - Observation: {case['hypothesis'].get('observation', '')[:200]}...
 - Action: {case['experiment'].get('tool', '')}
-- Result: {case['result_success']} ({case['verification'].get('numerical_analysis', '')})
+- Result: {case['verification'].get('numerical_analysis', '')}
 --------------------------------------------------"""
 
         prompt = f"""
@@ -449,20 +463,23 @@ class RegenerationGraph:
 
     def node_generator(self, state: AgentState) -> Dict[str, Any]:
         """GLB -> LDR 변환 노드"""
-        from glb_to_ldr_embedded_copy import convert_glb_to_ldr
+        from glb_to_ldr_embedded import convert_glb_to_ldr
         
         print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
-        print(f"  Params: target={state['params'].get('target')}, shrink={state['params'].get('shrink')}")
+        print(f"  Params: target={state['params'].get('target')}, budget={state['params'].get('budget')}")
         
         try:
-            # auto_remove_1x1은 state['params']에 이미 포함되어 있으므로 별도로 전달하지 않음
-            conv_result = convert_glb_to_ldr(
+            # 고수준 API 호출 (내부적으로 budget-finding 루프 포함)
+            result = convert_glb_to_ldr(
                 state['glb_path'],
                 state['ldr_path'],
                 **state['params']
             )
-            print(f"  ✅ 변환 완료: {conv_result.get('parts', 0)}개 브릭")
-            # 변환 후에는 반드시 검증으로 감
+            
+            brick_count = result.get('parts', 0)
+            final_target = result.get('final_target', 0)
+            
+            print(f"  ✅ 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
             return {"attempts": state['attempts'] + 1, "next_action": "verify"}
             
         except Exception as e:
@@ -521,9 +538,9 @@ class RegenerationGraph:
             feedback_text = _format_feedback(feedback)
             
             # 상태 메시지 결정
-            if feedback.stable and feedback.floating_bricks_count == 0:
+            if feedback.stable and feedback.floating_bricks == 0:
                 short_status = "✅ 안정"
-            elif feedback.stable and feedback.floating_bricks_count > 0:
+            elif feedback.stable and feedback.floating_bricks > 0:
                 short_status = "⚠️ 부분 안정 (공중부양 존재)"
             else:
                 short_status = "❌ 불안정"
@@ -531,7 +548,7 @@ class RegenerationGraph:
             print(f"  결과: {short_status}")
             
             # 불안정하거나 부분 안정이면 상세 내용 출력 (디버깅용)
-            if not feedback.stable or feedback.floating_bricks_count > 0:
+            if not feedback.stable or feedback.floating_bricks > 0:
                  summary_text = feedback_text.replace('\n', ', ').replace('\r', '')
                  if len(summary_text) > 200:
                      summary_text = summary_text[:200] + "..."
@@ -549,15 +566,19 @@ class RegenerationGraph:
                 "small_brick_ratio": small_brick_ratio,
                 "small_brick_count": small_brick_count,
                 "total_bricks": total_bricks,
-                "floating_count": feedback.floating_bricks_count,
-                "fallen_count": feedback.fallen_bricks_count,
+                "floating_count": feedback.floating_bricks,
+                "fallen_count": feedback.fallen_bricks,
             }
             
             # 성공 판정: 
             # 1. 물리적으로 안정적이거나 실패율이 허용치 이내여야 함
             is_physically_okay = feedback.stable or (feedback.failure_ratio <= state['acceptable_failure_ratio'])
             # 2. 단, 공중부양(Floating) 브릭은 절대 없어야 함 (Zero Tolerance)
-            is_success = is_physically_okay and (feedback.floating_bricks_count == 0)
+            # 3. 예산(Budget) 초과 체크
+            budget = state['params'].get('budget', 500)
+            is_over_budget = total_bricks > budget
+            
+            is_success = is_physically_okay and (feedback.floating_bricks == 0) and (not is_over_budget)
             
             if is_success and not feedback.stable:
                  print(f"  (참고: 불안정 판정이나 실패율 {feedback.failure_ratio*100:.1f}%가 허용치 이내이며 공중부양 없음 -> 성공 간주)")
@@ -591,7 +612,11 @@ class RegenerationGraph:
             
             # LLM에게 전달할 메시지 보강
             custom_feedback = feedback_text
-            if feedback.floating_bricks_count > 0:
+            
+            if is_over_budget:
+                custom_feedback += f"\n\n🚨 **중요: 예산 초과! 현재 {total_bricks}개 브릭입니다. 목표 예산은 {budget}개입니다. `TuneParameters` 도구를 사용하여 `target` 값을 줄여야 합니다.**"
+
+            elif feedback.floating_bricks > 0:
                 custom_feedback += "\n\n⚠️ **중요: 아직 공중부양(Floating) 브릭이 남아있습니다. 이 상태로는 절대 작업을 완료할 수 없습니다. 반드시 FixFloatingBricks 도구를 사용하거나 파라미터를 조정하여 해결하세요.**"
             
             return {
@@ -958,14 +983,17 @@ class RegenerationGraph:
                 # 관찰 (Observation)
                 observation = f"ratio={prev_small_ratio:.2f}, floating={prev_floating}, failure={prev_failure:.2f}"
                 
+                current_hypothesis = state.get('current_hypothesis', {})
+                hyp_text = current_hypothesis.get('hypothesis', 'No hypothesis')
+
                 # 간단한 성공/실패 판정 및 메시지
                 if overall_improved:
-                    lesson = f"✅ {last_tool} 성공: {current_hypothesis} (Gained Improvement)"
+                    lesson = f"✅ {last_tool} 성공: {hyp_text} (Gained Improvement)"
                     memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
                     memory["consecutive_failures"] = 0
                     print(f"  {lesson}")
                 else:
-                    lesson = f"❌ {last_tool} 실패: {current_hypothesis} (No Improvement)"
+                    lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
                     memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
                     memory["consecutive_failures"] += 1
                     print(f"  {lesson}")
@@ -985,7 +1013,7 @@ class RegenerationGraph:
                     iteration=state['attempts'],
                     hypothesis=build_hypothesis(
                         observation=observation,
-                        hypothesis=current_hypothesis,
+                        hypothesis=hyp_text,
                         reasoning=f"Based on memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}",
                         prediction=f"floating: {prev_floating}→{curr_floating}, ratio: {prev_small_ratio:.2f}→?"
                     ) if build_hypothesis else {"observation": observation},
