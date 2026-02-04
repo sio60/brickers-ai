@@ -566,14 +566,11 @@ def convert_glb_to_ldr(
     budget: int = 100, target: int = 60, min_target: int = 5,
     shrink: float = 0.85, search_iters: int = 6,
     smart_fix: bool = True,
-    callback: Optional[Callable[[str], None]] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     # Budget finding loop
     current_target = max(1, int(target))
     min_t = max(1, int(min_target))
-    
-    if callback: callback(f"🧩 변환 시작: Target={current_target}, Budget={budget}")
     
     best_res, best_parts, best_t = None, 999999, current_target
     
@@ -582,11 +579,8 @@ def convert_glb_to_ldr(
             glb_path, out_ldr_path, target_studs=current_target, smart_fix=smart_fix, **kwargs
         )
         if res.total_bricks <= budget:
-            if callback: callback(f"  ✅ [Iter] 성공: {res.total_bricks} bricks (Target {current_target})")
             best_res, best_parts, best_t = res, res.total_bricks, current_target
             break
-        
-        if callback: callback(f"  ⚠️ [Iter] 예산 초과 ({res.total_bricks} > {budget}). 줄입니다 ({shrink*100:.0f}%)...")
         best_res, best_parts, best_t = res, res.total_bricks, current_target
         current_target = int(max(min_t, round(current_target * shrink)))
         if current_target >= best_t: current_target -= 1
