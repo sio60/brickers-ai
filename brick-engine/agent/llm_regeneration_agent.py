@@ -42,9 +42,11 @@ for p in (_THIS_DIR, _BRICK_ENGINE_DIR, _PROJECT_ROOT, _PHYSICAL_VERIFICATION_DI
 try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from .agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
+    from .memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
+    from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
 
 # DB 연결
 try:
@@ -449,19 +451,25 @@ class RegenerationGraph:
 
     def node_generator(self, state: AgentState) -> Dict[str, Any]:
         """GLB -> LDR 변환 노드"""
-        from glb_to_ldr_embedded import convert_glb_to_ldr
+        from glb_to_ldr_embedded import convert_glb_to_ldr_v3_inline
         
         print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
         print(f"  Params: target={state['params'].get('target')}, shrink={state['params'].get('shrink')}")
         
         try:
-            # auto_remove_1x1은 state['params']에 이미 포함되어 있으므로 별도로 전달하지 않음
-            conv_result = convert_glb_to_ldr(
+            # v3_inline 함수 시그니처에 맞춰 호출
+            conv_result = convert_glb_to_ldr_v3_inline(
                 state['glb_path'],
                 state['ldr_path'],
-                **state['params']
+                # 기존 params를 unpack하여 전달 (함수 인자에 맞춰짐)
+                target_studs=state['params'].get('target', 25),
+                symmetry="auto" if not state['params'].get('symmetry') else state['params'].get('symmetry'),
+                **{k: v for k, v in state['params'].items() if k not in ['target', 'symmetry']}
             )
-            print(f"  ✅ 변환 완료: {conv_result.get('parts', 0)}개 브릭")
+            # conv_result는 ConversionResult 객체이거나 dict일 수 있음
+            brick_count = conv_result.total_bricks if hasattr(conv_result, 'total_bricks') else conv_result.get('total_bricks', 0)
+            
+            print(f"  ✅ 변환 완료: {brick_count}개 브릭")
             # 변환 후에는 반드시 검증으로 감
             return {"attempts": state['attempts'] + 1, "next_action": "verify"}
             
@@ -958,14 +966,17 @@ class RegenerationGraph:
                 # 관찰 (Observation)
                 observation = f"ratio={prev_small_ratio:.2f}, floating={prev_floating}, failure={prev_failure:.2f}"
                 
+                current_hypothesis = state.get('current_hypothesis', {})
+                hyp_text = current_hypothesis.get('hypothesis', 'No hypothesis')
+
                 # 간단한 성공/실패 판정 및 메시지
                 if overall_improved:
-                    lesson = f"✅ {last_tool} 성공: {current_hypothesis} (Gained Improvement)"
+                    lesson = f"✅ {last_tool} 성공: {hyp_text} (Gained Improvement)"
                     memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
                     memory["consecutive_failures"] = 0
                     print(f"  {lesson}")
                 else:
-                    lesson = f"❌ {last_tool} 실패: {current_hypothesis} (No Improvement)"
+                    lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
                     memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
                     memory["consecutive_failures"] += 1
                     print(f"  {lesson}")
@@ -985,7 +996,7 @@ class RegenerationGraph:
                     iteration=state['attempts'],
                     hypothesis=build_hypothesis(
                         observation=observation,
-                        hypothesis=current_hypothesis,
+                        hypothesis=hyp_text,
                         reasoning=f"Based on memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}",
                         prediction=f"floating: {prev_floating}→{curr_floating}, ratio: {prev_small_ratio:.2f}→?"
                     ) if build_hypothesis else {"observation": observation},
