@@ -455,11 +455,10 @@ class RegenerationGraph:
         print(f"  Params: target={state['params'].get('target')}, shrink={state['params'].get('shrink')}")
         
         try:
+            # auto_remove_1x1은 state['params']에 이미 포함되어 있으므로 별도로 전달하지 않음
             conv_result = convert_glb_to_ldr(
                 state['glb_path'],
                 state['ldr_path'],
-                # state['params']에 있는 auto_remove_1x1 값 사용 (기본값 True)
-                auto_remove_1x1=state['params'].get('auto_remove_1x1', True),
                 **state['params']
             )
             print(f"  ✅ 변환 완료: {conv_result.get('parts', 0)}개 브릭")
