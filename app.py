@@ -198,28 +198,18 @@ def api_search(req: VectorSearchRequest):
 # ✅ 메인 api 라우터 등록
 app.include_router(api)
 
-# ✅ kids 라우터
-app.include_router(kids_render.router, prefix="/api/v1/kids", tags=["kids"])
-
-# ✅ instructions 라우터들
-# (라우터 파일 내부 prefix="/api/instructions" 이므로 프론트는 /api/instructions/...로 호출)
-app.include_router(instructions_router)
-app.include_router(instructions_upload_router)
-@app.on_event("startup")
-async def startup_event():
-    """FastAPI 시작 시 SQS Consumer 백그라운드 태스크 시작"""
-    print("=" * 70)
-    print("[FastAPI] 🚀 Application Startup")
-    print("=" * 70)
-
-    # SQS Consumer 백그라운드 태스크 시작
-    asyncio.create_task(start_consumer())
-    print("[FastAPI] ✅ SQS Consumer 백그라운드 태스크 시작")
-
-
-# ✅ Kids Mode router 연결
-# app.include_router(kids_render.router)
 # ✅ 라우터 등록 (Chat, Kids, Color)
 app.include_router(chat_router)          # /api/v1/chat
-app.include_router(kids_render.router)   # Kids Mode
+# kids_render.router는 이미 prefix="/api/v1/kids" 로 정의되어 있거나 여기서 지정해야 함.
+# 기존 코드에서 prefix 없이 include 했던것과 prefix 있게 include 했던 것이 혼재됨.
+# kids_render.py 내부를 모르므로 안전하게 prefix 지정 버전을 남기거나, 중복 제거.
+# kids_render.router에 prefix가 없다면 여기서 지정해야 함.
+# 기존 코드 Line 202 참조: prefix="/api/v1/kids"
+app.include_router(kids_render.router, prefix="/api/v1/kids", tags=["kids"]) 
+
 app.include_router(color_variant.router) # Color Variant
+
+# ✅ instructions 라우터들
+app.include_router(instructions_router)
+app.include_router(instructions_upload_router)
+
