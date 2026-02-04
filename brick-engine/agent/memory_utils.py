@@ -16,6 +16,12 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+# LangSmith Tracing (Optional)
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(func): return func
+
 # DB Connection
 try:
     from yang_db import get_db
@@ -284,6 +290,7 @@ class MemoryUtils:
                 logger.warning(f"Vector index check failed: {e}")
             return False
 
+    @traceable(name="MemoryUtils.log_experiment")
     def log_experiment(
         self,
         session_id: str,
@@ -401,6 +408,7 @@ class MemoryUtils:
         except Exception as e:
             logger.error(f"Failed to end session: {e}")
 
+    @traceable(name="MemoryUtils.search_similar_cases")
     def search_similar_cases(self, observation: str, limit: int = 10, min_score: float = 0.5, verification_metrics: Dict[str, Any] = None) -> List[Dict]:
         """RAG: 유사 후보군 검색 (Re-ranking을 위해 넉넉히 검색)"""
         if not self.use_vector or self.collection_exps is None:
