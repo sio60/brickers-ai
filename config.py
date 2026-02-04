@@ -35,6 +35,8 @@ HF_EMBED_MODEL = os.getenv("HF_EMBED_MODEL", "intfloat/multilingual-e5-small")  
 ################################
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 NANO_BANANA_MODEL = os.getenv("NANO_BANANA_MODEL", "gemini-2.5-flash-image")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 
 ################################
 # Local Base URL (for static files)
@@ -68,7 +70,7 @@ def vector_ready() -> bool:
 
 def kids_render_ready() -> bool:
     """Kids 렌더 기능 사용 가능 여부"""
-    return bool(GEMINI_API_KEY.strip())
+    return bool(OPENAI_API_KEY.strip())
 
 ################################
 # LEGO Units (LDraw LDU)
