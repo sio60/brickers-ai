@@ -176,7 +176,16 @@ def _generate_bom_from_ldr(ldr_path: Path) -> Dict[str, Any]:
 # -----------------------------
 # ✅ Nano Banana (Gemini)
 # -----------------------------
-PROMPT_NANO_BANANA = """Create a high-quality, vibrant image suitable for 3D modeling... (simplified for brevity)"""
+PROMPT_NANO_BANANA = """You are an expert AI image editor. Your goal is to prepare an image for 3D modeling.
+Please re-generate the provided image as a clean, high-resolution, standalone 3D object.
+Rules:
+1. MUST use a solid, plain white background.
+2. REMOVE all people, faces, hands, or body parts.
+3. REMOVE all text, labels, watermarks, or logos.
+4. REMOVE background clutter and shadows.
+5. Focus only on the main central object.
+6. Ensure the object is complete and not cropped.
+7. The output must be a single, clear, sharp object suitable for image-to-3D conversion."""
 def _render_one_image_sync(img_bytes: bytes, mime: str) -> bytes:
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key: raise RuntimeError("GEMINI_API_KEY missing")
@@ -216,7 +225,7 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
     log(f"🚀 [Kids-Internal] Start | jobId={job_id} | age={age}")
     
     try:
-        async with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
+        with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
             # 1. Image
             img_bytes = await _download_from_s3(source_image_url)
             corrected_bytes = await render_one_image_async(img_bytes, "image/png")
@@ -226,7 +235,20 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
             # 2. Tripo
             await update_job_stage(job_id, "THREE_D_PREVIEW")
             async with TripoClient(api_key=os.environ.get("TRIPO_API_KEY", "")) as client:
-                tid = await client.image_to_model(image=str(corrected_path))
+                try:
+                    log(f"   [Tripo] Attempting image_to_model with corrected image...")
+                    tid = await client.image_to_model(image=str(corrected_path))
+                except Exception as e:
+                    # [Code 2014] is Auditing error (policy violation)
+                    if "2014" in str(e) or "auditing" in str(e).lower():
+                        log(f"   ⚠️ [Tripo Audit Error] 'Corrected' image rejected. Falling back to original image... | error={str(e)}")
+                        original_path = out_dir / "original_fallback.png"
+                        await _write_bytes_async(original_path, img_bytes)
+                        tid = await client.image_to_model(image=str(original_path))
+                    else:
+                        raise e
+                
+                log(f"   [Tripo] Task created: {tid}. Waiting for completion...")
                 task = await client.wait_for_task(tid)
                 downloads = await client.download_task_models(task, str(out_dir))
             
