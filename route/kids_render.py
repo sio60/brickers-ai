@@ -238,19 +238,35 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
             # Step 2.1: Initial Mesh (Try Image, Fallback to Text)
             tid = None
             try:
-                log(f"   [Tripo] Step 1: image_to_model (Attempting with Gemini result)...")
-                tid = await tripo_create_task_v2(tripo_api_key, {"type": "image_to_model", "file_token": await _upload_tripo_file(tripo_api_key, corrected_path), "model_version": "v3.0-20250812"})
+                log(f"   [Tripo] Step 1: image_to_model (Using S3 URL: {corrected_url})...")
+                tid = await tripo_create_task_v2(tripo_api_key, {
+                    "type": "image_to_model", 
+                    "url": corrected_url, 
+                    "model_version": "v3.0-20250812"
+                })
             except Exception as e:
-                if "2014" in str(e) or "auditing" in str(e).lower():
-                    log(f"   ⚠️ [Audit] Image rejected. Falling back to text_to_model (GPT prompt)...")
-                    tid = await tripo_create_task_v2(tripo_api_key, {"type": "text_to_model", "prompt": gpt_prompt, "model_version": "v3.0-20250812"})
+                log(f"   ⚠️ [Tripo-Image] Failed or Rejected: {str(e)}")
+                if "2014" in str(e) or "auditing" in str(e).lower() or "400" in str(e):
+                    log(f"   ⚠️ [Fallback] Falling back to text_to_model (GPT prompt)...")
+                    tid = await tripo_create_task_v2(tripo_api_key, {
+                        "type": "text_to_model", 
+                        "prompt": gpt_prompt, 
+                        "model_version": "v3.0-20250812"
+                    })
                 else: raise e
             
             await tripo_wait(tripo_api_key, tid)
 
             # Step 2.2: Texture Refinement (HD Color Enhancement)
             log(f"   [Tripo] Step 2: texture_model refinement (detailed HD)...")
-            refine_tid = await tripo_create_task_v2(tripo_api_key, {"type": "texture_model", "original_model_task_id": tid, "texture_quality": "detailed", "model_version": "v3.0-20250812"})
+            refine_tid = await tripo_create_task_v2(tripo_api_key, {
+                "type": "texture_model", 
+                "original_model_task_id": tid, 
+                "texture_quality": "detailed", 
+                "texture": True,
+                "pbr": True,
+                "model_version": "v3.0-20250812"
+            })
             final_task = await tripo_wait(tripo_api_key, refine_tid)
             
             async with httpx.AsyncClient() as client:
@@ -285,18 +301,11 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
 async def tripo_create_task_v2(api_key: str, payload: Dict) -> str:
     res = await tripo_call(api_key, "POST", "/task", payload); return res["task_id"]
 
-# Helper for File Upload to Tripo (Internal used)
-async def _upload_tripo_file(api_key: str, path: Path) -> str:
-    headers = {"Authorization": f"Bearer {api_key}"}
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        with open(path, "rb") as f:
-            r = await client.post(f"{TRIPO_API_BASE}/upload", headers=headers, files={"file": (path.name, f, "image/png")})
-            r.raise_for_status(); return r.json()["data"]["file_token"]
-
 def import_json(): import json; return json
 
 class KidsProcessRequest(BaseModel): sourceImageUrl: str; age: str = "6-7"; budget: Optional[int] = None
 class ProcessResp(BaseModel): ok: bool; reqId: str; correctedUrl: str; modelUrl: str; ldrUrl: str; bomUrl: str; parts: int; finalTarget: int
+
 
 @router.post("/process-all", response_model=ProcessResp)
 async def process(request: KidsProcessRequest):
