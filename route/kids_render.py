@@ -21,6 +21,7 @@ def log(msg: str) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     print(f"[{ts}] {msg}")
 
+
 # ---- Tripo ----
 from tripo3d import TripoClient
 from tripo3d.models import TaskStatus
