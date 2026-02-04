@@ -931,11 +931,14 @@ def convert_glb_to_ldr(
     use_mesh_color: bool = True,
     solid_color: int = 4,
     smart_fix: bool = True,
+
     step_order: str = "bottomup",
     callback: Optional[Callable[[str], None]] = None,
+
     **kwargs: Any,
 ) -> Dict[str, Any]:
     
+
     step_mode = "none" if step_order == "none" else "layer"
     bricks_only = (kind != "plate")
     cap_mode = "off" if bricks_only else "all"
@@ -947,6 +950,7 @@ def convert_glb_to_ldr(
     search_iters = max(1, int(search_iters))
 
     def _run_v3(t: int):
+
         res = convert_glb_to_ldr_v3_inline(
             input_path=glb_path,
             output_path=out_ldr_path,
@@ -965,6 +969,7 @@ def convert_glb_to_ldr(
             solid_color=int(solid_color),
             smart_fix=smart_fix,
         )
+
         return res, int(res.total_bricks), int(t)
 
     result, parts, last_target = _run_v3(target)
@@ -997,6 +1002,7 @@ def convert_glb_to_ldr(
                 break
 
     return {"out": out_ldr_path, "parts": int(best_parts), "final_target": int(best_target)}
+
 
 
 def main():
