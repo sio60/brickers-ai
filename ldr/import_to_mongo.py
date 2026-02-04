@@ -112,14 +112,3 @@ def import_ldr_bom_with_steps(job_id: str, ldr_path: str, candidate_id: int | No
         "resolvedItems": doc["stats"]["resolvedItems"],
         "unresolvedItems": doc["stats"]["unresolvedItems"],
     }
-
-
-
-# ✅ car.ldr “고정 테스트”용 헬퍼 (원하면 삭제해도 됨)
-def import_car_ldr(job_id: str = "job_car_001") -> Dict:
-    car_path = Path(__file__).resolve().parent / "car.ldr"  # ai/ldr/car.ldr
-    return import_ldr_bom(job_id=job_id, ldr_path=str(car_path))
-
-def import_pyramid_ldr(job_id: str = "job_pyramid_001") -> Dict:
-    pyr_path = Path(__file__).resolve().parents[1] / "pyramid.ldr"
-    return import_ldr_bom_with_steps(job_id=job_id, ldr_path=str(pyr_path), candidate_id=None)
