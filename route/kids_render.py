@@ -500,10 +500,10 @@ AGE_TO_BUDGET = {"4-5": 50, "6-7": 100, "8-10": 150}
 def _budget_to_start_target(eff_budget: int) -> int:
     # Frontend budgets: 50 / 100 / 150 (L1/L2/L3)
     if eff_budget <= 50:
-        return 50
+        return 25
     if eff_budget <= 100:
-        return 100
-    return 150
+        return 35
+    return 45
 
 def _load_engine_convert():
     """
