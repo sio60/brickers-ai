@@ -173,25 +173,37 @@ def _generate_bom_from_ldr(ldr_path: Path) -> Dict[str, Any]:
     bom_parts = [{"part_id": k.rsplit("_", 1)[0], "color": k.rsplit("_", 1)[1], "quantity": v} for k, v in pc.most_common()]
     return {"total_parts": sum(pc.values()), "parts": bom_parts}
 
-# -----------------------------
-# ✅ Nano Banana (Gemini)
-# -----------------------------
-PROMPT_NANO_BANANA = """You are an expert AI image editor. Your goal is to prepare an image for 3D modeling.
-Please re-generate the provided image as a clean, high-resolution, standalone 3D object.
+# --- Gemini Prompts ---
+# Plan A: High-quality volumetric enhancement for 3D depth
+PROMPT_VOLUMETRIC = """You are a master 3D artist specializing in cute, high-quality toy design.
+Your task is to transform the provided 2D drawing into a 3D-volumetric plastic toy.
 Rules:
-1. MUST use a solid, plain white background.
-2. REMOVE all people, faces, hands, or body parts.
-3. REMOVE all text, labels, watermarks, or logos.
-4. REMOVE background clutter and shadows.
-5. Focus only on the main central object.
-6. Ensure the object is complete and not cropped.
-7. The output must be a single, clear, sharp object suitable for image-to-3D conversion."""
-def _render_one_image_sync(img_bytes: bytes, mime: str) -> bytes:
+1. Maintain the exact character proportions and unique features of the input drawing.
+2. Add realistic volumetric shading and soft highlights to imply 3D depth and thickness.
+3. The style must be a smooth, glossy 'soft plastic' or '3D toy' aesthetic.
+4. MUST use a solid, plain white background with no ground shadows.
+5. NO text, people, body parts, logos, or background clutter.
+6. Ensure the object is complete and fully visible in the center."""
+
+# Plan B: Safety-first enhancement focused on cleanup to avoid audit triggers
+PROMPT_SAFETY = """You are a clean image editor for 3D modeling.
+Prepare the image by removing the background and cleaning up the lines.
+Rules:
+1. Pure plain white background only.
+2. Clean up colors and improve contrast, but do not add complex artistic effects.
+3. Remove all text, human parts, or anything that isn't the main object.
+4. Strictly maintain the original drawing's shape."""
+
+def _render_one_image_sync(img_bytes: bytes, mime: str, prompt: str) -> bytes:
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key: raise RuntimeError("GEMINI_API_KEY missing")
     model_name = os.environ.get("NANO_BANANA_MODEL", "gemini-2.0-flash-exp")
     client = genai.Client(api_key=key)
-    resp = client.models.generate_content(model=model_name, contents=[{"text": PROMPT_NANO_BANANA}, {"inline_data": {"mime_type": mime, "data": img_bytes}}], config=genai_types.GenerateContentConfig(response_modalities=["Text", "Image"]))
+    resp = client.models.generate_content(
+        model=model_name, 
+        contents=[{"text": prompt}, {"inline_data": {"mime_type": mime, "data": img_bytes}}], 
+        config=genai_types.GenerateContentConfig(response_modalities=["Text", "Image"])
+    )
     for part in (resp.candidates[0].content.parts if resp.candidates else []):
         inline = getattr(part, "inline_data", None)
         if inline and getattr(inline, "data", None):
@@ -200,8 +212,8 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> bytes:
             return data
     raise ValueError("No image from Gemini")
 
-async def render_one_image_async(img_bytes: bytes, mime: str) -> bytes:
-    return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime)
+async def render_one_image_async(img_bytes: bytes, mime: str, prompt: str) -> bytes:
+    return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime, prompt)
 
 # -----------------------------
 # ✅ Engine Loader
@@ -226,25 +238,39 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
     
     try:
         with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
-            # 1. Image
+            # 1. Image Enhancement (Initial: Volumetric)
             img_bytes = await _download_from_s3(source_image_url)
-            corrected_bytes = await render_one_image_async(img_bytes, "image/png")
+            corrected_bytes = await render_one_image_async(img_bytes, "image/png", PROMPT_VOLUMETRIC)
             corrected_path = out_dir / "corrected.png"; await _write_bytes_async(corrected_path, corrected_bytes)
             corrected_url = _to_generated_url(corrected_path, out_dir)
 
-            # 2. Tripo
+            # 2. Tripo (with multi-stage retry)
             await update_job_stage(job_id, "THREE_D_PREVIEW")
             async with TripoClient(api_key=os.environ.get("TRIPO_API_KEY", "")) as client:
+                tid = None
+                
+                # Attempt 1: Highly enhanced volumetric image
                 try:
-                    log(f"   [Tripo] Attempting image_to_model with corrected image...")
+                    log(f"   [Tripo] Attempt 1: Volumetric enhancement...")
                     tid = await client.image_to_model(image=str(corrected_path))
                 except Exception as e:
-                    # [Code 2014] is Auditing error (policy violation)
                     if "2014" in str(e) or "auditing" in str(e).lower():
-                        log(f"   ⚠️ [Tripo Audit Error] 'Corrected' image rejected. Falling back to original image... | error={str(e)}")
-                        original_path = out_dir / "original_fallback.png"
-                        await _write_bytes_async(original_path, img_bytes)
-                        tid = await client.image_to_model(image=str(original_path))
+                        # Attempt 2: Refined safety image
+                        log(f"   ⚠️ [Tripo Audit] Attempt 1 failed. Trying Attempt 2: Safety-focused enhancement...")
+                        safety_bytes = await render_one_image_async(img_bytes, "image/png", PROMPT_SAFETY)
+                        safety_path = out_dir / "safety_corrected.png"
+                        await _write_bytes_async(safety_path, safety_bytes)
+                        try:
+                            tid = await client.image_to_model(image=str(safety_path))
+                        except Exception as e2:
+                            if "2014" in str(e2) or "auditing" in str(e2).lower():
+                                # Final Attempt: Original Image fallback
+                                log(f"   ⚠️ [Tripo Audit] Attempt 2 failed. Final fallback: Original image...")
+                                original_path = out_dir / "original_fallback.png"
+                                await _write_bytes_async(original_path, img_bytes)
+                                tid = await client.image_to_model(image=str(original_path))
+                            else:
+                                raise e2
                     else:
                         raise e
                 
