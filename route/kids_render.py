@@ -239,18 +239,8 @@ async def process_kids_request_internal(job_id: str, source_image_url: str, age:
             global _CONVERT_FN; 
             if not _CONVERT_FN: _CONVERT_FN = _load_engine_convert()
             
-            # [Added] Progress Callback
-            def _progress_cb(msg: str):
-                log(f"   📣 [BrickGen] {msg}")
-                try:
-                    with httpx.Client(timeout=1.0) as client:
-                        client.post(f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs", json={"message": msg, "level": "INFO"})
-                except Exception: pass
-
             out_ldr = out_dir / "result.ldr"
-            result = await anyio.to_thread.run_sync(
-                lambda: _CONVERT_FN(str(glb_path), str(out_ldr), budget=int(eff_budget), target=60, smart_fix=True, mode="kids", callback=_progress_cb)
-            )
+            result = await anyio.to_thread.run_sync(lambda: _CONVERT_FN(str(glb_path), str(out_ldr), budget=int(eff_budget), target=60, smart_fix=True, mode="kids"))
             ldr_url = _to_generated_url(out_ldr, out_dir)
 
             # 4. BOM
