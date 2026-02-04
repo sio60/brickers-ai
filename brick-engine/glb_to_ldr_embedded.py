@@ -783,12 +783,29 @@ def convert_glb_to_ldr_v3_inline(
     cap_mode: Literal["off", "top", "all"] = "all",
     use_mesh_color: bool = True,
     solid_color: int = 4,
+    # ✅ New: Compatibility with legacy params (Agent params)
+    flipx180: bool = False,
+    flipy180: bool = False,
+    flipz180: bool = False,
+    invert_y: bool = False,
+    **kwargs: Any,
 ) -> ConversionResult:
     in_path = Path(input_path).resolve()
     out_path = Path(output_path).resolve()
 
-    scene = load_glb_scene(in_path)
-    pitch = calculate_auto_pitch(scene, max(1, int(target_studs)))
+    # 1. Load & Preprocess (Scaling / Rotation / Squash Y)
+    # 기존 convert_glb_to_ldr와 동일한 전처리 로직 사용 -> Target Mismatch 해결
+    meshes = load_glb_meshes(str(in_path))
+    combined = preprocess_meshes(
+        meshes, 
+        max(1, int(target_studs)), 
+        flipx180, flipy180, flipz180
+    )
+    
+    # Preprocess already scaled to stud-units, so use pitch=1.0
+    scene = trimesh.Scene(combined)
+    pitch = 1.0 
+    
     grid = voxelize_scene(scene, pitch, solid=solid, use_mesh_color=use_mesh_color, solid_color=solid_color)
     smooth_colors(grid, passes=color_smooth)
 
