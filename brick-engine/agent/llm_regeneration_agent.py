@@ -274,10 +274,11 @@ class AgentState(TypedDict):
 # ============================================================================
 
 class RegenerationGraph:
-    def __init__(self, llm_client: Optional[BaseLLMClient] = None):
+    def __init__(self, llm_client: Optional[BaseLLMClient] = None, callback: Optional[Callable[[str], None]] = None):
         # 기본 클라이언트는 Gemini (비용 효율성)
         self.gemini_client = GeminiClient()
         self.default_client = llm_client if llm_client else self.gemini_client
+        self.callback = callback
         
         # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
         self.gpt_client = None
@@ -377,6 +378,7 @@ class RegenerationGraph:
             return []
             
         print(f"  🔍 Re-ranking: {len(cases)}개 후보 분석 중...")
+        self.log(f"  🔍 Re-ranking: {len(cases)}개 후보 분석 중...")
         
         # 후보군 텍스트 변환
         candidates_text = ""
@@ -426,15 +428,18 @@ class RegenerationGraph:
                     reranked_results.append(case)
             
             print(f"  ✨ Re-ranking 완료: Top {len(reranked_results)} 선정 (Max Score: {reranked_results[0]['_rerank_score'] if reranked_results else 0})")
+            self.log(f"  ✨ Re-ranking 완료: Top {len(reranked_results)} 선정 (Max Score: {reranked_results[0]['_rerank_score'] if reranked_results else 0})")
             return reranked_results
             
         except Exception as e:
             print(f"  ⚠️ Re-ranking 실패 (Fallback to raw vector rank): {e}")
+            self.log(f"  ⚠️ Re-ranking 실패 (Fallback to raw vector rank): {e}")
             return cases[:3]  # 실패 시 그냥 벡터 상위 3개 반환
 
     def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
         """[신규] 가설 생성 노드: RAG 검색 및 구체적 가설 수립"""
         print("\n[Hypothesize] 가설 수립 및 RAG 검색 중...")
+        self.log("\n[Hypothesize] 가설 수립 및 RAG 검색 중...")
         
         # 1. RAG 검색
         current_observation = ""
@@ -455,6 +460,7 @@ class RegenerationGraph:
             # 2. LLM Re-ranking (Top 3 선별)
             similar_cases = self._rerank_and_filter_cases(current_observation, raw_cases)
             print(f"  📚 유사 실패 사례 {len(similar_cases)}건 선정 (Re-ranked)")
+            self.log(f"  📚 유사 실패 사례 {len(similar_cases)}건 선정 (Re-ranked)")
             
         # 2. 가설 생성 (Gemini Fast 사용)
         rag_context = ""
@@ -481,6 +487,8 @@ class RegenerationGraph:
             response = self.gemini_client.generate_json(prompt)
             print(f"  💭 가설: {response.get('hypothesis')}")
             print(f"  📊 난이도: {response.get('difficulty')}")
+            self.log(f"  💭 가설: {response.get('hypothesis')}")
+            self.log(f"  📊 난이도: {response.get('difficulty')}")
             
             return {
                 "current_hypothesis": response,
@@ -488,6 +496,7 @@ class RegenerationGraph:
             }
         except Exception as e:
             print(f"  ⚠️ 가설 생성 실패: {e}")
+            self.log(f"  ⚠️ 가설 생성 실패: {e}")
             # 실패 시 기본 가설로 진행
             return {
                 "current_hypothesis": {"observation": "분석 실패", "difficulty": "Medium"},
@@ -510,6 +519,7 @@ class RegenerationGraph:
             reason = "일반 난이도"
                 
         print(f"\n[Strategy] 전략 결정: {model_selection} ({reason})")
+        self.log(f"\n[Strategy] 전략 결정: {model_selection} ({reason})")
         
         return {
             "llm_config": {"model": model_selection},
@@ -522,7 +532,10 @@ class RegenerationGraph:
         from glb_to_ldr_embedded import convert_glb_to_ldr
         
         print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
+        msg = f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}"
+        self.log(msg)
         print(f"  Params: target={state['params'].get('target')}, budget={state['params'].get('budget')}")
+        self.log(f"  Params: target={state['params'].get('target')}, budget={state['params'].get('budget')}")
         
         try:
             # 고수준 API 호출 (내부적으로 budget-finding 루프 포함)
@@ -536,10 +549,12 @@ class RegenerationGraph:
             final_target = result.get('final_target', 0)
             
             print(f"  ✅ 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
+            self.log(f"  ✅ 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
             return {"attempts": state['attempts'] + 1, "next_action": "verify"}
             
         except Exception as e:
             print(f"  ❌ 변환 실패: {e}")
+            self.log(f"  ❌ 변환 실패: {e}")
             # 변환 자체가 실패하면 에러 메시지를 history에 추가하고 Model에게 도움 요청
             error_msg = f"변환 중 치명적 오류 발생: {e}. 파라미터를 크게 변경해야 합니다."
             return {
@@ -553,7 +568,8 @@ class RegenerationGraph:
         from physical_verification.pybullet_verifier import PyBulletVerifier
         from physical_verification.ldr_loader import LdrLoader
         
-        print("\n[Verifier] 물리 검증 수행 중...")
+        print(f"\n[Verifier] 물리 검증 수행 중...")
+        self.log("\n[Verifier] 물리 검증 수행 중...")
         
         if not os.path.exists(state['ldr_path']):
             return {"messages": [HumanMessage(content="LDR 파일이 생성되지 않았습니다.")], "next_action": "model"}
@@ -602,6 +618,7 @@ class RegenerationGraph:
                 short_status = "❌ 불안정"
             
             print(f"  결과: {short_status}")
+            self.log(f"  결과: {short_status}")
             
             # 불안정하거나 부분 안정이면 상세 내용 출력 (디버깅용)
             if not feedback.stable or feedback.floating_bricks > 0:
@@ -609,6 +626,7 @@ class RegenerationGraph:
                  if len(summary_text) > 200:
                      summary_text = summary_text[:200] + "..."
                  print(f"  요약: {summary_text}")
+                 self.log(f"  요약: {summary_text}")
             
             # 공중부양 브릭 ID 캐싱 (Tool에서 사용)
             floating_ids = []
@@ -638,9 +656,11 @@ class RegenerationGraph:
             
             if not is_success and feedback.failure_ratio > 0:
                  print(f"  ⚠️ 실패율 {feedback.failure_ratio*100:.1f}% 발생 → 에이전트가 수정 시도합니다.")
+                 self.log(f"  ⚠️ 실패율 {feedback.failure_ratio*100:.1f}% 발생 → 에이전트가 수정 시도합니다.")
             
             if is_success:
                 print("🎉 목표 달성! 프로세스를 종료합니다.")
+                self.log("🎉 목표 달성! 프로세스를 종료합니다.")
                 # 최종 리포트 생성
                 final_report = {
                     "success": True,
@@ -653,6 +673,7 @@ class RegenerationGraph:
             
             if state['attempts'] >= state['max_retries']:
                 print("💥 최대 시도 횟수 초과.")
+                self.log("💥 최대 시도 횟수 초과.")
                 # 최종 리포트 생성 (실패)
                 final_report = {
                     "success": False,
@@ -685,11 +706,13 @@ class RegenerationGraph:
             
         except Exception as e:
             print(f"  ❌ 검증 중 에러: {e}")
+            self.log(f"  ❌ 검증 중 에러: {e}")
             # 검증 에러 시 LLM에게 맡기지 않고 재시도 (FixFloatingBricks 결과 보존)
             verification_errors = state.get('verification_errors', 0) + 1
             if verification_errors >= 3:
                 # 3회 이상 실패 시 재생성으로 전환
                 print(f"  ⚠️ 검증 에러 {verification_errors}회 - 재생성으로 전환합니다.")
+                self.log(f"  ⚠️ 검증 에러 {verification_errors}회 - 재생성으로 전환합니다.")
                 return {
                     "messages": [HumanMessage(content=f"검증 시스템 에러가 반복됨: {e}")],
                     "verification_errors": 0,
@@ -698,6 +721,7 @@ class RegenerationGraph:
             else:
                 # 재시도
                 print(f"  🔄 검증 재시도 ({verification_errors}/3)...")
+                self.log(f"  🔄 검증 재시도 ({verification_errors}/3)...")
                 import time
                 time.sleep(1)  # PyBullet 안정화 대기
                 return {"verification_errors": verification_errors, "next_action": "verifier"}
@@ -709,6 +733,7 @@ class RegenerationGraph:
         time.sleep(2) 
         
         print("\n[Co-Scientist] 상황 분석 중...")
+        self.log("\n[Co-Scientist] 상황 분석 중...")
         
         # 사용 가능한 도구 정의
         tools = [TuneParameters, FixFloatingBricks, MergeBricks]
@@ -752,6 +777,7 @@ class RegenerationGraph:
                 memory_info += "\n위 사례를 참고하여 성공 확률이 높은 전략을 수립하세요.\n"
                 messages_to_send.append(SystemMessage(content=memory_info))
                 print(f"  📚 RAG 검색 결과 {len(similar_cases)}건 주입됨")
+                self.log(f"  📚 RAG 검색 결과 {len(similar_cases)}건 주입됨")
         
         # Legacy Memory (Fallback)
         memory = state.get('memory', {})
@@ -768,6 +794,7 @@ class RegenerationGraph:
             memory_msg = SystemMessage(content=memory_info)
             messages_to_send.append(memory_msg)
             print(f"  📚 Memory 정보 {len(lessons)}개 교훈 전달됨")
+            self.log(f"  📚 Memory 정보 {len(lessons)}개 교훈 전달됨")
         
         # 직전 검증 결과 확인
         last_msg = messages_to_send[-1]
@@ -789,6 +816,7 @@ class RegenerationGraph:
             # 1. 공중부양 브릭이 있는 경우 (가장 중요)
             if floating_ids:
                 print(f"  💡 [Strategy Hint] 공중부양 브릭({len(floating_ids)}개) 감지 -> 정밀 수리 권장")
+                self.log(f"  💡 [Strategy Hint] 공중부양 브릭({len(floating_ids)}개) 감지 -> 정밀 수리 권장")
                 advice = f"""**⚠️ 상황 분석 및 도구 추천:**
 현재 공중부양 브릭이 {len(floating_ids)}개 발견되었습니다. (ID: {floating_ids})
 전체 실패율은 {ratio}%입니다.
@@ -806,6 +834,7 @@ class RegenerationGraph:
             # 2. 실패율이 낮은 경우
             elif ratio > 0 and ratio < 20.0:
                 print(f"  💡 [Strategy Hint] 낮은 실패율({ratio}%) 감지 -> 부분 수정 권장")
+                self.log(f"  💡 [Strategy Hint] 낮은 실패율({ratio}%) 감지 -> 부분 수정 권장")
                 hints.append(f"현재 실패율이 {ratio}%로 매우 낮습니다. 구조가 거의 완성되었으므로 무분별한 재생성보다는 정밀한 도구 사용을 고려하세요.")
             
             if hints:
@@ -817,6 +846,7 @@ class RegenerationGraph:
             # [Rollback] 무조건 Gemini 사용
             client_to_use = self.gemini_client
             print(f"  🤖 Active Model: Gemini-2.5-Flash (Fixed)")
+            self.log(f"  🤖 Active Model: Gemini-2.5-Flash (Fixed)")
             
             model_with_tools = client_to_use.bind_tools(tools)
             response = model_with_tools.invoke(messages_to_send)
@@ -824,10 +854,12 @@ class RegenerationGraph:
             # 응답 확인
             if response.tool_calls:
                 print(f"  🔨 도구 선택: {[tc['name'] for tc in response.tool_calls]}")
+                self.log(f"  🔨 도구 선택: {[tc['name'] for tc in response.tool_calls]}")
                 return {"messages": [response], "next_action": "tool"}
             else:
                 # 도구를 선택하지 않은 경우 (끝났다고 판단)
                 print(f"  💭 LLM 의견: {response.content}")
+                self.log(f"  💭 LLM 의견: {response.content}")
                 
                 # 실제 성공 여부 재확인
                 current_metrics = state.get('current_metrics', {})
@@ -837,18 +869,22 @@ class RegenerationGraph:
                 # 공중부양이 없고 실패율이 낮으면 종료 허용
                 if floating_count == 0 and failure_ratio <= state['acceptable_failure_ratio']:
                     print("🎉 모든 조건 충족. 종료합니다.")
+                    self.log("🎉 모든 조건 충족. 종료합니다.")
                     return {"messages": [response], "next_action": "end"}
                 else:
                     # 아직 문제가 남았는데 종료하려고 하면 힌트를 주고 재시도
                     print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 재지시 중...")
+                    self.log(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 재지시 중...")
                     error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. 'FixFloatingBricks' 도구를 사용하거나 파라미터를 교체하여 모든 브릭이 연결되도록 하세요."
                     hint = HumanMessage(content=error_feedback)
                     return {"messages": [response, hint], "next_action": "model"}
                 
         except Exception as e:
             print(f"  ⚠️ LLM 호출 에러: {e}")
+            self.log(f"  ⚠️ LLM 호출 에러: {e}")
             if "429" in str(e):
                 print("  💤 API 할당량 초과. 잠시 대기 후 재시도합니다...")
+                self.log("  💤 API 할당량 초과. 잠시 대기 후 재시도합니다...")
                 time.sleep(10)
                 return {"next_action": "model"}
             return {"next_action": "end"}
@@ -883,6 +919,7 @@ class RegenerationGraph:
             # 3회 연속 같은 도구 사용 시 경고
             if consecutive_same_tool >= 3:
                 print(f"  ⚠️ 경고: {tool_name}을(를) {consecutive_same_tool}회 연속 사용 중!")
+                self.log(f"  ⚠️ 경고: {tool_name}을(를) {consecutive_same_tool}회 연속 사용 중!")
                 warning_msg = f"'{tool_name}'을(를) 3회 연속 사용했습니다. 다른 전략을 고려해주세요."
                 tool_results.append(ToolMessage(
                     content=warning_msg,
@@ -900,6 +937,7 @@ class RegenerationGraph:
             tool_usage_count[tool_name] = tool_usage_count.get(tool_name, 0) + 1
             
             print(f"\n[Tool Execution] {tool_name} 실행... (총 {tool_usage_count[tool_name]}회)")
+            self.log(f"\n[Tool Execution] {tool_name} 실행... (총 {tool_usage_count[tool_name]}회)")
             
             result_content = ""
             
@@ -968,6 +1006,7 @@ class RegenerationGraph:
                 result_content = f"알 수 없는 도구: {tool_name}"
             
             print(f"  결과: {result_content}")
+            self.log(f"  결과: {result_content}")
             
             tool_results.append(ToolMessage(
                 content=result_content,
@@ -994,6 +1033,7 @@ class RegenerationGraph:
         이제 Verify 후에 호출되므로 실제 결과를 알 수 있습니다.
         """
         print("\n[Reflect] 실제 결과 분석 중...")
+        self.log("\n[Reflect] 실제 결과 분석 중...")
         
         # Memory 초기화 (없으면)
         memory = state.get('memory', {
@@ -1011,6 +1051,7 @@ class RegenerationGraph:
         # 이전 메트릭이 없으면 첫 실행 (비교 대상 없음)
         if not previous_metrics:
             print("  (첫 검증 - 기준점 설정)")
+            self.log("  (첫 검증 - 기준점 설정)")
             return {
                 "memory": memory, 
                 "previous_metrics": current_metrics, # 기준점 설정
@@ -1048,11 +1089,13 @@ class RegenerationGraph:
                     memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
                     memory["consecutive_failures"] = 0
                     print(f"  {lesson}")
+                    self.log(f"  {lesson}")
                 else:
                     lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
                     memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
                     memory["consecutive_failures"] += 1
                     print(f"  {lesson}")
+                    self.log(f"  {lesson}")
                 
                 memory["lessons"].append(lesson)
                 
@@ -1091,6 +1134,7 @@ class RegenerationGraph:
                 )
             except Exception as e:
                 print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
+                self.log(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
         
         return {
             "memory": memory, 
@@ -1156,6 +1200,14 @@ class RegenerationGraph:
         
         return workflow.compile()
 
+    def log(self, msg: str):
+        print(msg)
+        if self.callback:
+            try:
+                self.callback(msg)
+            except Exception as e:
+                print(f"Callback failed: {e}")
+
 
 # ============================================================================
 # 실행 함수
@@ -1168,13 +1220,14 @@ def regeneration_loop(
     max_retries: int = 5,
     acceptable_failure_ratio: float = 0.1,
     gui: bool = False,
-    params: Optional[Dict[str, Any]] = None,  # [수정] 외부 파라미터 주입 허용
+    params: Optional[Dict[str, Any]] = None,
+    callback: Optional[Callable[[str], None]] = None,
 ):
     print("=" * 60)
     print("🤖 Co-Scientist Agent (Tool-Use Ver.)")
     print("=" * 60)
     
-    graph_builder = RegenerationGraph(llm_client)
+    graph_builder = RegenerationGraph(llm_client, callback=callback)
     app = graph_builder.build()
     
     # 시스템 메시지 및 초기 설정
