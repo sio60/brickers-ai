@@ -613,6 +613,21 @@ async def process_kids_request_internal(
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
         raise RuntimeError("TRIPO_API_KEY is not set")
+    
+    # ✅ Co-Scientist Agent 관련 Import
+    # brick_engine.agent 패키지 경로 확보를 위해 sys.path 설정이 필요할 수 있음
+    # (이미 _load_engine_convert 에서 경로 트릭을 쓰고 있지만, 여기서는 정석대로 import 시도)
+    try:
+        from brick_engine.agent.llm_regeneration_agent import regeneration_loop
+        from brick_engine.agent.llm_clients import GeminiClient
+    except ImportError:
+        # 경로 문제 시 fallback: sys.path에 추가 후 import
+        import sys
+        agent_dir = PROJECT_ROOT / "brick-engine"
+        if str(agent_dir) not in sys.path:
+            sys.path.insert(0, str(agent_dir))
+        from agent.llm_regeneration_agent import regeneration_loop
+        from agent.llm_clients import GeminiClient
 
     req_id = job_id  # Job ID를 req_id로 사용
     out_req_dir = GENERATED_DIR / f"req_{req_id}"
@@ -623,15 +638,17 @@ async def process_kids_request_internal(
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
     log("═" * 70)
-    log(f"🚀 [AI-SERVER] 요청 시작 | jobId={job_id}")
+    log(f"🚀 [AI-SERVER] 요청 시작 (Co-Scientist Agent) | jobId={job_id}")
     log(f"📁 원본 이미지 URL: {source_image_url}")
     log(f"📊 파라미터: age={age} | budget={budget}")
     log(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
     log("═" * 70)
 
     try:
-        # ✅ 전체 타임아웃 (무한 대기 방지)
-        with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
+        # ✅ 전체 타임아웃 (Co-Scientist Agent는 오래 걸릴 수 있으므로 넉넉히)
+        agent_timeout = KIDS_TOTAL_TIMEOUT_SEC + 600 # 기존 + 10분 여유
+        
+        with anyio.fail_after(agent_timeout):
 
             # -----------------
             # 0) S3에서 원본 이미지 다운로드
@@ -746,7 +763,7 @@ async def process_kids_request_internal(
             print(f"   📦 GLB 준비완료 | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
             # -----------------
-            # 4) Brickify 실행 (CPU heavy -> thread)
+            # 4) Co-Scientist Agent 실행 (Brickify + Regeneration Loop)
             # -----------------
             step_start = time.time()
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
@@ -756,48 +773,90 @@ async def process_kids_request_internal(
             # ✅ Backend에 stage 업데이트
             await update_job_stage(job_id, "MODEL")
 
-            global _CONVERT_FN
-            if _CONVERT_FN is None:
-                _CONVERT_FN = _load_engine_convert()
-
+            # Agent 설정
+            default_budget = int(AGE_TO_BUDGET.get(age.strip(), 60))
+            eff_budget = int(budget) if budget is not None else default_budget
+            start_target = _budget_to_start_target(eff_budget)
+            
             out_ldr = out_brick_dir / "result.ldr"
+            
+            gemini_key = os.environ.get("GEMINI_API_KEY")
+            if not gemini_key:
+                # GEMINI_API_KEY가 없으면 에이전트 실행 불가 (또는 Groq 등 다른 키 필요)
+                # 여기서는 일단 로그 찍고 진행 시도
+                log("⚠️ GEMINI_API_KEY가 없습니다. 에이전트가 정상 작동하지 않을 수 있습니다.")
 
-            result: Dict[str, Any] = await anyio.to_thread.run_sync(
-                lambda: _CONVERT_FN(  # type: ignore
-                    str(glb_path),
-                    str(out_ldr),
-                    budget=int(eff_budget),
-                    target=int(start_target),
-                    min_target=5,
-                    shrink=0.85,
-                    search_iters=6,
-                    kind="brick",
-                    plates_per_voxel=3,
-                    interlock=True,
-                    max_area=20,
-                    solid_color=4,
-                    use_mesh_color=True,
-                    invert_y=False,
-                    smart_fix=True,
-                    span=4,
-                    max_new_voxels=12000,
-                    refine_iters=8,
-                    ensure_connected=True,
-                    min_embed=2,
-                    erosion_iters=1,
-                    fast_search=True,
-                    step_order="bottomup",
-                    extend_catalog=True,
-                    max_len=8,
+            # LLM 클라이언트 초기화
+            llm_client = GeminiClient(api_key=gemini_key)
+
+            # 에이전트 실행 (스레드로 격리)
+            # loop 내에서 convert_glb_to_ldr 호출 시 필요한 기본 파라미터 전달
+            # 하지만 regeneration_loop는 내부적으로 params 딕셔너리를 사용함
+            # 따라서 초기 params를 agent에 맞게 구성해야 함
+            
+            # DEFAULT_PARAMS를 가져와서 budget/target만 수정
+            # (llm_regeneration_agent.py의 DEFAULT_PARAMS와 싱크 필요)
+            agent_params = {
+                "target": start_target,
+                "budget": eff_budget,
+                "min_target": 5,
+                "shrink": 0.85, # 에이전트 기본값 0.7이지만 여기서는 0.85로 시작
+                "search_iters": 6,
+                "kind": "brick",
+                "plates_per_voxel": 3,
+                "interlock": True,
+                "max_area": 20,
+                "solid_color": 4,
+                "use_mesh_color": True,
+                "invert_y": False,
+                "smart_fix": True,
+                "fill": False, # kids 모드는 속 빈 모델 선호? (원래 코드: fill=False with embedded logic)
+                               # embedded 코드에서는 fill=False 처리됨.
+                "step_order": "bottomup",
+                # [복구] Pre-merge 누락 파라미터 추가
+                "span": 4,
+                "max_new_voxels": 12000,
+                "refine_iters": 8,
+                "ensure_connected": True,
+                "min_embed": 2,
+                "erosion_iters": 1,
+                "fast_search": True,
+                "extend_catalog": True,
+                "max_len": 8,
+            }
+
+            def run_agent_sync():
+                return regeneration_loop(
+                    glb_path=str(glb_path),
+                    output_ldr_path=str(out_ldr),
+                    llm_client=llm_client,
+                    max_retries=3, # 재시도 횟수 제한
+                    gui=False,
+                    params=agent_params, # [수정] 파라미터 전달
                 )
-            )
+
+            final_state = await anyio.to_thread.run_sync(run_agent_sync)
+            
+            # 결과 확인
+            agent_report = final_state.get('final_report', {})
+            success = agent_report.get('success', False)
+            
+            # 최종 메트릭
+            final_metrics = agent_report.get('final_metrics', {})
+            final_parts = final_metrics.get('total_bricks', 0)
+            
+            # 에이전트가 실패했더라도 LDR이 생성되었으면 진행 (최선)
+            if not out_ldr.exists() or out_ldr.stat().st_size == 0:
+                raise RuntimeError("Agent failed to generate any LDR file")
 
             brickify_elapsed = time.time() - step_start
-            log(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
-
-            if not out_ldr.exists() or out_ldr.stat().st_size == 0:
-                raise RuntimeError("LDR output missing/empty")
-
+            
+            status_msg = "성공" if success else "실패(부분완료)"
+            log(f"✅ [STEP 3/4] Co-Scientist 완료 ({status_msg}) | parts={final_parts} | {brickify_elapsed:.2f}s")
+            
+            # 결과 딕셔너리 구성 (기존 코드 호환)
+            # result 딕셔너리 대신 final_state 정보를 활용
+            
             # -----------------
             # 5) 결과 URL 생성 및 BOM 파일 생성
             # -----------------

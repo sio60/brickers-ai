@@ -20,6 +20,25 @@ def node_debate(state: AgentState) -> AgentState:
         print(f"  Selected (only option): {selected['id']}")
         return {**state, "selected_proposal": selected}
 
+    # RAG: Retrieve similar cases acting as 'The Critic'
+    critic_context = ""
+    try:
+        import config  # This registers AGENT_DIR in sys.path
+        from memory_utils import memory_manager
+        
+        if memory_manager:
+            obs = f"Floating: {state['floating_count']}, Removed: {state['total_removed']}"
+            similar_cases = memory_manager.search_similar_cases(obs, limit=2)
+            if similar_cases:
+                critic_context = "\n[CRITIC (Past Experience)]:\n"
+                for case in similar_cases:
+                    outcome = "SUCCESS" if case.get('result_success') else "FAILURE"
+                    tool = case['experiment'].get('tool', 'Unknown')
+                    result = case['verification'].get('numerical_analysis', 'N/A')
+                    critic_context += f"- {outcome} with {tool}: {result}\n"
+    except Exception as e:
+        print(f"  (Critic unavailable: {e})")
+
     # LLM debate
     prompt = f"""
 Current state:

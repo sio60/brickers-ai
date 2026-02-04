@@ -91,6 +91,7 @@ def node_evolve(state: AgentState) -> AgentState:
                     action["success"] = True
                     action["brick_id"] = result["brick_id"]
                     action["position"] = candidate
+                    action["params"] = {"candidate_index": i, "position": candidate, "brick_id": result["brick_id"]}
                     break
                 else:
                     # 안 좋아졌으면 롤백하고 다음 후보 시도
@@ -101,6 +102,7 @@ def node_evolve(state: AgentState) -> AgentState:
 
         if not action["success"]:
             print(f"  All candidates failed")
+            action["params"] = {"candidates_count": len(candidates), "result": "all_failed"}
 
     elif proposal["type"] == "add_support" and proposal.get("position"):
         # 기존 방식 (단일 위치)
@@ -118,6 +120,7 @@ def node_evolve(state: AgentState) -> AgentState:
         if result["success"]:
             action["success"] = True
             action["brick_id"] = result["brick_id"]
+            action["params"] = {"position": pos, "brick_id": result["brick_id"]}
             print(f"  Added: {result['brick_id']} at ({pos['x']}, {pos['y']}, {pos['z']})")
 
     elif proposal["type"] == "rollback":
