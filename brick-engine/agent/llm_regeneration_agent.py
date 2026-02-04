@@ -82,10 +82,10 @@ def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활�
 # ============================================================================
 
 DEFAULT_PARAMS = {
-    "target": 60,              # 목표 스터드 크기 (kids_render: 400->60, 450->65, 500->70)
+    "target": 60,              # 목표 스터드 크기 (400 브릭 기준 60 정도가 적절)
     "min_target": 5,           # 최소 스터드 크기
-    "budget": 400,             # 최대 브릭 수 (kids 기본값)
-    "shrink": 0.7,             # 축소 비율 (빠른 수렴을 위해 0.85 -> 0.7)
+    "budget": 400,             # 최대 브릭 수 (Kids L1 기준)
+    "shrink": 0.85,            # 축소 비율 (0.85)
     "search_iters": 6,         # 이진 탐색 반복 횟수
     "flipx180": False,         # X축 180도 회전
     "flipy180": False,         # Y축 180도 회전
@@ -98,6 +98,16 @@ DEFAULT_PARAMS = {
     "use_mesh_color": True,    # 메시 색상 사용
     "invert_y": False,         # Y축 반전
     "smart_fix": True,         # 스마트 보정 활성화
+    # 추가 파라미터 (Legacy Match)
+    "span": 4,
+    "max_new_voxels": 12000,
+    "refine_iters": 8,
+    "ensure_connected": True,
+    "min_embed": 2,
+    "erosion_iters": 1,
+    "fast_search": True,
+    "extend_catalog": True,
+    "max_len": 8,
     "fill": True,              # 내부 채움 활성화
     "step_order": "bottomup",  # 조립 순서
     "auto_remove_1x1": True,   # 기본값: 안전하게 1x1 삭제
