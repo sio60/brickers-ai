@@ -43,6 +43,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ✅ Health Check Endpoint
+@app.get("/health")
+async def health_check():
+    """AI 서버 헬스체크"""
+    return {"status": "ok", "service": "brickers-ai", "version": "0.2.0"}
+
 # ✅ 정적 서빙 (로컬 CDN)
 # 업로드가 uploads/instructions/... 에 저장한다고 했으니
 # 프론트/서버에서 http://localhost:8000/static/instructions/<file> 로 접근 가능해야 함.
