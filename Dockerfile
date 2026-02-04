@@ -25,9 +25,10 @@ RUN pip install --no-cache-dir \
     -r requirements.txt \
     && rm -rf /tmp/wheels
 
-# 소스코드는 볼륨 마운트 (docker-compose.yml에서 설정)
+# 소스코드 복사
+COPY . .
 
 EXPOSE 8000
 
-# uvicorn reload 모드로 실행
+# uvicorn 실행 (운영 대응을 위해 reload는 환경에 따라 선택 가능하지만 기본 유지)
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
