@@ -1085,6 +1085,7 @@ def regeneration_loop(
     max_retries: int = 5,
     acceptable_failure_ratio: float = 0.1,
     gui: bool = False,
+    params: Optional[Dict[str, Any]] = None,  # [수정] 외부 파라미터 주입 허용
 ):
     print("=" * 60)
     print("🤖 Co-Scientist Agent (Tool-Use Ver.)")
@@ -1111,10 +1112,16 @@ def regeneration_loop(
     except Exception as e:
         print(f"⚠️ [Memory] 초기 로드 실패: {e}")
 
+    # 파라미터 병합 (기본값 + 사용자 입력)
+    merged_params = DEFAULT_PARAMS.copy()
+    if params:
+        merged_params.update(params)
+        print(f"⚙️  Custom Params Applied: {list(params.keys())}")
+
     initial_state = AgentState(
         glb_path=glb_path,
         ldr_path=output_ldr_path,
-        params=DEFAULT_PARAMS.copy(),
+        params=merged_params,
         attempts=0,
         session_id=memory_manager.start_session(Path(glb_path).name, "main_agent") if memory_manager else "offline",
         max_retries=max_retries,

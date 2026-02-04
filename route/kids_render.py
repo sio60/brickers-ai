@@ -812,6 +812,16 @@ async def process_kids_request_internal(
                 "fill": False, # kids 모드는 속 빈 모델 선호? (원래 코드: fill=False with embedded logic)
                                # embedded 코드에서는 fill=False 처리됨.
                 "step_order": "bottomup",
+                # [복구] Pre-merge 누락 파라미터 추가
+                "span": 4,
+                "max_new_voxels": 12000,
+                "refine_iters": 8,
+                "ensure_connected": True,
+                "min_embed": 2,
+                "erosion_iters": 1,
+                "fast_search": True,
+                "extend_catalog": True,
+                "max_len": 8,
             }
 
             def run_agent_sync():
@@ -820,8 +830,8 @@ async def process_kids_request_internal(
                     output_ldr_path=str(out_ldr),
                     llm_client=llm_client,
                     max_retries=3, # 재시도 횟수 제한
-                    gui=False
-                    # acceptable_failure_ratio 등은 기본값 사용
+                    gui=False,
+                    params=agent_params, # [수정] 파라미터 전달
                 )
 
             final_state = await anyio.to_thread.run_sync(run_agent_sync)
