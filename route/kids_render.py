@@ -497,6 +497,7 @@ async def render_one_image_async(img_bytes: bytes, mime: str) -> bytes:
 # -----------------------------
 AGE_TO_BUDGET = {"4-5": 50, "6-7": 100, "8-10": 150}
 
+
 def _budget_to_start_target(eff_budget: int) -> int:
     # Frontend budgets: 50 / 100 / 150 (L1/L2/L3)
     if eff_budget <= 50:
