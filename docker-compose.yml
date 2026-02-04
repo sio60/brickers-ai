@@ -30,8 +30,6 @@ services:
       - SQS_MAX_MESSAGES=${SQS_MAX_MESSAGES:-1}
       - SQS_VISIBILITY_TIMEOUT=${SQS_VISIBILITY_TIMEOUT:-1800}
       - SQS_WAIT_TIME=${SQS_WAIT_TIME:-10}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL}
 
       # Backend stage update
       - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
