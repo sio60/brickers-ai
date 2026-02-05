@@ -14,7 +14,6 @@ REQUIRED_PACKAGES=(
     "torch"
     "scipy"
     "numpy"
-    "pybullet"
     "tokenizers"
     "sentencepiece"
 )

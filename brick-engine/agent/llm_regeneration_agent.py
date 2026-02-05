@@ -159,7 +159,7 @@ def extract_verification_feedback(result, total_bricks: int) -> VerificationFeed
         elif ev.type == "COLLAPSE_AFTERMATH":
             if ev.brick_ids:
                 fallen_bricks.update(ev.brick_ids)
-        elif ev.type == "FLOATING_BRICK":
+        elif ev.type in ("FLOATING_BRICK", "FLOATING"):
             if ev.brick_ids:
                 floating_bricks.update(ev.brick_ids)
         elif ev.type == "COLLISION":
@@ -492,14 +492,7 @@ class RegenerationGraph:
     def node_verifier(self, state: AgentState) -> Dict[str, Any]:
         """물리 검증 노드"""
         from physical_verification.ldr_loader import LdrLoader
-
-        # PyBullet은 optional (aarch64/라즈베리파이에서 GLIBC 호환 문제)
-        try:
-            from physical_verification.pybullet_verifier import PyBulletVerifier
-            _has_pybullet = True
-        except ImportError as _imp_err:
-            print(f"  ⚠️ PyBullet 사용 불가 ({_imp_err}) — 물리 검증 스킵")
-            _has_pybullet = False
+        from physical_verification.verifier import PhysicalVerifier
 
         print("\n[Verifier] 물리 검증 수행 중...")
 
@@ -521,47 +514,11 @@ class RegenerationGraph:
                     small_brick_count += 1
             small_brick_ratio = small_brick_count / total_bricks if total_bricks > 0 else 0.0
 
-            # PyBullet 없으면 물리 검증 스킵 → 바로 성공 처리
-            if not _has_pybullet:
-                print("  ⏩ PyBullet 없음 — 물리 검증 스킵, 브릭 수 기반 검증만 수행")
-                budget = state['params'].get('budget', 500)
-                is_over_budget = total_bricks > budget
-                current_metrics = {
-                    "failure_ratio": 0.0,
-                    "small_brick_ratio": small_brick_ratio,
-                    "small_brick_count": small_brick_count,
-                    "total_bricks": total_bricks,
-                    "floating_count": 0,
-                    "fallen_count": 0,
-                }
-                if is_over_budget:
-                    return {
-                        "current_metrics": current_metrics,
-                        "messages": [HumanMessage(content=f"⚠️ 물리 검증 스킵 (PyBullet 미지원 환경).\n🚨 예산 초과: {total_bricks}/{budget}개. TuneParameters로 target을 줄이세요.")],
-                        "next_action": "reflect",
-                    }
-                print(f"  ✅ 브릭 {total_bricks}개 (예산 {budget}) — 물리 검증 스킵, 성공 처리")
-                final_report = {
-                    "success": True,
-                    "total_attempts": state['attempts'],
-                    "tool_usage": state.get('tool_usage_count', {}),
-                    "final_metrics": current_metrics,
-                    "message": "물리 검증 스킵 (PyBullet 미지원) — 브릭 수 기반 통과"
-                }
-                return {"next_action": "end", "final_report": final_report}
-
-            # 이전 verifier가 있으면 세션 닫기 (PyBullet 상태 충돌 방지)
-            if self.verifier is not None:
-                try:
-                    self.verifier._close_simulation()
-                except:
-                    pass
-
-            # 항상 새 verifier 생성 (LDR 파일 수정 후에도 깨끗한 상태 유지)
-            verifier = PyBulletVerifier(plan, gui=state['gui'])
+            # PhysicalVerifier로 물리 검증 수행
+            verifier = PhysicalVerifier(plan)
             self.verifier = verifier
 
-            stab_result = verifier.run_stability_check(duration=state['verification_duration'], auto_close=False)
+            stab_result = verifier.run_stability_check()
             
             feedback = extract_verification_feedback(stab_result, total_bricks)
             # 1x1 브릭 비율 정보 추가
@@ -590,7 +547,7 @@ class RegenerationGraph:
             # 공중부양 브릭 ID 캐싱 (Tool에서 사용)
             floating_ids = []
             for ev in stab_result.evidence:
-                if ev.type == "FLOATING_BRICK" and ev.brick_ids:
+                if ev.type in ("FLOATING_BRICK", "FLOATING") and ev.brick_ids:
                     floating_ids.extend(ev.brick_ids)
             
             # 현재 메트릭 저장 (도구 효과 측정용)
@@ -676,7 +633,7 @@ class RegenerationGraph:
                 # 재시도
                 print(f"  🔄 검증 재시도 ({verification_errors}/3)...")
                 import time
-                time.sleep(1)  # PyBullet 안정화 대기
+                time.sleep(1)  # 검증 안정화 대기
                 return {"verification_errors": verification_errors, "next_action": "verifier"}
 
     def node_model(self, state: AgentState) -> Dict[str, Any]:
@@ -1210,10 +1167,18 @@ def regeneration_loop(
     _log("VERIFY", "물리 안정성을 검증하고 있습니다...")
 
     # ============================================================
-    # Post-processing: Evolver Agent (형태 개선) - 비활성화
+    # Post-processing: Evolver Agent (형태 개선)
     # ============================================================
-    # NOTE: 알고리즘 생성 LDR을 LLM이 직접 수정하지 않음.
-    #       LLM은 검증/분석만 수행, 개선은 알고리즘이 담당.
+    if Path(output_ldr_path).exists():
+        _log("EVOLVE", "형태 개선 에이전트가 모델을 분석하고 있습니다...")
+        print("\n[Evolver] 형태 개선 에이전트 실행 중...")
+        evolver_result = _run_evolver_subprocess(output_ldr_path, glb_path)
+        if evolver_result.get("success"):
+            print("[Evolver] ✅ 형태 개선 완료")
+        else:
+            reason = evolver_result.get("reason", "unknown")
+            print(f"[Evolver] ⚠️ 형태 개선 스킵: {reason}")
+
     _log("REFLECT", "모델 검증을 완료했습니다. 최종 모델을 준비하고 있습니다...")
 
     print("\n" + "=" * 60)
