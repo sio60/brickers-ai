@@ -96,6 +96,13 @@ async def startup_event():
     asyncio.create_task(start_consumer())
     print("[FastAPI] ✅ SQS Consumer 백그라운드 태스크 시작")
 
+    # 🔍 라우트 디버깅 (등록된 모든 API 주소 출력)
+    print("\n[Debug] Registered Routes:")
+    for route in app.routes:
+        if hasattr(route, "path"):
+            print(f" - {route.methods} {route.path}")
+    print("=" * 70)
+
 
 # ✅ Kids Mode router 연결
 app.include_router(kids_render.router)
