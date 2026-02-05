@@ -104,5 +104,5 @@ app.include_router(kids_render.router)
 app.include_router(color_variant.router)
 
 # ✅ Chat router 연결
-from chat import router as chat_router
-app.include_router(chat_router.router)
+from chat.router import router as chat_router
+app.include_router(chat_router)
