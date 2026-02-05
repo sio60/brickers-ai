@@ -240,22 +240,37 @@ class MemoryUtils:
         return []
 
     def _format_context_for_embedding(self, observation: str, verification: Dict[str, Any] = None) -> str:
-        """[신규] 임베딩용 문맥 포맷팅 (정확도 향상용)"""
+        """[고도화] 임베딩용 문맥 포맷팅 (물리적 결함 상세 정보 주입)"""
         context_parts = []
         
         if verification:
-            # 1. 실패 유형 명시
-            if not verification.get("stable", True):
-                context_parts.append("Status: Unstable")
-            elif verification.get("floating_bricks_count", 0) > 0:
-                context_parts.append(f"Status: Floating Bricks ({verification.get('floating_bricks_count')} bricks)")
+            # 1. 실패 유형 및 상태 명시
+            metrics = verification.get("metrics_after", verification) # metrics_after가 있으면 우선 사용
             
+            if not verification.get("stable", True):
+                context_parts.append("Status: Unstable (Structural Collapse)")
+            
+            f_count = metrics.get("floating_count", 0)
+            if f_count > 0:
+                f_ids = metrics.get("floating_ids", [])
+                id_str = f" IDs:{f_ids[:5]}" if f_ids else ""
+                context_parts.append(f"Status: Floating Bricks ({f_count} bricks{id_str})")
+            
+            fallen_count = metrics.get("fallen_count", 0)
+            if fallen_count > 0:
+                context_parts.append(f"Status: Fallen Bricks ({fallen_count} bricks)")
+
+            if metrics.get("budget_exceeded"):
+                context_parts.append(f"Status: Budget Exceeded (Max:{metrics.get('target_budget')})")
+
             # 2. 핵심 수치 정보
-            if "small_brick_ratio" in verification:
-                ratio = float(verification["small_brick_ratio"])
-                context_parts.append(f"SmallBrickRatio: {ratio:.2f}")
+            ratio = metrics.get("failure_ratio", 0)
+            context_parts.append(f"FailureRatio: {ratio:.2f}")
+            
+            s_ratio = metrics.get("small_brick_ratio", 0)
+            context_parts.append(f"SmallBrickRatio: {s_ratio:.2f}")
                 
-        # 3. 관찰 텍스트
+        # 3. 관찰 및 의미론적 텍스트
         context_parts.append(f"Observation: {observation}")
         
         return " | ".join(context_parts)
@@ -330,9 +345,11 @@ class MemoryUtils:
         # "상황 유사도" 정확도 향상을 위해 구조화된 포맷 사용
         search_text = self._format_context_for_embedding(hypothesis.get('observation', ''), verification)
         
-        # LLM에게 보여줄 전체 요약
+        # LLM에게 보여줄 전체 요약 (상세 분석용)
+        # 물리적 결함의 구체적 원인( floating_ids 등)이 포함됨
         summary_text = (
             f"Observation: {hypothesis.get('observation', '')} "
+            f"Detailed Status: {search_text} " # 상세 문맥 포함
             f"Hypothesis: {hypothesis.get('hypothesis', '')} "
             f"Action: {experiment.get('tool', '')} "
             f"Result: {verification.get('numerical_analysis', '')} "
@@ -476,7 +493,6 @@ class MemoryUtils:
                     {
                         "$project": {
                             "_id": 0,
-                            # embedding 포함
                             "session_id": 0,
                         }
                     }
@@ -485,7 +501,18 @@ class MemoryUtils:
                 if results:
                     logger.info("🔍 Fallback successful: Found 1 similar case.")
             else:
-                logger.info(f"🔍 Found {len(results)} similar cases (score >= {min_score})")
+                logger.info(f"🔍 Found {len(results)} similar cases (score >= 0.3)")
+                
+            # 3. 결과에 신뢰도 딱지 붙이기 (Standard min_score 기준)
+            # 이 로직은 if/else 블록 외부(try 블록 내부)에 위치해야 합니다.
+            for res in results:
+                score = res.get("similarity_score", 0)
+                if score >= min_score:
+                    res["reliability"] = "high"
+                elif score >= (min_score - 0.1): # 상대적 중위권 (약 0.4)
+                    res["reliability"] = "medium"
+                else:
+                    res["reliability"] = "low"
                 
             return results
         except Exception as e:

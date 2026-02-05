@@ -49,9 +49,11 @@ async def shutdown():
     await app.state.openai_http.aclose()
 
 
-app.include_router(chat_router)
+# app.include_router(chat_router)
 
-app = FastAPI(title="Brickers AI API - Kids Mode", version="0.2.0")
+# app = FastAPI(title="Brickers AI API - Kids Mode", version="0.2.0")
+app.title = "Brickers AI API - Kids Mode"
+app.version = "0.2.0"
 
 app.add_middleware(
     CORSMiddleware,

@@ -560,7 +560,8 @@ class RegenerationGraph:
                 if ev.type == "FLOATING_BRICK" and ev.brick_ids:
                     floating_ids.extend(ev.brick_ids)
             
-            # 현재 메트릭 저장 (도구 효과 측정용)
+            # 현재 메트릭 저장 (도구 효과 측정용 및 RAG용)
+            budget = state['params'].get('budget', 500)
             current_metrics = {
                 "failure_ratio": feedback.failure_ratio,
                 "small_brick_ratio": small_brick_ratio,
@@ -568,6 +569,10 @@ class RegenerationGraph:
                 "total_bricks": total_bricks,
                 "floating_count": feedback.floating_bricks,
                 "fallen_count": feedback.fallen_bricks,
+                "floating_ids": floating_ids,  # [추가] 상세 브릭 ID
+                "fallen_ids": [ev.brick_ids for ev in stab_result.evidence if ev.type == "FALLEN_PART"],  # [추가] 
+                "budget_exceeded": total_bricks > budget, # [추가] 예산 초과 여부
+                "target_budget": budget
             }
             
             # 성공 판정: 
