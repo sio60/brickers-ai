@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Request
 from .schemas import ChatRequest, ChatResponse
 
-router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
-@router.post("", response_model=ChatResponse)
+@router.post("/query", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     svc = request.app.state.chat_service  # ✅ startup에서 주입
     content, cid = await svc.process_chat(
