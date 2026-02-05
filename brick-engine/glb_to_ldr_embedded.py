@@ -4,12 +4,11 @@ import argparse
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Tuple, Optional, Literal, Callable
+from typing import Any, Dict, List, Tuple, Optional, Literal
 
 import numpy as np
 import trimesh
 from scipy.spatial import KDTree
-
 
 import sys
 from pathlib import Path
@@ -255,17 +254,46 @@ def calculate_auto_pitch(scene: trimesh.Scene, target_studs: int) -> float:
 
 
 def extract_face_colors(mesh: trimesh.Trimesh) -> np.ndarray:
-    """
-    Robustly extract colors from a trimesh object.
-    Uses to_color() to resolve textures/vertex colors into per-face RGB.
-    """
-    try:
-        # Convert any visual state (textured, vertex-colored, etc.) to face-based colors
-        face_colors = mesh.visual.to_color().face_colors
-        return face_colors[:, :3].astype(np.float32)
-    except Exception:
-        # Fallback to gray (71)
-        return np.tile([160, 160, 160], (len(mesh.faces), 1)).astype(np.float32)
+    mat = getattr(mesh.visual, "material", None)
+    img = None
+    if mat is not None:
+        if hasattr(mat, "image") and mat.image is not None:
+            img = mat.image
+        elif hasattr(mat, "baseColorTexture") and mat.baseColorTexture is not None:
+            bct = mat.baseColorTexture
+            if hasattr(bct, "image") and bct.image is not None:
+                img = bct.image
+            else:
+                img = bct
+
+    if img is not None:
+        uv = getattr(mesh.visual, "uv", None)
+        if uv is not None:
+            uv_face = uv[mesh.faces].mean(axis=1)
+            try:
+                rgba = trimesh.visual.color.uv_to_color(uv_face, img)
+                return rgba[:, :3].astype(np.float32)
+            except Exception:
+                pass
+
+    vc = getattr(mesh.visual, "vertex_colors", None)
+    if vc is not None and len(vc) > 0:
+        vc = np.asarray(vc, dtype=np.float32)
+        if vc.shape[1] >= 3:
+            rgb = vc[:, :3]
+            if rgb.max() <= 1.0:
+                rgb *= 255.0
+            return rgb[mesh.faces].mean(axis=1)
+
+    if mat and hasattr(mat, "baseColorFactor"):
+        bc = mat.baseColorFactor
+        if bc is not None and len(bc) >= 3:
+            col = np.array([bc[0], bc[1], bc[2]], dtype=np.float32)
+            if col.max() <= 1.0:
+                col *= 255.0
+            return np.tile(col, (len(mesh.faces), 1))
+
+    return np.tile([160, 160, 160], (len(mesh.faces), 1)).astype(np.float32)
 
 
 def voxelize_scene(
@@ -754,8 +782,6 @@ def convert_glb_to_ldr_v3_inline(
     cap_mode: Literal["off", "top", "all"] = "all",
     use_mesh_color: bool = True,
     solid_color: int = 4,
-    smart_fix: bool = True,
-    **kwargs: Any,
 ) -> ConversionResult:
     in_path = Path(input_path).resolve()
     out_path = Path(output_path).resolve()
@@ -772,21 +798,6 @@ def convert_glb_to_ldr_v3_inline(
                 enforce_symmetry(grid, axis)
         else:
             enforce_symmetry(grid, symmetry)
-
-    # Smart Fix (Embedding floating parts)
-    if smart_fix:
-        nx, ny, nz = grid.occupied.shape
-        vox_list = []
-        for x, y, z in zip(*np.where(grid.occupied)):
-            vox_list.append({"x": int(x), "y": int(y), "z": int(z), "color": int(grid.color_ids[x,y,z])})
-        fixed_voxels = embed_floating_parts(vox_list)
-        grid.occupied.fill(False)
-        grid.color_ids.fill(-1)
-        for v in fixed_voxels:
-            x, y, z = v["x"], v["y"], v["z"]
-            if 0 <= x < nx and 0 <= y < ny and 0 <= z < nz:
-                grid.occupied[x, y, z] = True
-                grid.color_ids[x, y, z] = v["color"]
 
     parts = PARTS_KIDS if mode == "kids" else PARTS_PRO
 
@@ -848,13 +859,103 @@ def convert_glb_to_ldr_v3_inline(
     )
 
 # -----------------------------------------------------------------------------
-# [핵심 물리 보정] 심지 박기 (Embed Inwards)
+# 2. GLB 로드 및 전처리
 # -----------------------------------------------------------------------------
-def embed_floating_parts(vox_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not vox_list:
+def load_glb_meshes(glb_path: str) -> List[trimesh.Trimesh]:
+    scene = trimesh.load(glb_path, force="scene")
+    if isinstance(scene, trimesh.Trimesh):
+        return [scene]
+    meshes: List[trimesh.Trimesh] = []
+    if isinstance(scene, trimesh.Scene):
+        dumped = scene.dump(concatenate=False)
+        if isinstance(dumped, list):
+            meshes = [m.copy() for m in dumped if isinstance(m, trimesh.Trimesh)]
+        elif isinstance(dumped, trimesh.Trimesh):
+            meshes = [dumped.copy()]
+    meshes = [m for m in meshes if len(m.vertices) > 0 and len(m.faces) > 0]
+    if not meshes:
+        raise RuntimeError(f"Failed to load meshes from {glb_path}")
+    return meshes
+
+def preprocess_meshes(
+    meshes: List[trimesh.Trimesh],
+    target_studs: int,
+    flipx180: bool, flipy180: bool, flipz180: bool,
+) -> trimesh.Trimesh:
+    meshes2 = [m.copy() for m in meshes]
+    Rx = np.eye(4); Ry = np.eye(4); Rz = np.eye(4)
+    if flipx180: Rx[1, 1] = -1; Rx[2, 2] = -1
+    if flipy180: Ry[0, 0] = -1; Ry[2, 2] = -1
+    if flipz180: Rz[0, 0] = -1; Rz[1, 1] = -1
+    T = Rz @ Ry @ Rx
+    if flipx180 or flipy180 or flipz180:
+        for m in meshes2:
+            m.apply_transform(T)
+
+    combined = trimesh.util.concatenate(meshes2)
+    bounds = combined.bounds
+    size = bounds[1] - bounds[0]
+    max_xz = max(float(size[0]), float(size[2]))
+    if max_xz <= 1e-9:
+        raise ValueError("Mesh bounds too small")
+
+    scale = float(target_studs) / max_xz
+    for m in meshes2:
+        m.apply_scale(scale)
+
+    combined2 = trimesh.util.concatenate(meshes2)
+    b2 = combined2.bounds
+    min_y = float(b2[0][1])
+
+    for m in meshes2:
+        m.apply_translation([0.0, -min_y, 0.0])
+
+    for m in meshes2:
+        m.vertices[:, 1] *= (20.0 / 24.0)
+
+    return trimesh.util.concatenate(meshes2)
+
+# -----------------------------------------------------------------------------
+# 3. 복셀화
+# -----------------------------------------------------------------------------
+def voxelize(mesh: trimesh.Trimesh, fill: bool) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    vg = mesh.voxelized(pitch=1.0)
+    if fill:
+        vg = vg.fill()
+    idx = vg.sparse_indices
+    pts = vg.points
+    if idx is None or len(idx) == 0:
+        raise RuntimeError("Voxelization produced 0 voxels.")
+    origin = pts[0] - (idx[0] + 0.5)
+    return idx.astype(np.int32), pts.astype(np.float32), origin
+
+def sample_voxel_colors(mesh: trimesh.Trimesh, points: np.ndarray) -> List[int]:
+    target_mesh = mesh.copy()
+    if hasattr(target_mesh.visual, "to_color"):
+        target_mesh.visual = target_mesh.visual.to_color()
+    _, _, triangle_ids = target_mesh.nearest.on_surface(points)
+    face_colors = target_mesh.visual.face_colors[triangle_ids]
+    return [rgb_to_ldraw_id(rgba[:3]) for rgba in face_colors]
+
+# -----------------------------------------------------------------------------
+# 4. Y 인덱스 반전
+# -----------------------------------------------------------------------------
+def invert_y_idx(idx: np.ndarray) -> Tuple[np.ndarray, int]:
+    if idx is None or idx.size == 0:
+        return idx, 0
+    out = idx.copy()
+    y_max = int(out[:, 1].max())
+    out[:, 1] = (y_max - out[:, 1])
+    return out, y_max
+
+# -----------------------------------------------------------------------------
+# 5. [핵심 물리 보정] 심지 박기 (Embed Inwards)
+# -----------------------------------------------------------------------------
+def embed_floating_parts(vox: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not vox:
         return []
 
-    voxel_map = {(v["x"], v["y"], v["z"]): int(v["color"]) for v in vox_list}
+    voxel_map = {(v["x"], v["y"], v["z"]): int(v["color"]) for v in vox}
     new_colors = dict(voxel_map)
 
     neighbors_horizontal = [(1,0,0), (-1,0,0), (0,0,1), (0,0,-1)]
@@ -916,7 +1017,247 @@ def embed_floating_parts(vox_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 
     return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in new_colors.items()]
 
+# -----------------------------------------------------------------------------
+# 6. STEP을 "레이어 단위"로 재작성
+# -----------------------------------------------------------------------------
+def rewrite_steps_by_layer(in_path: str, out_path: str, mode: str) -> None:
+    with open(in_path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = [ln.rstrip("\n") for ln in f]
 
+    header: List[str] = []
+    part_lines: List[str] = []
+
+    for ln in lines:
+        if ln.startswith("1 "):
+            part_lines.append(ln)
+        else:
+            header.append(ln)
+
+    if mode == "none":
+        with open(out_path, "w", encoding="utf-8") as f:
+            for ln in header + part_lines:
+                f.write(ln + "\n")
+        return
+
+    ys: List[float] = []
+    parsed: List[Tuple[str, float, float, float]] = []
+    for ln in part_lines:
+        toks = ln.split()
+        if len(toks) < 6:
+            continue
+        x = float(toks[2]); y = float(toks[3]); z = float(toks[4])
+        ys.append(y)
+        parsed.append((ln, x, y, z))
+
+    if not parsed:
+        with open(out_path, "w", encoding="utf-8") as f:
+            for ln in header:
+                f.write(ln + "\n")
+        return
+
+    y_min = min(ys)
+    y_max = max(ys)
+    bottom_is_min = abs(y_min) <= abs(y_max)
+
+    layer_groups: Dict[int, List[Tuple[str, float, float, float]]] = {}
+    for ln, x, y, z in parsed:
+        layer = int(round(y / 8.0))
+        layer_groups.setdefault(layer, []).append((ln, x, y, z))
+
+    layers = sorted(layer_groups.keys())
+    if mode == "bottomup":
+        ordered_layers = layers if bottom_is_min else list(reversed(layers))
+    else:
+        ordered_layers = list(reversed(layers)) if bottom_is_min else layers
+
+    for k in layer_groups:
+        layer_groups[k].sort(key=lambda t: (t[3], t[1]))
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        for ln in header:
+            f.write(ln + "\n")
+        for layer in ordered_layers:
+            for ln, *_ in layer_groups[layer]:
+                f.write(ln + "\n")
+            f.write("0 STEP\n")
+
+# -----------------------------------------------------------------------------
+# 7. Build Logic
+# -----------------------------------------------------------------------------
+def try_build(
+    meshes: List[trimesh.Trimesh],
+    *,
+    target: int,
+    flipx180: bool, flipy180: bool, flipz180: bool,
+    fill: bool,
+    solid_color: int,
+    use_mesh_color: bool,
+    invert_y: bool,
+    kind: str,
+    plates_per_voxel: int,
+    interlock: bool,
+    max_area: int,
+    smart_fix: bool,
+) -> Tuple[List[Dict[str, Any]], int]:
+
+    mesh = preprocess_meshes(meshes, target, flipx180, flipy180, flipz180)
+    idx_raw, _, origin = voxelize(mesh, fill)
+
+    current_idx = idx_raw.copy()
+    y_max_val = 0
+    if invert_y:
+        current_idx, y_max_val = invert_y_idx(current_idx)
+
+    if use_mesh_color:
+        search_idx = current_idx.copy()
+        if invert_y:
+            search_idx[:, 1] = y_max_val - search_idx[:, 1]
+        search_pts = origin + (search_idx.astype(np.float32) + 0.5)
+        current_colors = sample_voxel_colors(mesh, search_pts)
+    else:
+        current_colors = [solid_color] * len(current_idx)
+
+    if len(current_idx) == 0:
+        return [], target
+
+    vox: List[Dict[str, Any]] = []
+    min_ix = current_idx.min(axis=0)
+    idx_shifted = current_idx - min_ix
+    for i, (ix, iy, iz) in enumerate(idx_shifted):
+        vox.append({"x": int(ix), "y": int(iy), "z": int(iz), "color": int(current_colors[i])})
+
+    if smart_fix:
+        vox = embed_floating_parts(vox)
+
+    parts = optimize_bricks(
+        vox,
+        kind=kind,
+        plates_per_voxel=plates_per_voxel,
+        interlock=interlock,
+        max_area=max_area,
+    )
+
+    return parts, target
+
+def build_under_budget(
+    meshes: List[trimesh.Trimesh],
+    *,
+    start_target: int, min_target: int,
+    budget: int, shrink: float, search_iters: int,
+    flipx180: bool, flipy180: bool, flipz180: bool,
+    fill: bool,
+    kind: str,
+    plates_per_voxel: int,
+    interlock: bool,
+    max_area: int,
+    solid_color: int,
+    use_mesh_color: bool,
+    invert_y: bool,
+    smart_fix: bool,
+) -> Tuple[List[Dict[str, Any]], int]:
+
+    hi_target = start_target
+    hi_parts: Optional[List[Dict[str, Any]]] = None
+
+    target = start_target
+    best_parts: Optional[List[Dict[str, Any]]] = None
+    best_target: Optional[int] = None
+
+    while target >= min_target:
+        try:
+            parts, t = try_build(
+                meshes,
+                target=target,
+                flipx180=flipx180, flipy180=flipy180, flipz180=flipz180,
+                fill=fill,
+                solid_color=solid_color,
+                use_mesh_color=use_mesh_color,
+                invert_y=invert_y,
+                kind=kind,
+                plates_per_voxel=plates_per_voxel,
+                interlock=interlock,
+                max_area=max_area,
+                smart_fix=smart_fix,
+            )
+            pc = len(parts)
+            print(f"[TRY] target={t} -> parts={pc}")
+
+            if pc <= budget:
+                best_parts = parts
+                best_target = t
+                break
+
+            hi_target = t
+            hi_parts = parts
+            target = int(max(min_target, round(target * shrink)))
+            if target == hi_target:
+                target = hi_target - 1
+
+        except Exception as e:
+            print(f"[WARN] Failed at target={target}: {e}")
+            target = int(max(min_target, round(target * shrink)))
+            if target == hi_target:
+                target -= 1
+
+    if best_parts is None or best_target is None:
+        parts, t = try_build(
+            meshes,
+            target=min_target,
+            flipx180=flipx180, flipy180=flipy180, flipz180=flipz180,
+            fill=fill,
+            solid_color=solid_color,
+            use_mesh_color=use_mesh_color,
+            invert_y=invert_y,
+            kind=kind,
+            plates_per_voxel=plates_per_voxel,
+            interlock=interlock,
+            max_area=max_area,
+            smart_fix=smart_fix,
+        )
+        return parts, t
+
+    if hi_parts is None:
+        return best_parts, best_target
+
+    lo = best_target
+    hi = hi_target
+    best = (best_parts, best_target)
+
+    for _ in range(search_iters):
+        mid = (lo + hi) // 2
+        if mid == lo or mid == hi:
+            break
+        try:
+            parts_mid, tmid = try_build(
+                meshes,
+                target=mid,
+                flipx180=flipx180, flipy180=flipy180, flipz180=flipz180,
+                fill=fill,
+                solid_color=solid_color,
+                use_mesh_color=use_mesh_color,
+                invert_y=invert_y,
+                kind=kind,
+                plates_per_voxel=plates_per_voxel,
+                interlock=interlock,
+                max_area=max_area,
+                smart_fix=smart_fix,
+            )
+            pc = len(parts_mid)
+            print(f"[SEARCH] target={tmid} -> parts={pc}")
+
+            if pc <= budget:
+                best = (parts_mid, tmid)
+                lo = mid
+            else:
+                hi = mid
+        except Exception:
+            hi = mid
+
+    return best
+
+# -----------------------------------------------------------------------------
+# 8. API 엔트리 (호환용 키워드 방탄)
+# -----------------------------------------------------------------------------
 def convert_glb_to_ldr(
     glb_path: str,
     out_ldr_path: str,
@@ -926,18 +1267,40 @@ def convert_glb_to_ldr(
     min_target: int = 5,
     shrink: float = 0.85,
     search_iters: int = 6,
+    flipx180: bool = False,
+    flipy180: bool = False,
+    flipz180: bool = False,
     kind: str = "brick",
-    solid: bool = True,
-    use_mesh_color: bool = True,
+    plates_per_voxel: int = 3,
+    interlock: bool = True,
+    max_area: int = 20,
     solid_color: int = 4,
+    use_mesh_color: bool = True,
+    invert_y: bool = False,
     smart_fix: bool = True,
-
     step_order: str = "bottomup",
-    callback: Optional[Callable[[str], None]] = None,
 
+    # ?? ???? (v3??? ???)
+    solid: bool = True,
+    fill: bool = False,
+    extend_catalog: bool = True,
+    max_len: int = 8,
+
+    span: int = 4,
+    max_new_voxels: int = 12000,
+    refine_iters: int = 8,
+    ensure_connected: bool = True,
+    min_embed: int = 2,
+    erosion_iters: int = 1,
+    fast_search: bool = True,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    
+    _ = (
+        budget, min_target, shrink, search_iters, flipx180, flipy180, flipz180,
+        plates_per_voxel, interlock, max_area, invert_y, smart_fix,
+        fill, extend_catalog, max_len, span, max_new_voxels, refine_iters, ensure_connected,
+        min_embed, erosion_iters, fast_search, kwargs,
+    )
 
     step_mode = "none" if step_order == "none" else "layer"
     bricks_only = (kind != "plate")
@@ -950,7 +1313,6 @@ def convert_glb_to_ldr(
     search_iters = max(1, int(search_iters))
 
     def _run_v3(t: int):
-
         res = convert_glb_to_ldr_v3_inline(
             input_path=glb_path,
             output_path=out_ldr_path,
@@ -967,9 +1329,7 @@ def convert_glb_to_ldr(
             cap_mode=cap_mode,
             use_mesh_color=bool(use_mesh_color),
             solid_color=int(solid_color),
-            smart_fix=smart_fix,
         )
-
         return res, int(res.total_bricks), int(t)
 
     result, parts, last_target = _run_v3(target)
@@ -977,42 +1337,168 @@ def convert_glb_to_ldr(
     best_parts = parts
     best_under = parts <= budget_int if budget_int > 0 else False
 
-    if budget_int > 0 and parts > budget_int:
-        hi_target = last_target
-        t = last_target
-        for _ in range(search_iters):
-            t = int(max(min_target, round(t * shrink_val)))
-            if t >= hi_target:
-                t = hi_target - 1
-            if t < min_target:
-                t = min_target
+    if budget_int > 0:
+        # tighter budget convergence
+        if shrink_val > 0.75:
+            shrink_val = 0.75
+        if search_iters < 10:
+            search_iters = 10
+        if parts > budget_int:
+            hi_target = last_target
+            t = last_target
+            for _ in range(search_iters):
+                t = int(max(min_target, round(t * shrink_val)))
+                if t >= hi_target:
+                    t = hi_target - 1
+                if t < min_target:
+                    t = min_target
 
+                result, parts, last_target = _run_v3(t)
+                if parts < best_parts:
+                    best_parts = parts
+                    best_target = t
+                if parts <= budget_int:
+                    best_target = t
+                    best_parts = parts
+                    best_under = True
+                    break
+
+                hi_target = t
+                if t <= min_target:
+                    break
+
+            if best_under and best_target < hi_target:
+                lo = best_target
+                hi = hi_target
+                for _ in range(search_iters):
+                    mid = (lo + hi) // 2
+                    if mid == lo or mid == hi:
+                        break
+                    res_mid, parts_mid, last_target = _run_v3(mid)
+                    if parts_mid <= budget_int:
+                        result = res_mid
+                        best_target = mid
+                        best_parts = parts_mid
+                        best_under = True
+                        lo = mid
+                    else:
+                        hi = mid
+        else:
+            best_target = last_target
+            best_parts = parts
+            best_under = True
+            hi = last_target
+            for _ in range(search_iters):
+                cand = int(round(hi / shrink_val))
+                if cand <= hi:
+                    cand = hi + 1
+                res_cand, parts_cand, last_target = _run_v3(cand)
+                if parts_cand <= budget_int:
+                    result = res_cand
+                    best_target = cand
+                    best_parts = parts_cand
+                    best_under = True
+                    hi = cand
+                else:
+                    lo = best_target
+                    hi = cand
+                    for _ in range(search_iters):
+                        mid = (lo + hi) // 2
+                        if mid == lo or mid == hi:
+                            break
+                        res_mid, parts_mid, last_target = _run_v3(mid)
+                        if parts_mid <= budget_int:
+                            result = res_mid
+                            best_target = mid
+                            best_parts = parts_mid
+                            best_under = True
+                            lo = mid
+                        else:
+                            hi = mid
+                    break
+
+    if budget_int > 0 and best_parts > budget_int:
+        # Aggressive fallback: shrink target based on budget ratio to enforce hard cap.
+        ratio = max(0.01, float(budget_int) / float(max(1, best_parts)))
+        t = int(round(best_target * (ratio ** 0.5)))
+        t = max(min_target, min(best_target - 1, t))
+        for _ in range(search_iters):
+            if t < min_target:
+                break
             result, parts, last_target = _run_v3(t)
             if parts < best_parts:
                 best_parts = parts
                 best_target = t
             if parts <= budget_int:
-                best_target = t
                 best_parts = parts
-                best_under = True
+                best_target = t
                 break
+            t_next = int(round(t * shrink_val))
+            if t_next >= t:
+                t_next = t - 1
+            t = max(min_target, t_next)
+        if best_parts > budget_int:
+            print(f"[WARN] Budget not met: parts={best_parts} > budget={budget_int} (target={best_target})")
 
-            hi_target = t
-            if t <= min_target:
-                break
+    if best_target != last_target:
+        result, parts, last_target = _run_v3(best_target)
+        best_parts = parts
 
     return {"out": out_ldr_path, "parts": int(best_parts), "final_target": int(best_target)}
 
-
-
+# -----------------------------------------------------------------------------
+# 9. CLI main
+# -----------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("glb", help="input .glb path")
     ap.add_argument("--out", default="out/result.ldr")
     ap.add_argument("--target", type=int, default=60)
+    ap.add_argument("--min-target", type=int, default=5)
     ap.add_argument("--budget", type=int, default=100)
+    ap.add_argument("--shrink", type=float, default=0.85)
+    ap.add_argument("--search-iters", type=int, default=6)
+    ap.add_argument("--flipx180", action="store_true")
+    ap.add_argument("--flipy180", action="store_true")
+    ap.add_argument("--flipz180", action="store_true")
+    ap.add_argument("--kind", choices=["brick", "plate"], default="brick")
+    ap.add_argument("--plates-per-voxel", type=int, default=3)
+    ap.add_argument("--no-interlock", action="store_true")
+    ap.add_argument("--max-area", type=int, default=20)
+    ap.add_argument("--solid", action="store_true")
+    ap.add_argument("--step-order", choices=["bottomup", "topdown", "none"], default="bottomup")
+    ap.add_argument("--color", type=int, default=4, help="Solid color ID")
+    ap.add_argument("--no-color", action="store_true", help="Disable mesh color")
+    ap.add_argument("--invert-y", action="store_true", help="Force invert Y axis")
+    ap.add_argument("--smart-fix", action="store_true", default=True)
+
     args = ap.parse_args()
-    print(convert_glb_to_ldr(args.glb, args.out, target=args.target, budget=args.budget))
+    use_mesh_color = not args.no_color
+
+    result = convert_glb_to_ldr(
+        args.glb,
+        args.out,
+        budget=args.budget,
+        target=args.target,
+        min_target=args.min_target,
+        shrink=args.shrink,
+        search_iters=args.search_iters,
+        flipx180=args.flipx180,
+        flipy180=args.flipy180,
+        flipz180=args.flipz180,
+        kind=args.kind,
+        plates_per_voxel=args.plates_per_voxel,
+        interlock=(not args.no_interlock),
+        max_area=args.max_area,
+        solid_color=args.color,
+        use_mesh_color=use_mesh_color,
+        invert_y=args.invert_y,
+        smart_fix=args.smart_fix,
+        step_order=args.step_order,
+        solid=bool(args.solid),
+    )
+
+    print(f"[DONE] {result}")
 
 if __name__ == "__main__":
     main()
