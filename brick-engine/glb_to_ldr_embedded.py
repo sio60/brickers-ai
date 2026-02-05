@@ -113,14 +113,48 @@ LDRAW_COLORS: Dict[int, Tuple[int, int, int, str]] = {
 
 _COLOR_IDS = list(LDRAW_COLORS.keys())
 _COLOR_RGB = np.array([LDRAW_COLORS[i][:3] for i in _COLOR_IDS], dtype=np.float32)
-_COLOR_TREE = KDTree(_COLOR_RGB)
+
+
+def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
+    """RGB (0-255) -> CIE LAB 변환 (perceptual color space)"""
+    # sRGB -> linear RGB
+    rgb_norm = rgb / 255.0
+    mask = rgb_norm > 0.04045
+    linear = np.where(mask, ((rgb_norm + 0.055) / 1.055) ** 2.4, rgb_norm / 12.92)
+
+    # linear RGB -> XYZ (D65)
+    mat = np.array([
+        [0.4124564, 0.3575761, 0.1804375],
+        [0.2126729, 0.7151522, 0.0721750],
+        [0.0193339, 0.1191920, 0.9503041],
+    ])
+    xyz = linear @ mat.T
+
+    # XYZ -> Lab
+    ref = np.array([0.95047, 1.0, 1.08883])  # D65
+    xyz_n = xyz / ref
+    epsilon = 0.008856
+    kappa = 903.3
+    mask2 = xyz_n > epsilon
+    f = np.where(mask2, np.cbrt(xyz_n), (kappa * xyz_n + 16.0) / 116.0)
+
+    L = 116.0 * f[..., 1] - 16.0
+    a = 500.0 * (f[..., 0] - f[..., 1])
+    b = 200.0 * (f[..., 1] - f[..., 2])
+    return np.stack([L, a, b], axis=-1)
+
+
+# LAB 색공간 기반 KDTree (perceptually uniform)
+_COLOR_LAB = _rgb_to_lab(_COLOR_RGB)
+_COLOR_TREE = KDTree(_COLOR_LAB)
 
 
 def match_ldraw_color(rgb: Tuple[float, float, float]) -> Tuple[int, str]:
-    v = np.array(rgb, dtype=np.float32)
+    v = np.array(rgb, dtype=np.float32).reshape(1, 3)
     if v.max() <= 1.0:
         v *= 255.0
-    _, idx = _COLOR_TREE.query(v)
+    lab = _rgb_to_lab(v)
+    _, idx = _COLOR_TREE.query(lab[0])
     code = _COLOR_IDS[int(idx)]
     return code, LDRAW_COLORS[code][3]
 

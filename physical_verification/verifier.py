@@ -325,6 +325,61 @@ class PhysicalVerifier:
                      if mode == "KIDS": # 키즈 모드에서는 더 엄격하게 처리하거나 실패로 간주
                          result.add_hard_fail(Evidence("OVERHANG", "CRITICAL", [top_brick.id], msg, layer=int(top_brick.z)))
 
+    def run_collision_check(self, tolerance: float = 0) -> VerificationResult:
+        """PyBulletVerifier 호환 인터페이스 - 충돌 검사만 수행"""
+        result = VerificationResult()
+        self.verify_collision(result)
+        return result
+
+    def run_stability_check(self, duration: float = 2.0, auto_close: bool = True) -> VerificationResult:
+        """PyBulletVerifier 호환 인터페이스 - 안정성 종합 검사
+
+        Args:
+            duration: PyBullet 호환용 (무시됨 - 시뮬레이션 불필요)
+            auto_close: PyBullet 호환용 (무시됨)
+        """
+        result = VerificationResult()
+        self.verify_floating(result)
+        self.verify_stability(result)
+        self.verify_connection_strength(result)
+        self.verify_overhang(result)
+        self._compute_stability_grade(result)
+        return result
+
+    def _compute_stability_grade(self, result: VerificationResult):
+        """검증 결과를 기반으로 안정성 등급과 점수를 계산합니다."""
+        has_floating = False
+        has_unstable_com = False
+        has_overhang = False
+        has_weak_connection = False
+
+        for ev in result.evidence:
+            if ev.type == "FLOATING":
+                has_floating = True
+            elif ev.type == "UNSTABLE":
+                has_unstable_com = True
+            elif ev.type == "OVERHANG":
+                has_overhang = True
+            elif ev.type == "WEAK_CONNECTION":
+                has_weak_connection = True
+
+        # 점수 계산
+        if has_floating or has_unstable_com:
+            # 치명적 문제 → UNSTABLE (0-39)
+            result.stability_grade = "UNSTABLE"
+            result.score = min(result.score, 39.0)
+            result.max_drift = 999.0  # 시뮬레이션 없이 최악의 변위로 표시
+        elif has_overhang or has_weak_connection:
+            # 경고 수준 → MEDIUM (40-89)
+            result.stability_grade = "MEDIUM"
+            result.score = min(result.score, 89.0)
+            result.max_drift = 0.5
+        else:
+            # 문제 없음 → STABLE (90-100)
+            result.stability_grade = "STABLE"
+            result.score = max(result.score, 90.0)
+            result.max_drift = 0.0
+
     def run_all_checks(self, mode: str = "ADULT") -> VerificationResult:
         result = VerificationResult()
         

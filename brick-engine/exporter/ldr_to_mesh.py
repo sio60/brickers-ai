@@ -1,7 +1,7 @@
 # ============================================================================
 # LDR 파일을 3D 메쉬로 변환하는 파일
 # 이 파일은 LDR(레고 조립도) 파일을 읽어서 Trimesh Scene 객체로 변환하고,
-# 선택적으로 PyBullet 물리 검증을 수행하여 불안정한 브릭을 빨간색으로 표시합니다.
+# 선택적으로 물리 검증을 수행하여 불안정한 브릭을 빨간색으로 표시합니다.
 # 사용법: python ldr_to_mesh.py <ldr_file_path> [--verify]
 # ============================================================================
 
@@ -25,11 +25,8 @@ try:
     import part_library
     from ldr_loader import LdrLoader
     from verifier import PhysicalVerifier
-    from pybullet_verifier import PyBulletVerifier
 except ImportError as e:
     print(f"물리 검증 모듈 임포트 오류: {e}")
-    # 경로 디버깅을 위해 현재 sys.path 출력
-    # print(f"현재 sys.path: {sys.path}")
     sys.exit(1)
 
 # LDraw 색상 ID -> RGB (0-255)
@@ -142,7 +139,7 @@ def ldr_to_mesh(file_path, verify=False):
     
     Args:
         file_path (str): LDR 파일 경로.
-        verify (bool): True일 경우 PyBullet 물리 검증을 실행하고 불안정한 브릭을 강조 표시합니다.
+        verify (bool): True일 경우 물리 검증을 실행하고 불안정한 브릭을 강조 표시합니다.
     """
 
     # 1. 파일 존재 확인
@@ -158,30 +155,30 @@ def ldr_to_mesh(file_path, verify=False):
     failed_brick_ids = set() # 실패한 브릭 강조용 집합
     
     if verify:
-        print("물리 검증 실행 중 (PyBullet)...")
+        print("물리 검증 실행 중...")
         try:
             loader = LdrLoader()
             plan = loader.load_from_file(file_path)
 
-            # [PyBullet 검사] 정밀 메쉬 충돌 확인
-            print("PyBullet 정밀 충돌 검사 실행 중 (GUI 모드)...")
-            pb_verifier = PyBulletVerifier(plan, gui=True)
-            # 허용 오차 0 = 최대 민감도 (모든 접촉이 충돌로 간주됨)
-            pb_result = pb_verifier.run_collision_check(tolerance=0) 
+            pv = PhysicalVerifier(plan)
 
-            if not pb_result.is_valid:
-                print(f"PyBullet 충돌 감지!")
-                for ev in pb_result.evidence:
-                    print(f"  [PyBullet] {ev.message}")
+            # 충돌 검사
+            print("충돌 검사 실행 중...")
+            col_result = pv.run_collision_check()
+
+            if not col_result.is_valid:
+                print("충돌 감지!")
+                for ev in col_result.evidence:
+                    print(f"  [Collision] {ev.message}")
                     for bid in ev.brick_ids:
                         failed_brick_ids.add(bid)
 
-            # [PyBullet 검사] 안정성 확인 (중력 시뮬레이션)
-            print("PyBullet 안정성 검증 실행 중 (중력) - 2초 동안...")
-            stab_result = pb_verifier.run_stability_check(duration=2.0)
+            # 안정성 검사
+            print("안정성 검증 실행 중...")
+            stab_result = pv.run_stability_check()
 
             if not stab_result.is_valid:
-                 print(f"PyBullet 불안정성 감지!")
+                 print("불안정성 감지!")
                  for ev in stab_result.evidence:
                      print(f"  [Stability] {ev.message}")
                      for bid in ev.brick_ids:

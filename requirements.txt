@@ -67,7 +67,6 @@ websockets==15.0.1
 yarl==1.22.0
 pygltflib
 tripo3d
-pybullet==3.2.7
 langchain-google-genai
 langchain-core
 langsmith
