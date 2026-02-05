@@ -64,8 +64,8 @@ jobs:
             BACKEND_URL=${{ secrets.BACKEND_URL }}
 
             # --- Co-Scientist Memory (RAG) ---
-            MONGODB_URI=${{ secrets.PRIMARY_MONGODB_URI }}
-            MONGODB_DB=${{ secrets.PRIMARY_MONGODB_DB }}
+            MONGODB_URI=${{ secrets.MONGODB_URI }}
+            MONGODB_DB=${{ secrets.MONGODB_DB }}
             ATLAS_VECTOR_INDEX_MEMORY=co_scientist_memory_index
             HF_EMBED_MODEL=intfloat/multilingual-e5-small
 
