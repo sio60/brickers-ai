@@ -51,11 +51,26 @@ async def update_job_stage(job_id: str, stage: str) -> None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.patch(
                 f"{BACKEND_URL}/api/kids/jobs/{job_id}/stage",
-                json={"stage": stage}
+                json={"stage": stage},
+                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
             )
         print(f"   ✅ [Stage Update] {stage}")
     except Exception as e:
         print(f"   ⚠️ [Stage Update] 실패 (무시) | stage={stage} | error={str(e)}")
+
+def _make_agent_log_sender(job_id: str):
+    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용)"""
+    def send_log(step: str, message: str):
+        try:
+            httpx.post(
+                f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs",
+                json={"step": step, "message": message[:2000]},
+                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
+                timeout=5.0
+            )
+        except Exception as e:
+            print(f"  [AgentLog] send failed: {e}")
+    return send_log
 
 # -----------------------------
 # Helpers / Config
@@ -495,16 +510,18 @@ async def render_one_image_async(img_bytes: bytes, mime: str) -> bytes:
 # -----------------------------
 # Brickify engine loader
 # -----------------------------
-AGE_TO_BUDGET = {"4-5": 400, "6-7": 450, "8-10": 500}
+AGE_TO_BUDGET = {"4-5": 100, "6-7": 150, "8-10": 200}
 
 
 def _budget_to_start_target(eff_budget: int) -> int:
-    # Frontend budgets: 400 / 450 / 500 (L1/L2/L3)
-    if eff_budget <= 400:
-        return 60
-    if eff_budget <= 450:
-        return 65
-    return 70
+    # Frontend budgets: 100 / 150 / 200 (4-5 / 6-7 / 8-10)
+    if eff_budget <= 100:
+        return 25
+    if eff_budget <= 150:
+        return 35
+    if eff_budget <= 200:
+        return 45
+    return 60
 
 def _load_engine_convert():
     """
@@ -530,6 +547,27 @@ def _load_engine_convert():
     return mod.convert_glb_to_ldr
 
 _CONVERT_FN = None
+
+# --- Agent 모듈 lazy loader ---
+_REGEN_LOOP_FN = None
+_GEMINI_CLIENT_CLS = None
+
+def _load_agent_modules():
+    """brick-engine/agent 에서 regeneration_loop, GeminiClient 동적 로드"""
+    global _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
+    if _REGEN_LOOP_FN is not None:
+        return _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
+
+    agent_dir = str((PROJECT_ROOT / "brick-engine").resolve())
+    if agent_dir not in sys.path:
+        sys.path.insert(0, agent_dir)
+
+    from agent.llm_regeneration_agent import regeneration_loop
+    from agent.llm_clients import GeminiClient
+
+    _REGEN_LOOP_FN = regeneration_loop
+    _GEMINI_CLIENT_CLS = GeminiClient
+    return _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
 
 def _find_glb_in_dir(out_dir: Path) -> Optional[Path]:
     glbs = [p for p in out_dir.rglob("*.glb") if p.is_file() and p.stat().st_size > 0]
@@ -762,35 +800,53 @@ async def process_kids_request_internal(
 
             out_ldr = out_brick_dir / "result.ldr"
 
-            result: Dict[str, Any] = await anyio.to_thread.run_sync(
-                lambda: _CONVERT_FN(  # type: ignore
-                    str(glb_path),
-                    str(out_ldr),
-                    budget=int(eff_budget),
-                    target=int(start_target),
-                    min_target=5,
-                    shrink=0.85,
-                    search_iters=6,
-                    kind="brick",
-                    plates_per_voxel=3,
-                    interlock=True,
-                    max_area=20,
-                    solid_color=4,
-                    use_mesh_color=True,
-                    invert_y=False,
-                    smart_fix=True,
-                    span=4,
-                    max_new_voxels=12000,
-                    refine_iters=8,
-                    ensure_connected=True,
-                    min_embed=2,
-                    erosion_iters=1,
-                    fast_search=True,
-                    step_order="bottomup",
-                    extend_catalog=True,
-                    max_len=8,
+            # Agent 모듈 로드
+            regeneration_loop, GeminiClient = _load_agent_modules()
+
+            # LLM 클라이언트 초기화
+            gemini_key = os.environ.get("GEMINI_API_KEY", "")
+            llm_client = GeminiClient(api_key=gemini_key)
+
+            agent_params = {
+                "target": start_target,
+                "budget": eff_budget,
+                "min_target": 5,
+                "shrink": 0.85,
+                "search_iters": 6,
+                "kind": "brick",
+                "plates_per_voxel": 3,
+                "interlock": True,
+                "max_area": 20,
+                "solid_color": 4,
+                "use_mesh_color": True,
+                "invert_y": False,
+                "smart_fix": True,
+                "fill": False,
+                "step_order": "bottomup",
+                "span": 4,
+                "max_new_voxels": 12000,
+                "refine_iters": 8,
+                "ensure_connected": True,
+                "min_embed": 2,
+                "erosion_iters": 1,
+                "fast_search": True,
+                "extend_catalog": True,
+                "max_len": 8,
+            }
+
+            agent_params["log_callback"] = _make_agent_log_sender(job_id)
+
+            def run_agent_sync():
+                return regeneration_loop(
+                    glb_path=str(glb_path),
+                    output_ldr_path=str(out_ldr),
+                    llm_client=llm_client,
+                    max_retries=3,
+                    gui=False,
+                    params=agent_params,
                 )
-            )
+
+            result: Dict[str, Any] = await anyio.to_thread.run_sync(run_agent_sync)
 
             brickify_elapsed = time.time() - step_start
             log(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")

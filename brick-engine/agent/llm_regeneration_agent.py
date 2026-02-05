@@ -1102,6 +1102,55 @@ class RegenerationGraph:
 
 
 # ============================================================================
+# Evolver Post-Processing (서브프로세스 방식)
+# ============================================================================
+
+def _run_evolver_subprocess(ldr_path: str, glb_path: str = None) -> dict:
+    """Evolver 에이전트를 서브프로세스로 실행 (형태 개선)
+
+    메인 에이전트 완료 후 후처리로 실행.
+    agent 패키지 이름 충돌 방지를 위해 별도 프로세스로 격리.
+    실패해도 원본 LDR은 보존됨.
+    """
+    import subprocess
+    import shutil
+
+    evolver_script = _BRICK_ENGINE_DIR / "exporter" / "evolver" / "run_agent.py"
+
+    if not evolver_script.exists():
+        return {"success": False, "reason": "evolver run_agent.py not found"}
+
+    if not Path(ldr_path).exists():
+        return {"success": False, "reason": "LDR file not found"}
+
+    cmd = [sys.executable, str(evolver_script), str(ldr_path)]
+    if glb_path and Path(glb_path).exists():
+        cmd.append(str(glb_path))
+
+    try:
+        result = subprocess.run(
+            cmd,
+            timeout=300,
+            cwd=str(evolver_script.parent),
+        )
+
+        ldr_p = Path(ldr_path)
+        evolved_path = ldr_p.parent / f"{ldr_p.stem}_evolved.ldr"
+
+        if evolved_path.exists() and evolved_path.stat().st_size > 0:
+            shutil.copy2(str(evolved_path), str(ldr_path))
+            evolved_path.unlink()
+            return {"success": True}
+        else:
+            return {"success": False, "reason": "No evolved file generated"}
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "reason": "Timeout (5min)"}
+    except Exception as e:
+        return {"success": False, "reason": str(e)}
+
+
+# ============================================================================
 # 실행 함수
 # ============================================================================
 
@@ -1117,7 +1166,18 @@ def regeneration_loop(
     print("=" * 60)
     print("🤖 Co-Scientist Agent (Tool-Use Ver.)")
     print("=" * 60)
-    
+
+    # 로그 콜백 추출 (kids_render.py에서 주입)
+    log_callback = params.pop("log_callback", None) if params else None
+    def _log(step, msg):
+        if log_callback:
+            try:
+                log_callback(step, msg)
+            except Exception:
+                pass  # fire-and-forget
+
+    _log("ANALYZE", "모델 구조를 분석하고 있습니다...")
+
     graph_builder = RegenerationGraph(llm_client)
     app = graph_builder.build()
     
@@ -1172,8 +1232,25 @@ def regeneration_loop(
     )
     
     # 실행
+    _log("GENERATE", f"CoScientist 에이전트가 브릭 배치를 최적화하고 있습니다... (GLB: {Path(glb_path).stem})")
     final_state = app.invoke(initial_state)
-    
+
+    _log("VERIFY", "물리 안정성을 검증하고 있습니다...")
+
+    # ============================================================
+    # Post-processing: Evolver Agent (형태 개선)
+    # ============================================================
+    if Path(output_ldr_path).exists():
+        _log("EVOLVE", "형태 개선 에이전트가 모델을 분석하고 있습니다...")
+        print("\n🔧 [Evolver] 형태 개선 에이전트 실행 중...")
+        evolver_result = _run_evolver_subprocess(output_ldr_path, glb_path)
+        if evolver_result.get("success"):
+            _log("REFLECT", "형태 개선 완료! 최종 모델을 준비하고 있습니다...")
+            print("  ✅ Evolver 완료 - 개선된 LDR로 교체됨")
+        else:
+            _log("REFLECT", "형태 분석을 완료했습니다. 최종 모델을 준비하고 있습니다...")
+            print(f"  ⚠️ Evolver 스킵: {evolver_result.get('reason', 'unknown')}")
+
     print("\n" + "=" * 60)
     print("📋 최종 결과 리포트")
     print("=" * 60)
@@ -1220,7 +1297,9 @@ def regeneration_loop(
                     print(f"   - 권장사항: {feedback_report.get('final_recommendation', '')}")
         except Exception as e:
             print(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
-    
+
+    _log("COMPLETE", "모델 생성이 완료되었습니다!")
+
     return final_state
 
 
