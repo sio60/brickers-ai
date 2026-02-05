@@ -10,7 +10,6 @@ import numpy as np
 import trimesh
 from scipy.spatial import KDTree
 
-
 import sys
 from pathlib import Path
 
@@ -1417,6 +1416,29 @@ def convert_glb_to_ldr(
                         else:
                             hi = mid
                     break
+
+    if budget_int > 0 and best_parts > budget_int:
+        # Aggressive fallback: shrink target based on budget ratio to enforce hard cap.
+        ratio = max(0.01, float(budget_int) / float(max(1, best_parts)))
+        t = int(round(best_target * (ratio ** 0.5)))
+        t = max(min_target, min(best_target - 1, t))
+        for _ in range(search_iters):
+            if t < min_target:
+                break
+            result, parts, last_target = _run_v3(t)
+            if parts < best_parts:
+                best_parts = parts
+                best_target = t
+            if parts <= budget_int:
+                best_parts = parts
+                best_target = t
+                break
+            t_next = int(round(t * shrink_val))
+            if t_next >= t:
+                t_next = t - 1
+            t = max(min_target, t_next)
+        if best_parts > budget_int:
+            print(f"[WARN] Budget not met: parts={best_parts} > budget={budget_int} (target={best_target})")
 
     if best_target != last_target:
         result, parts, last_target = _run_v3(best_target)
