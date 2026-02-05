@@ -102,3 +102,7 @@ app.include_router(kids_render.router)
 
 # ✅ Color Variant router 연결
 app.include_router(color_variant.router)
+
+# ✅ Chat router 연결
+from chat import router as chat_router
+app.include_router(chat_router.router)
