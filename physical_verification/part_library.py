@@ -139,6 +139,9 @@ def get_part_dims(part_id: str):
     # 2. MongoDB 쿼리
     try:
         coll = db.get_parts_collection()
+        if not coll:
+            return None
+
         query = {
             "$or": [
                 {"partFile": f"{clean_id}.dat"},
@@ -190,6 +193,9 @@ def get_part_metadata_from_db(part_id: str):
         
     try:
         coll = db.get_parts_collection()
+        if not coll:
+            return None
+
         # 가능한 모든 필드 시도
         query = {
             "$or": [
