@@ -1,6 +1,12 @@
-"""LangGraph Configuration"""
+"""LangGraph Configuration
+Enhanced with:
+1. Checkpointer (Time Travel)
+2. Send() API ready (parallel proposals)
+"""
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import InMemorySaver
 from .state import AgentState
+from .constants import FIXED_ITERATIONS
 from .nodes import (
     node_observe,
     node_supervisor,
@@ -18,11 +24,16 @@ def route_after_supervisor(state: AgentState) -> str:
     return "generate"
 
 def route_after_reflect(state: AgentState) -> str:
-    """Route after reflection"""
-    if state.get("should_finish"):
+    """Route after reflection - 고정 3회 반복"""
+    iteration = state.get("iteration", 0)
+
+    # 3회 다 돌았으면 종료
+    if iteration >= FIXED_ITERATIONS:
+        print(f"  [COMPLETE] {FIXED_ITERATIONS}회 반복 완료")
         return "finish"
-    if state["floating_count"] == 0:
-        return "finish"
+
+    # 아직 3회 안 됐으면 계속
+    print(f"  [CONTINUE] {iteration}/{FIXED_ITERATIONS}회 완료, 계속 진행")
     return "observe"
 
 def build_graph() -> StateGraph:
@@ -62,4 +73,7 @@ def build_graph() -> StateGraph:
 
     graph.add_edge("finish", END)
 
-    return graph.compile()
+    # Compile with checkpointer (Time Travel 지원)
+    # 버그 수정: 전역 싱글톤 대신 함수 내 생성
+    checkpointer = InMemorySaver()
+    return graph.compile(checkpointer=checkpointer)

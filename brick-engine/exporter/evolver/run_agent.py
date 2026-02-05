@@ -20,7 +20,8 @@ load_dotenv(EXPORTER_DIR.parent.parent / ".env")
 
 from ldr_converter import ldr_to_brick_model, model_to_ldr  # noqa: E402
 from agent import build_graph, AgentState  # noqa: E402
-from agent.tools import init_tools, load_parts_db, get_model_state, analyze_glb  # noqa: E402
+from agent.tools import get_model_state, analyze_glb  # noqa: E402
+from agent.config import init_config  # noqa: E402
 
 # Memory Utils Import
 # Memory Utils Import
@@ -33,15 +34,18 @@ def run_agent(ldr_path: str, glb_path: str = None):
     print("LangGraph + CoScientist Evolver Agent")
     print("=" * 60)
 
-    # Initialize
-    parts_db = load_parts_db()
-    if not parts_db:
-        cache = EXPORTER_DIR / "parts_cache.json"
-        if cache.exists():
-            with open(cache, 'r', encoding='utf-8') as f:
-                parts_db = json.load(f)
+    # Initialize - parts_db 로드
+    parts_db = {}
+    cache = EXPORTER_DIR / "parts_cache.json"
+    if cache.exists():
+        with open(cache, 'r', encoding='utf-8') as f:
+            parts_db = json.load(f)
 
-    init_tools(parts_db, EXPORTER_DIR)
+    if not parts_db:
+        print("ERROR: parts_cache.json not found!")
+        sys.exit(1)
+
+    init_config(parts_db, EXPORTER_DIR)
 
     model = ldr_to_brick_model(ldr_path)
     model.name = Path(ldr_path).stem
@@ -64,7 +68,7 @@ def run_agent(ldr_path: str, glb_path: str = None):
     initial_state: AgentState = {
         "model": model,
         "model_backup": copy.deepcopy(model),
-        "parts_db": parts_db,
+        # parts_db는 config에서 가져옴 (7MB 데이터 state에서 제거)
         "original_brick_count": len(model.bricks),
         "glb_reference": glb_ref,
         "floating_count": 0,
@@ -73,9 +77,14 @@ def run_agent(ldr_path: str, glb_path: str = None):
         "verification_result": None,
         "verification_score": 100.0,
         "verification_evidence": [],
+        # Vision & Symmetry
+        "vision_quality_score": None,
+        "vision_problems": [],
+        "symmetry_issues": [],
+        "model_type": "unknown",
+        # Tracking
         "iteration": 0,
         "session_id": session_id,
-        "total_removed": 0,
         "total_removed": 0,
         "action_history": [],
         "strategy": "",
@@ -89,7 +98,8 @@ def run_agent(ldr_path: str, glb_path: str = None):
             "consecutive_failures": 0
         },
         "should_finish": False,
-        "finish_reason": ""
+        "finish_reason": "",
+        "messages": []  # LangSmith 트레이싱용 대화 기록
     }
 
     print(f"\nLoaded: {ldr_path}")
@@ -97,8 +107,15 @@ def run_agent(ldr_path: str, glb_path: str = None):
     print(f"Removal limit: {int(initial_state['original_brick_count'] * 0.10)} (10%)")
 
     # Run graph
+    print("\n[실행중...] 에이전트 시작")
     graph = build_graph()
-    final_state = graph.invoke(initial_state)
+    print("[실행중...] LLM 호출 대기중...")
+
+    # Checkpointer 사용 시 thread_id 필요
+    import uuid
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    final_state = graph.invoke(initial_state, config=config)
+    print("[완료] 에이전트 종료")
 
     # Save result
     output = Path(ldr_path).parent / f"{Path(ldr_path).stem}_evolved.ldr"
@@ -163,12 +180,25 @@ def run_agent(ldr_path: str, glb_path: str = None):
 
     print("=" * 60)
 
+def print_mermaid():
+    """LangGraph 그래프를 Mermaid 코드로 출력"""
+    graph = build_graph()
+    mermaid = graph.get_graph().draw_mermaid()
+    print(mermaid)
+    print("\nhttps://mermaid.live 에 붙여넣기")
+
+
 if __name__ == "__main__":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
+    if len(sys.argv) >= 2 and sys.argv[1] == "--graph":
+        print_mermaid()
+        sys.exit(0)
+
     if len(sys.argv) < 2:
         print("Usage: python run_agent.py <ldr_path> [glb_path]")
+        print("       python run_agent.py --graph  (Mermaid 그래프 출력)")
         sys.exit(1)
 
     ldr = sys.argv[1]
