@@ -9,7 +9,7 @@ from .memory import InMemoryConversationStore
 
 log = logging.getLogger(__name__)
 
-OPENAI_PATH = "/v1/chat/completions"
+OPENAI_PATH = "chat/completions"
 
 
 def build_system_prompt(lang: str) -> str:
