@@ -50,6 +50,16 @@ def run_agent(ldr_path: str, glb_path: str = None):
     model = ldr_to_brick_model(ldr_path)
     model.name = Path(ldr_path).stem
 
+    # 색상 분포 디버깅 출력
+    from collections import Counter
+    color_dist = Counter(b.color_code for b in model.bricks)
+    print(f"\n[COLOR DEBUG] 입력 LDR 색상 분포:")
+    for color, count in color_dist.most_common():
+        print(f"  color_code={color}: {count}개")
+    if len(color_dist) == 1 and 15 in color_dist:
+        print("  ⚠️ 모든 브릭이 흰색(15)! → 입력 LDR에 이미 색상 정보 없음")
+        print("  → GLB→LDR 변환 시 색상 추출 실패 가능성 높음")
+
     # GLB 분석 (있으면)
     glb_ref = None
     if glb_path and Path(glb_path).exists():
@@ -122,6 +132,12 @@ def run_agent(ldr_path: str, glb_path: str = None):
     ldr = model_to_ldr(final_state["model"], parts_db, skip_validation=True, skip_physics=True)
     with open(output, 'w', encoding='utf-8') as f:
         f.write(ldr)
+
+    # 에이전트 실행 후 색상 분포 출력
+    after_color_dist = Counter(b.color_code for b in final_state["model"].bricks)
+    print(f"\n[COLOR DEBUG] 에이전트 실행 후 색상 분포:")
+    for color, count in after_color_dist.most_common():
+        print(f"  color_code={color}: {count}개")
 
     # Print summary
     initial_floating = get_model_state(initial_state["model_backup"], parts_db)["floating_count"]
