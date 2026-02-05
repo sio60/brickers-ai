@@ -514,7 +514,7 @@ class PyBulletVerifier:
         failed_bricks = list() # 호환성을 위해 리스트 사용
         max_drift = 0.0
         drift_threshold = 0.5 # 최종 확인을 위한 동일 임계값
-        
+
         # 최초 실패 증거 추가
         if first_failure_id:
             result.evidence.append(Evidence(
@@ -523,13 +523,13 @@ class PyBulletVerifier:
                 brick_ids=[first_failure_id],
                 message=f"구조적 붕괴가 {first_failure_id}에서 시작됨 (t={first_failure_step/240:.2f}초)"
             ))
-        
+
         for bid, body_id in brick_bodies.items():
             current_pos, _ = p.getBasePositionAndOrientation(body_id)
             start_pos, _ = original_positions[body_id]
             dist = np.linalg.norm(np.array(current_pos) - np.array(start_pos))
             max_drift = max(max_drift, dist)
-            
+
             if dist > drift_threshold:
                 failed_bricks.append(bid)
                 # 중복 방지를 위해 최초 실패가 아닌 경우에만 상세 증거 추가
@@ -541,61 +541,104 @@ class PyBulletVerifier:
                         message=f"붕괴 시작 후 브릭이 {dist:.1f} 유닛만큼 이동함"
                     ))
 
+        # ============================================================
+        # 3단계 안정성 등급 (Stability Grade)
+        # ============================================================
+        # STABLE (안정):   냅뒀을 때 잘 서있음 - max_drift < 0.05
+        # MEDIUM (중간):   냅뒀을 때 기우는 정도 - 0.05 <= max_drift < 0.5
+        # UNSTABLE (불안정): 냅뒀을 때 무너질 가능성 - max_drift >= 0.5 또는 붕괴 감지
+        STABLE_DRIFT = 0.05   # 거의 움직이지 않음 (~1 LDU)
+        MEDIUM_DRIFT = 0.5    # 기울어지지만 무너지지 않음 (~10 LDU)
+
+        if first_failure_id is not None or max_drift >= MEDIUM_DRIFT:
+            # 불안정: 붕괴 발생 또는 큰 변위
+            stability_grade = "UNSTABLE"
+            clamped = min(max_drift, 2.0)
+            score = max(0, int(39 * (1 - clamped / 2.0)))
+        elif max_drift >= STABLE_DRIFT:
+            # 중간: 약간 기울어짐
+            stability_grade = "MEDIUM"
+            ratio = (max_drift - STABLE_DRIFT) / (MEDIUM_DRIFT - STABLE_DRIFT)
+            score = int(89 - ratio * 49)  # 89 ~ 40
+        else:
+            # 안정: 거의 움직이지 않음
+            stability_grade = "STABLE"
+            ratio = max_drift / STABLE_DRIFT if STABLE_DRIFT > 0 else 0
+            score = int(100 - ratio * 10)  # 100 ~ 90
+
+        # 공중부양 브릭이 있으면 등급 하향 (최대 MEDIUM)
+        if floating and stability_grade == "STABLE":
+            stability_grade = "MEDIUM"
+            score = min(score, 70)
+
+        result.stability_grade = stability_grade
+        result.score = score
+        result.max_drift = max_drift
+
         if failed_bricks:
             result.is_valid = False
-            # result.score = 0  # Logic from either branch
             print(f"[안정성] 검증 실패. 최대 변위: {max_drift:.2f}")
         else:
             print(f"[안정성] 검증 통과. 최대 변위: {max_drift:.2f}")
-            result.score = 100
-        
+
+        # 공중부양 존재 시 is_valid = False
+        if floating:
+            result.is_valid = False
+
         # --- 결과 리포트 (REPORT CARD) ---
+        GRADE_LABEL = {"STABLE": "안정", "MEDIUM": "중간", "UNSTABLE": "불안정"}
+        GRADE_EMOJI = {"STABLE": "🟢", "MEDIUM": "🟡", "UNSTABLE": "🔴"}
+
         print("\n" + "="*40)
         print(" 🏭 물리 검증 리포트 (Physics Report)")
         print("="*40)
-        print(f" - 🧱 총 브릭 수: {len(brick_bodies)}") 
-        print(f" - 🔗 연결 상태: {constraints_count}개 본드 결합 완료") 
-        
+        print(f" - 🧱 총 브릭 수: {len(brick_bodies)}")
+        print(f" - 🔗 연결 상태: {constraints_count}개 본드 결합 완료")
+
         # 리포트를 위해 부동 브릭 재평가
         if floating: # 이전 체크에서 계산된 'floating' 변수 재사용
              print(f" - ⚠️ 위험 요소: 공중 부양 브릭(Floating Brick) {len(floating)}개 발견! (주의)")
         else:
              print(f" - ✨ 구조 상태: 모든 브릭이 잘 연결됨")
-             
+
         print("-" * 40)
         print(f" [시뮬레이션 결과]")
         print(f" - 🕒 진행 시간: {duration:.1f}초")
         print(f" - 📏 최대 이동(Drift): {max_drift:.2f} (허용치: {drift_threshold})")
+        print(f" - {GRADE_EMOJI[stability_grade]} 안정성 등급: {GRADE_LABEL[stability_grade]} ({stability_grade})")
+        print(f" - 📊 점수: {score}/100")
         print("-" * 40)
-        
-        if result.is_valid and not floating: 
-            print(" ✅ 최종 판정: [합격] (SUCCESS)")
+
+        if stability_grade == "STABLE" and not floating:
+            print(" ✅ 최종 판정: [안정] (STABLE)")
             print("    \"이 모델은 튼튼합니다!\"")
-        elif result.is_valid and floating:
-            print(f" ❌ 최종 판정: [불합격] (FAIL - 공중부양 {len(floating)}개 감지)")
-            print(f"    \"모델은 무너지지 않았지만, {len(floating)}개의 브릭이 허공에 떠 있어 불완전합니다.\"")
-            print(f"    - 공중부양 브릭: {floating[:5]}...")
-            # 공중부양은 구조적 결함이므로 실패로 간주
-            result.is_valid = False
+        elif stability_grade == "MEDIUM" or (stability_grade == "STABLE" and floating):
+            reason = f"공중부양 {len(floating)}개" if floating else f"기울어짐 (drift: {max_drift:.2f})"
+            print(f" 🟡 최종 판정: [중간] (MEDIUM - {reason})")
+            if floating:
+                print(f"    \"모델은 무너지지 않았지만, {len(floating)}개의 브릭이 허공에 떠 있어 불완전합니다.\"")
+                print(f"    - 공중부양 브릭: {floating[:5]}...")
+            else:
+                print(f"    \"모델이 약간 기울어집니다. 구조 보강이 필요합니다.\"")
         else:
-            print(" ❌ 최종 판정: [불합격] (FAIL)")
+            print(" 🔴 최종 판정: [불안정] (UNSTABLE)")
             # 원인 분석
             culprit = "알 수 없음"
             for ev in result.evidence:
                 if ev.type == "FIRST_FAILURE" and ev.brick_ids:
                     culprit = ev.brick_ids[0]
                     break
-            print(f"    💥 최초 붕괴 시작점: {culprit}")                                            
-            
+            print(f"    💥 최초 붕괴 시작점: {culprit}")
+
             # 다른 피해 브릭 목록
             victims = []
             for ev in result.evidence:
                 if ev.type == "COLLAPSE_AFTERMATH" and ev.brick_ids:
                     victims.append(ev.brick_ids[0])
-            
+
             if victims:
                 print(f"    📉 추가 붕괴 ({len(victims)}개): {', '.join(victims[:5])}" + (f"...외 {len(victims)-5}개" if len(victims)>5 else ""))
-                
+
             print("    \"구조가 불안정하여 무너졌습니다.\"")
         print("="*40 + "\n")
         

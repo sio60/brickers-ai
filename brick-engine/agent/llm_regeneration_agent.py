@@ -5,8 +5,8 @@
 # 아키텍처 (LangGraph):
 # 1. Generator Node: GLB 변환 (TuneParameters 도구 결과 반영)
 # 2. Verifier Node: 물리 검증 및 결과 피드백 생성 (History에 추가)
-# 3. Model Node: LLM이 History를 보고 도구 선택 (TuneParameters / FixFloatingBricks)
-# 4. Tool Node: 선택된 도구 실행
+# 3. Model Node: LLM이 History를 보고 TuneParameters 도구로 파라미터 조정
+# 4. Tool Node: 선택된 도구 실행 (알고리즘 재생성)
 # ============================================================================
 
 import sys
@@ -41,11 +41,11 @@ for p in (_THIS_DIR, _BRICK_ENGINE_DIR, _PROJECT_ROOT, _PHYSICAL_VERIFICATION_DI
 # LLM 클라이언트 & 도구 임포트
 try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
-    from .agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
+    from .agent_tools import TuneParameters
     from .memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
-    from agent_tools import TuneParameters, FixFloatingBricks, MergeBricks
+    from agent_tools import TuneParameters
     from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
 
 # DB 연결
@@ -133,7 +133,10 @@ class VerificationFeedback:
     first_failure_brick: Optional[str] = None
     max_drift: float = 0.0
     collision_count: int = 0
-    # 1x1 브릭 비율 정보 (MergeBricks 판단용)
+    # 안정성 등급 (3단계)
+    stability_grade: str = "STABLE"       # "STABLE" | "MEDIUM" | "UNSTABLE"
+    stability_score: int = 100            # 0~100
+    # 1x1 브릭 비율 정보
     small_brick_count: int = 0      # 1x1 브릭 개수
     small_brick_ratio: float = 0.0  # 1x1 브릭 비율 (0.0 ~ 1.0)
 
@@ -171,32 +174,35 @@ def extract_verification_feedback(result, total_bricks: int) -> VerificationFeed
     
     if total_bricks > 0:
         feedback.failure_ratio = (len(fallen_bricks) + len(floating_bricks)) / total_bricks
-    
+
+    # 안정성 등급 추출 (PyBullet VerificationResult에서)
+    feedback.stability_grade = getattr(result, 'stability_grade', 'STABLE')
+    feedback.stability_score = int(getattr(result, 'score', 100))
+
     return feedback
 
 def _format_feedback(feedback: VerificationFeedback) -> str:
-    # 상태 판정 로직 강화
-    if feedback.stable and feedback.floating_bricks == 0:
-        status = "✅ 안정"
-    elif feedback.stable and feedback.floating_bricks > 0:
-        status = "⚠️ 부분 안정 (공중부양 존재)"
-    else:
-        status = "❌ 불안정"
-        
+    GRADE_EMOJI = {"STABLE": "🟢", "MEDIUM": "🟡", "UNSTABLE": "🔴"}
+    GRADE_LABEL = {"STABLE": "안정", "MEDIUM": "중간", "UNSTABLE": "불안정"}
+
+    grade = feedback.stability_grade
+    emoji = GRADE_EMOJI.get(grade, "⚪")
+    label = GRADE_LABEL.get(grade, grade)
+
     lines = [
         f"검증 결과:",
-        f"- 상태: {status}",
+        f"- {emoji} 안정성 등급: {label} ({grade})",
+        f"- 📊 점수: {feedback.stability_score}/100",
         f"- 총 브릭 수: {feedback.total_bricks}개",
+        f"- 최대 변위(Drift): {feedback.max_drift:.3f}",
     ]
-    
-    # 1x1 브릭 비율 정보 (MergeBricks 판단용)
+
+    # 1x1 브릭 비율 정보
     if feedback.small_brick_count > 0:
         lines.append(f"- 1x1 브릭: {feedback.small_brick_count}개 ({feedback.small_brick_ratio * 100:.1f}%)")
-        if feedback.small_brick_ratio > 0.3:  # 30% 이상이면 권장
-            lines.append(f"  → 💡 1x1 브릭 비율이 높습니다. MergeBricks로 연결 강화를 권장합니다.")
-    
-    # 상세 불안정 정보 (공중부양 포함)
-    if not feedback.stable or feedback.floating_bricks > 0:
+
+    # 상세 불안정 정보
+    if grade != "STABLE" or feedback.floating_bricks > 0:
         lines.extend([
             f"- 떨어진 브릭: {feedback.fallen_bricks}개",
             f"- 공중부양 브릭: {feedback.floating_bricks}개",
@@ -204,15 +210,10 @@ def _format_feedback(feedback: VerificationFeedback) -> str:
         ])
         if feedback.first_failure_brick:
             lines.append(f"- 최초 붕괴 브릭: {feedback.first_failure_brick}")
-        # LLM이 FixFloatingBricks 사용 시 명확히 알 수 있도록 ID 목록 제공
-        if feedback.floating_brick_ids:
-            lines.append(f"- 공중부양 브릭 ID 목록: {feedback.floating_brick_ids}")
-        if feedback.fallen_brick_ids:
-            lines.append(f"- 떨어진 브릭 ID 목록: {feedback.fallen_brick_ids}")
-            
+
     if feedback.collision_count > 0:
         lines.append(f"- 충돌 감지: {feedback.collision_count}건")
-    
+
     return "\n".join(lines)
 
 
@@ -241,7 +242,7 @@ class AgentState(TypedDict):
     verification_errors: int  # 검증 에러 재시도 카운터
 
     # 무한 루프 방지용 도구 사용 추적
-    tool_usage_count: Dict[str, int]  # {"TuneParameters": 2, "MergeBricks": 1, ...}
+    tool_usage_count: Dict[str, int]  # {"TuneParameters": 2, ...}
     last_tool_used: Optional[str]     # 마지막 사용 도구
     consecutive_same_tool: int        # 같은 도구 연속 사용 횟수
     
@@ -254,9 +255,9 @@ class AgentState(TypedDict):
     
     # Co-Scientist Memory (학습 메모리)
     memory: Dict[str, Any]  # {
-    #     "failed_approaches": ["MergeBricks on layer 5 failed"],
-    #     "successful_patterns": ["FixFloatingBricks after MergeBricks"],
-    #     "lessons": ["1x1 비율 30% 이상일 때 MergeBricks 효과적"],
+    #     "failed_approaches": ["TuneParameters with target=80 failed"],
+    #     "successful_patterns": ["interlock=True with fill=True"],
+    #     "lessons": ["support_ratio 0.5 이상에서 안정성 향상"],
     #     "consecutive_failures": 0
     # }
 
@@ -286,29 +287,25 @@ class RegenerationGraph:
         self.SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
 주어진 3D 모델(GLB)을 레고(LDR)로 변환하는 과정에서 발생하는 구조적 불안정성 문제를 해결해야 합니다.
 
-당신에게는 세 가지 도구가 있습니다:
-1. `TuneParameters`: 전체적인 구조적 결함(와르르 무너짐, 연결 없음 등)을 해결하기 위해 변환 파라미터를 조정하여 처음부터 다시 생성합니다.
-2. `FixFloatingBricks`: 전체적으로는 괜찮지만 일부 공중부양하거나 불안정한 브릭이 있을 때, 해당 브릭을 *삭제*하여 정리합니다.
-3. `MergeBricks`: 같은 색상의 인접한 1x1 브릭들을 큰 브릭(1x2~1x8)으로 병합합니다. 연결이 강화되어 안정성이 향상됩니다. 색상이 다른 브릭은 병합되지 않습니다.
+**핵심 원칙: LLM은 검증/분석만, 개선은 알고리즘이 담당합니다.**
+- 당신은 LDR 파일을 직접 수정하지 않습니다.
+- 당신은 검증 결과를 분석하고, 파라미터 조정을 통해 알고리즘이 더 나은 결과를 만들도록 유도합니다.
+
+당신에게는 하나의 도구가 있습니다:
+- `TuneParameters`: 변환 파라미터를 조정하여 알고리즘이 처음부터 다시 생성합니다.
+
+**안정성 등급 (Stability Grade):**
+- 🟢 STABLE (안정, 90~100점): 냅뒀을 때 잘 서있음 - 파라미터 그대로 유지
+- 🟡 MEDIUM (중간, 40~89점): 냅뒀을 때 기우는 정도 - 파라미터 소폭 조정 필요
+- 🔴 UNSTABLE (불안정, 0~39점): 냅뒀을 때 무너짐 - 파라미터 대폭 변경 필요
 
 **의사결정 알고리즘 (Decision Logic):**
-1. **1x1 브릭 처리 전략 (Smart 1x1 Strategy)**:
-   - **기본 상태**: 안전을 위해 `auto_remove_1x1=True` (삭제)로 시작합니다.
-   - **디테일 복구**: 만약 눈, 코, 입 등 중요 디테일이 사라졌다면 `TuneParameters`를 호출하여 `auto_remove_1x1=False`로 변경하세요.
-   - **조건부 유지**: `auto_remove_1x1=False`로 할 경우, 반드시 `MergeBricks` 사용을 염두에 두어야 합니다. (유지 후 합치기)
+1. **STABLE (안정)**: 성공입니다. 추가 조정 불필요.
+2. **MEDIUM (중간)**: 소폭 조정으로 개선 가능. interlock, fill, support_ratio 등을 미세 조정하세요.
+3. **UNSTABLE (불안정)**: target, budget 등 핵심 파라미터를 변경하여 재생성하세요.
 
-2. **실패율(Failure Ratio) 확인**:
-   - **20% 미만 (Low Risk)**: 전체 구조는 튼튼합니다. `TuneParameters`로 다시 만들면 오히려 더 나쁜 결과가 나올 위험이 큽니다.
-   - **20% ~ 50% (Medium Risk)**: 상황을 판단하세요. 중요 부위가 무너졌다면 재생성, 외곽만 무너졌다면 삭제.
-   - **50% 이상 (High Risk)**: 현재 파라미터로는 불가능합니다. `TuneParameters`로 설정을 변경하여 다시 시도하세요.
-
-2. **MergeBricks vs FixFloatingBricks 선택 기준** (실패율 < 20%일 때):
-   - **공중부양/떨어진 브릭 ID가 명확히 있으면** → `FixFloatingBricks`로 해당 브릭 삭제
-   - **1x1 브릭이 많아 연결이 약하다는 징후가 있으면** → `MergeBricks`로 보강 (1x1들을 큰 브릭으로 통합)
-   - **둘 다 해당되면** → 먼저 `MergeBricks`로 보강 → 재검증 후 필요시 `FixFloatingBricks`
-
-목표: 물리적으로 안정적(Stable)인 레고 구조물을 만드는 것.
-이전 시도의 실패 원인과 통계(실패율, 부동 브릭 수)를 분석하고, 위 논리에 따라 가장 합리적인 도구를 선택하세요.
+목표: 물리적으로 안정적(STABLE)인 레고 구조물을 만드는 것.
+이전 시도의 검증 결과(안정성 등급, 점수, 실패율)를 분석하고 파라미터를 조정하세요.
 """
 
         self.verifier = None
@@ -507,7 +504,7 @@ class RegenerationGraph:
             plan = loader.load_from_file(state['ldr_path'])
             total_bricks = len(plan.bricks)
             
-            # 1x1 브릭 비율 계산 (MergeBricks 판단용)
+            # 1x1 브릭 비율 계산
             small_brick_parts = {"3005.dat", "3024.dat"}  # 1x1 브릭, 1x1 플레이트
             small_brick_count = 0
             for b in plan.bricks:
@@ -617,7 +614,7 @@ class RegenerationGraph:
                 custom_feedback += f"\n\n🚨 **중요: 예산 초과! 현재 {total_bricks}개 브릭입니다. 목표 예산은 {budget}개입니다. `TuneParameters` 도구를 사용하여 `target` 값을 줄여야 합니다.**"
 
             elif feedback.floating_bricks > 0:
-                custom_feedback += "\n\n⚠️ **중요: 아직 공중부양(Floating) 브릭이 남아있습니다. 이 상태로는 절대 작업을 완료할 수 없습니다. 반드시 FixFloatingBricks 도구를 사용하거나 파라미터를 조정하여 해결하세요.**"
+                custom_feedback += "\n\n⚠️ **중요: 아직 공중부양(Floating) 브릭이 남아있습니다. TuneParameters로 파라미터를 조정하여 알고리즘이 더 안정적인 구조를 생성하도록 해야 합니다.**"
             
             return {
                 "verification_raw_result": stab_result,
@@ -629,7 +626,7 @@ class RegenerationGraph:
             
         except Exception as e:
             print(f"  ❌ 검증 중 에러: {e}")
-            # 검증 에러 시 LLM에게 맡기지 않고 재시도 (FixFloatingBricks 결과 보존)
+            # 검증 에러 시 재시도
             verification_errors = state.get('verification_errors', 0) + 1
             if verification_errors >= 3:
                 # 3회 이상 실패 시 재생성으로 전환
@@ -655,10 +652,10 @@ class RegenerationGraph:
         print("\n[Co-Scientist] 상황 분석 중...")
         
         # 사용 가능한 도구 정의
-        tools = [TuneParameters, FixFloatingBricks, MergeBricks]
+        tools = [TuneParameters]
     
         # --- [전략 가이드 주입] ---
-        # 실패율이 낮으면 FixFloatingBricks를 권장하는 힌트 메시지 추가 (강제 X)
+        # 안정성 등급에 따른 전략 힌트 추가
         messages_to_send = state['messages'][:]
         
         # --- [Memory 정보 주입 (RAG)] ---
@@ -713,48 +710,34 @@ class RegenerationGraph:
             messages_to_send.append(memory_msg)
             print(f"  📚 Memory 정보 {len(lessons)}개 교훈 전달됨")
         
-        # 직전 검증 결과 확인
+        # 직전 검증 결과 확인 - 안정성 등급 기반 전략 힌트
         last_msg = messages_to_send[-1]
-        
+
         if isinstance(last_msg, HumanMessage) and "검증 결과" in str(last_msg.content):
             content = str(last_msg.content)
-            floating_ids = state.get('floating_bricks_ids', [])
-            
-            # 실패율 파싱 (간이)
-            ratio = 0.0
+
+            # 안정성 등급 파싱
             import re
-            match = re.search(r"실패율: ([\d.]+)%", content)
-            if match:
-                ratio = float(match.group(1))
+            grade_match = re.search(r"안정성 등급: \S+ \((\w+)\)", content)
+            score_match = re.search(r"점수: (\d+)/100", content)
 
-            # 상황별 전략 힌트 (Strategy Hint) - 논리적 설득 강화
-            hints = []
-            
-            # 1. 공중부양 브릭이 있는 경우 (가장 중요)
-            if floating_ids:
-                print(f"  💡 [Strategy Hint] 공중부양 브릭({len(floating_ids)}개) 감지 -> 정밀 수리 권장")
-                advice = f"""**⚠️ 상황 분석 및 도구 추천:**
-현재 공중부양 브릭이 {len(floating_ids)}개 발견되었습니다. (ID: {floating_ids})
-전체 실패율은 {ratio}%입니다.
+            grade = grade_match.group(1) if grade_match else "UNKNOWN"
+            score = int(score_match.group(1)) if score_match else 0
 
-**논리적 판단 가이드:**
-1. **실패율이 낮음 (<20%)**: 전체적인 구조는 튼튼합니다.
-2. **국소적 문제**: 문제는 일부 브릭의 뜸(Floating) 현상뿐입니다.
-3. **도구 선택**:
-   - `TuneParameters`: 전체를 다시 만듭니다. 현재의 튼튼한 구조를 잃을 위험이 있습니다. (비권장 ❌)
-   - `FixFloatingBricks`: 문제 있는 브릭만 정확히 제거합니다. 현재 구조를 유지하며 안정성을 확보합니다. (강력 권장 ✅)
-   
-따라서 **FixFloatingBricks**를 사용하여 해결하세요."""
-                hints.append(advice)
-            
-            # 2. 실패율이 낮은 경우
-            elif ratio > 0 and ratio < 20.0:
-                print(f"  💡 [Strategy Hint] 낮은 실패율({ratio}%) 감지 -> 부분 수정 권장")
-                hints.append(f"현재 실패율이 {ratio}%로 매우 낮습니다. 구조가 거의 완성되었으므로 무분별한 재생성보다는 정밀한 도구 사용을 고려하세요.")
-            
-            if hints:
-                hint_msg = SystemMessage(content="\n".join(hints))
-                messages_to_send.append(hint_msg)
+            hint = ""
+            if grade == "UNSTABLE":
+                print(f"  💡 [Strategy Hint] 불안정 (점수: {score}) -> 파라미터 대폭 변경 필요")
+                hint = f"""**🔴 불안정 (UNSTABLE, {score}점)**
+구조가 무너졌습니다. target, budget, interlock, fill 등 핵심 파라미터를 대폭 변경하여 재생성하세요.
+특히 interlock=True, fill=True, support_ratio를 높이는 것을 고려하세요."""
+            elif grade == "MEDIUM":
+                print(f"  💡 [Strategy Hint] 중간 (점수: {score}) -> 파라미터 소폭 조정 필요")
+                hint = f"""**🟡 중간 (MEDIUM, {score}점)**
+구조가 기울어집니다. support_ratio, interlock, fill 등을 미세 조정하여 안정성을 높이세요.
+큰 변경보다는 소폭 조정이 효과적입니다."""
+
+            if hint:
+                messages_to_send.append(SystemMessage(content=hint))
 
         # 모델 바인딩 및 호출
         try:
@@ -785,7 +768,7 @@ class RegenerationGraph:
                 else:
                     # 아직 문제가 남았는데 종료하려고 하면 힌트를 주고 재시도
                     print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 재지시 중...")
-                    error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. 'FixFloatingBricks' 도구를 사용하거나 파라미터를 교체하여 모든 브릭이 연결되도록 하세요."
+                    error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. TuneParameters로 파라미터를 조정하여 알고리즘이 더 안정적인 구조를 생성하도록 하세요."
                     hint = HumanMessage(content=error_feedback)
                     return {"messages": [response, hint], "next_action": "model"}
                 
@@ -861,53 +844,6 @@ class RegenerationGraph:
                 # 업데이트된 파라미터 반환
                 state['params'] = new_params
                 
-            elif tool_name == "FixFloatingBricks":
-                # 브릭 삭제 로직 수행
-                from ldr_modifier import apply_llm_decisions
-                
-                # 삭제 요청된 브릭 처리
-                bricks_to_delete = args.get('bricks_to_delete', [])
-                if not bricks_to_delete:
-                    result_content = "삭제할 브릭 목록이 비어있습니다."
-                else:
-                    # 'decisions' 포맷으로변환
-                    decisions = [{"action": "delete", "brick_id": bid} for bid in bricks_to_delete]
-                    
-                    try:
-                        stats = apply_llm_decisions(state['ldr_path'], decisions)
-                        result_content = f"수정 완료: {stats['deleted']}개 브릭 삭제됨."
-                        # 이전 메트릭 대비 효과 예상 표시
-                        if previous_metrics:
-                            prev_floating = previous_metrics.get('floating_count', 0)
-                            result_content += f" (이전 공중부양: {prev_floating}개 → 삭제 후 재검증 필요)"
-                        # 수정했으니 다시 검증(Verifier)으로 이동 parameter 조정 불필요
-                        next_step = "verifier"
-                    except Exception as e:
-                        result_content = f"수정 실패: {e}"
-            
-            elif tool_name == "MergeBricks":
-                # 브릭 병합 로직 수행
-                from ldr_modifier import merge_small_bricks
-                
-                target_brick_ids = args.get('target_brick_ids', None)
-                min_merge_count = args.get('min_merge_count', 2)
-                
-                try:
-                    stats = merge_small_bricks(
-                        state['ldr_path'],
-                        target_brick_ids=target_brick_ids,
-                        min_merge_count=min_merge_count
-                    )
-                    result_content = f"병합 완료: {stats['merged']}개 그룹 병합됨 (원본 {stats['original_count']}개 -> 신규 {stats['new_count']}개)"
-                    # 이전 메트릭 대비 효과 표시
-                    if previous_metrics:
-                        prev_ratio = previous_metrics.get('small_brick_ratio', 0)
-                        result_content += f" (이전 1x1 비율: {prev_ratio*100:.1f}% → 병합 후 재검증 필요)"
-                    # 병합했으니 다시 검증(Verifier)으로 이동
-                    next_step = "verifier"
-                except Exception as e:
-                    result_content = f"병합 실패: {e}"
-            
             else:
                 result_content = f"알 수 없는 도구: {tool_name}"
             
@@ -1238,18 +1174,11 @@ def regeneration_loop(
     _log("VERIFY", "물리 안정성을 검증하고 있습니다...")
 
     # ============================================================
-    # Post-processing: Evolver Agent (형태 개선)
+    # Post-processing: Evolver Agent (형태 개선) - 비활성화
     # ============================================================
-    if Path(output_ldr_path).exists():
-        _log("EVOLVE", "형태 개선 에이전트가 모델을 분석하고 있습니다...")
-        print("\n🔧 [Evolver] 형태 개선 에이전트 실행 중...")
-        evolver_result = _run_evolver_subprocess(output_ldr_path, glb_path)
-        if evolver_result.get("success"):
-            _log("REFLECT", "형태 개선 완료! 최종 모델을 준비하고 있습니다...")
-            print("  ✅ Evolver 완료 - 개선된 LDR로 교체됨")
-        else:
-            _log("REFLECT", "형태 분석을 완료했습니다. 최종 모델을 준비하고 있습니다...")
-            print(f"  ⚠️ Evolver 스킵: {evolver_result.get('reason', 'unknown')}")
+    # NOTE: 알고리즘 생성 LDR을 LLM이 직접 수정하지 않음.
+    #       LLM은 검증/분석만 수행, 개선은 알고리즘이 담당.
+    _log("REFLECT", "모델 검증을 완료했습니다. 최종 모델을 준비하고 있습니다...")
 
     print("\n" + "=" * 60)
     print("📋 최종 결과 리포트")

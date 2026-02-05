@@ -72,6 +72,9 @@ jobs:
             # --- Timeouts ---
             KIDS_TOTAL_TIMEOUT_SEC=1800
             TRIPO_WAIT_TIMEOUT_SEC=900
+
+            # --- Internal API Token (Backend 로그 전송용) ---
+            INTERNAL_API_TOKEN=${{ secrets.INTERNAL_API_TOKEN }}
             EOF
 
             echo "🔨 Running build script..."
