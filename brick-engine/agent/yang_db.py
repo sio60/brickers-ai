@@ -24,7 +24,7 @@ def get_client() -> MongoClient:
 
 def get_parts_collection():
     client = get_client()
-    return client[config.MONGODB_DB][config.PARTS_COLLECTION]
+    return client[config.MONGODB_DB][config.PARTS_COLLECTION] if client else None
 
 def get_db():
     client = get_client()
