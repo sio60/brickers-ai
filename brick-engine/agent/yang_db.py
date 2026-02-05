@@ -15,7 +15,9 @@ def get_client() -> MongoClient:
     global _client
     if _client is None:
         if not config.MONGODB_URI:
-            raise RuntimeError("MONGODB_URI가 비어 있습니다. .env 파일을 확인하세요.")
+            # DB가 없으면 에러 대신 None 반환 (챗봇 등 다른 기능은 살리기 위함)
+            print("⚠️ [Warn] MONGODB_URI is missing. DB features will be disabled.")
+            return None
         # DB가 다운되었거나 연결할 수 없는 경우 빠르게 실패하도록 짧은 타임아웃 설정
         _client = MongoClient(config.MONGODB_URI, serverSelectionTimeoutMS=2000)
     return _client
@@ -26,4 +28,4 @@ def get_parts_collection():
 
 def get_db():
     client = get_client()
-    return client[config.MONGODB_DB]
+    return client[config.MONGODB_DB] if client else None
