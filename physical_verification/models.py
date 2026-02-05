@@ -94,14 +94,18 @@ class Evidence:
 class VerificationResult:
     """
     전체 검증 결과를 담는 데이터 클래스
-    
+
     Attributes:
         is_valid: 검증 통과 여부
         score: 점수 (0-100)
+        stability_grade: 안정성 등급 ("STABLE" | "MEDIUM" | "UNSTABLE")
+        max_drift: 시뮬레이션 중 최대 변위
         evidence: 발견된 문제점 목록
     """
     is_valid: bool = True
     score: float = 100.0
+    stability_grade: str = "STABLE"  # "STABLE" | "MEDIUM" | "UNSTABLE"
+    max_drift: float = 0.0
     evidence: List[Evidence] = field(default_factory=list)
     
     def add_hard_fail(self, evidence: Evidence):
