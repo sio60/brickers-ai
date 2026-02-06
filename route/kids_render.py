@@ -226,7 +226,7 @@ async def process_kids_request_internal(
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
                 task_id = await client.image_to_model(image=str(corrected_path))
-                _log(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
+                print(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
 
                 with anyio.fail_after(TRIPO_WAIT_TIMEOUT_SEC):
                     task = await client.wait_for_task(task_id, verbose=DEBUG)
@@ -234,9 +234,9 @@ async def process_kids_request_internal(
                 if task.status != TaskStatus.SUCCESS:
                     raise RuntimeError(f"Tripo task failed: status={task.status}")
 
-                _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
+                print(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
                 downloaded = await client.download_task_models(task, str(out_tripo_dir))
-                _log(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
+                print(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
 
             tripo_elapsed = time.time() - step_start
             _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
@@ -296,7 +296,7 @@ async def process_kids_request_internal(
             if not glb_path.exists() or glb_path.stat().st_size == 0:
                 raise RuntimeError(f"GLB missing/empty: {glb_path}")
 
-            _log(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
+            print(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
             # 4) Brickify
             step_start = time.time()
@@ -307,11 +307,6 @@ async def process_kids_request_internal(
             await update_job_stage(job_id, "MODEL")
 
             convert_fn = load_engine_convert()
-            regeneration_loop, GeminiClient = load_agent_modules()
-
-            gemini_key = os.environ.get("GEMINI_API_KEY", "")
-            llm_client = GeminiClient(api_key=gemini_key)
-
             out_ldr = out_brick_dir / "result.ldr"
 
             agent_params = {
@@ -342,21 +337,15 @@ async def process_kids_request_internal(
                 "extend_catalog": True,
                 "max_len": 8,
             }
-            agent_params["log_callback"] = make_agent_log_sender(job_id)
 
-            def run_agent_sync():
-                return regeneration_loop(
-                    glb_path=str(glb_path),
-                    output_ldr_path=str(out_ldr),
-                    subject_name=final_subject,
-                    llm_client=llm_client,
-                    max_retries=3,
-                    gui=False,
-                    params=agent_params,
-                    user_email=user_email,
+            def run_convert_sync():
+                return convert_fn(
+                    str(glb_path),
+                    str(out_ldr),
+                    **agent_params
                 )
 
-            result: Dict[str, Any] = await anyio.to_thread.run_sync(run_agent_sync)
+            result: Dict[str, Any] = await anyio.to_thread.run_sync(run_convert_sync)
 
             brickify_elapsed = time.time() - step_start
             _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
@@ -370,12 +359,12 @@ async def process_kids_request_internal(
             _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
             ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
-            _log(f"   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
+            print(f"   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
             bom_data = await anyio.to_thread.run_sync(generate_bom_from_ldr, out_ldr)
             out_bom = out_brick_dir / "bom.json"
             await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
             bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
-            _log(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+            print(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
 
             _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
 
@@ -432,7 +421,7 @@ async def process_kids_request_internal(
             _log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
             _log(f"   - Brickify: {brickify_elapsed:.2f}s")
             _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
-            _log("\u2550" * 70)
+            print("\u2550" * 70)
 
             return {
                 "correctedUrl": corrected_url,
@@ -466,8 +455,6 @@ async def process_kids_request_internal(
 async def process(request: KidsProcessRequest):
     """Kids Mode 처리 (HTTP 엔드포인트) - 호환성 유지"""
     req_id = uuid.uuid4().hex
-    user_email = request.userEmail or "unknown"
-    log(f"🌐 [HTTP] Kids Process 요청 수신 | reqId={req_id}", user_email=user_email)
 
     try:
         result = await process_kids_request_internal(
@@ -476,7 +463,7 @@ async def process(request: KidsProcessRequest):
             age=request.age,
             budget=request.budget,
             subject=request.subject,
-            user_email=user_email,
+            user_email=request.userEmail or "unknown",
         )
 
         ldr_data_uri: Optional[str] = None
