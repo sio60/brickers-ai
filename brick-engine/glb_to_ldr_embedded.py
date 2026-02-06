@@ -1351,12 +1351,12 @@ def convert_glb_to_ldr(
         res = convert_glb_to_ldr_v3_inline(
             input_path=glb_path,
             output_path=out_ldr_path,
-            mode="pro",
+            mode=kwargs.get("mode", "kids"), # Use kids mode by default for kids_render
             target_studs=max(1, int(t)),
             symmetry="auto",
             color_smooth=1,
             optimize_bonds=True,
-            support_ratio=0.3,
+            support_ratio=max(0.05, float(support_ratio) - 0.1), # Lower support for detail
             solid=bool(solid),
             bricks_only=bricks_only,
             small_side_contact=bool(small_side_contact),
