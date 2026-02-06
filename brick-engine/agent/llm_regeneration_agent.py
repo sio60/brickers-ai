@@ -269,9 +269,6 @@ class AgentState(TypedDict):
 
     # 다음 노드 제어
     next_action: Literal["generate", "verify", "model", "tool", "reflect", "hypothesize", "strategy", "end"]
-    
-    # [추가] 사용자 식별 정보 (로깅용)
-    user_email: str
 
 
 # ============================================================================
@@ -315,16 +312,9 @@ class RegenerationGraph:
         # SSE 로그 콜백 (Kids 모드용)
         self._log_callback = log_callback
         self.verifier = None
-        self.user_email = "System"
 
     def _log(self, step: str, message: str):
         """SSE 로그 전송 헬퍼"""
-        # 서버 로그(stdout)용 타임스탬프 로깅 (user_email 포함)
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        user_tag = f"[{self.user_email}]" if self.user_email else "[System]"
-        print(f"[{ts}] {user_tag} [Agent:{step}] {message}")
-
         if self._log_callback:
             try:
                 self._log_callback(step, message)
@@ -1140,15 +1130,13 @@ def regeneration_loop(
     acceptable_failure_ratio: float = 0.1,
     gui: bool = False,
     params: Optional[Dict[str, Any]] = None,
-    log_callback = None,
-    user_email: str = "unknown"
 ):
     print("=" * 60)
     print("🤖 Co-Scientist Agent (Tool-Use Ver.)")
     print("=" * 60)
 
     # 로그 콜백 추출 (kids_render.py에서 주입)
-    log_callback = log_callback or (params.pop("log_callback", None) if params else None)
+    log_callback = params.pop("log_callback", None) if params else None
     def _log(step, msg):
         if log_callback:
             try:
@@ -1159,7 +1147,6 @@ def regeneration_loop(
     _log("ANALYZE", "모델 구조를 분석하고 있습니다...")
 
     graph_builder = RegenerationGraph(llm_client, log_callback=log_callback)
-    graph_builder.user_email = user_email
     app = graph_builder.build()
     
     # 시스템 메시지 및 초기 설정
@@ -1213,8 +1200,7 @@ def regeneration_loop(
         final_report={},          # 최종 결과 리포트
         # Co-Scientist Memory 초기화 (DB 로드 반영)
         memory=initial_memory,
-        next_action="generate",
-        user_email=user_email
+        next_action="generate" 
     )
     
     # 실행
