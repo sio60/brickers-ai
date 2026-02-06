@@ -40,7 +40,7 @@ router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 # -----------------------------
 # Backend 연동 (Stage 업데이트)
 # -----------------------------
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").rstrip("/")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8080").rstrip("/")
 
 async def update_job_stage(job_id: str, stage: str) -> None:
     """

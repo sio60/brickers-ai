@@ -2,7 +2,7 @@
 from ..state import AgentState
 from ..tools import get_model_state, analyze_symmetry
 from ..config import get_config
-from ..path_utils import setup_db_paths, setup_vision_paths, get_evolver_dir
+# from ..path_utils import setup_db_paths, setup_vision_paths, get_evolver_dir
 from ..constants import (
     MAX_REMOVAL_RATIO,
     SKIP_SYMMETRY_TYPES
@@ -47,6 +47,16 @@ def _load_memory_from_db(model_id: str) -> dict | None:
 
 # NOTE: _analyze_symmetry() 중복 코드 제거됨 (tools.py의 analyze_symmetry 사용)
 
+def _setup_vision_paths():
+    """path_utils 함수 대체: Vision 출력 경로 생성"""
+    import os
+    from pathlib import Path
+    config = get_config()
+    export_dir = config.exporter_dir if config.exporter_dir else Path(os.getcwd()) / "evolver_output"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    return export_dir
+
+
 
 def node_observe(state: AgentState) -> AgentState:
     """Observe current model state with PhysicalVerifier + 대칭 분석"""
@@ -80,7 +90,7 @@ def node_observe(state: AgentState) -> AgentState:
     if state['iteration'] == 0 and vision_quality_score is None:
         print(f"  [Vision] Running Vision analysis (FIRST - model_type 판단)...")
         try:
-            evolver_dir = setup_vision_paths()
+            evolver_dir = _setup_vision_paths()
 
             from vision_analyzer import find_problems, analyze_multi_angle
             from ldr_renderer import render_model_multi_angle
