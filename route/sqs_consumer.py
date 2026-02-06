@@ -122,13 +122,12 @@ async def process_message(message: Dict[str, Any]):
     message_id = message.get("MessageId", "unknown")
     receipt_handle = message["ReceiptHandle"]
 
-    log("=" * 60)
-    log(f"📨 [SQS Consumer] 메시지 처리 시작 | messageId={message_id}")
-
     try:
         body = json.loads(message["Body"])
         user_email = body.get("userEmail", "unknown") # [추가]
 
+        log("=" * 60, user_email=user_email)
+        log(f"📨 [SQS Consumer] 메시지 처리 시작 | messageId={message_id}", user_email=user_email)
         log(f"📨 [SQS Consumer] 처리 시작 | jobId={body.get('jobId')}", user_email=user_email)
         log(f"   - type: {body.get('type')}", user_email=user_email)
 
