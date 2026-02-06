@@ -75,3 +75,4 @@ langchain-openai
 langgraph
 reportlab
 playwright
+fpdf2
