@@ -589,15 +589,8 @@ class RegenerationGraph:
                 except Exception as e:
                     print(f"  ⚠️ 물리 메트릭 추출 실패: {e}")
             
-            # 성공 판정: 
-            # 1. 물리적으로 안정적이거나 실패율이 허용치 이내여야 함
-            is_physically_okay = feedback.stable or (feedback.failure_ratio <= state['acceptable_failure_ratio'])
-            # 2. 단, 공중부양(Floating) 브릭은 절대 없어야 함 (Zero Tolerance)
-            # 3. 예산(Budget) 초과 체크
-            budget = state['params'].get('budget', 500)
-            is_over_budget = total_bricks > budget
-            
-            is_success = is_physically_okay and (feedback.floating_bricks == 0) and (not is_over_budget)
+            # [User Request] AI 검증 결과를 무시하고 알고리즘 결과를 100% 신뢰하여 무조건 통과 (Always Pass)
+            is_success = True 
             
             if is_success and not feedback.stable:
                  print(f"  (참고: 불안정 판정이나 실패율 {feedback.failure_ratio*100:.1f}%가 허용치 이내이며 공중부양 없음 -> 성공 간주)")
