@@ -1313,6 +1313,7 @@ def convert_glb_to_ldr(
     invert_y: bool = False,
     smart_fix: bool = True,
     step_order: str = "bottomup",
+    small_side_contact: bool = False,
 
     # ?? ???? (v3??? ???)
     solid: bool = True,
@@ -1358,7 +1359,7 @@ def convert_glb_to_ldr(
             support_ratio=0.3,
             solid=bool(solid),
             bricks_only=bricks_only,
-            small_side_contact=False,
+            small_side_contact=bool(small_side_contact),
             step_mode=step_mode,
             cap_mode=cap_mode,
             use_mesh_color=bool(use_mesh_color),
