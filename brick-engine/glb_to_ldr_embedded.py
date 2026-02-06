@@ -1328,13 +1328,14 @@ def convert_glb_to_ldr(
     min_embed: int = 2,
     erosion_iters: int = 1,
     fast_search: bool = True,
+    support_ratio: float = 0.3, # [Added] To fix NameError in _run_v3
     **kwargs: Any,
 ) -> Dict[str, Any]:
     _ = (
         budget, min_target, shrink, search_iters, flipx180, flipy180, flipz180,
         plates_per_voxel, interlock, max_area, invert_y, smart_fix,
         fill, extend_catalog, max_len, span, max_new_voxels, refine_iters, ensure_connected,
-        min_embed, erosion_iters, fast_search, kwargs,
+        min_embed, erosion_iters, fast_search, support_ratio, kwargs,
     )
 
     step_mode = "none" if step_order == "none" else "layer"

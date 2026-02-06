@@ -77,7 +77,7 @@ def _s3_url_for_key(key: str) -> str:
     host = f"{S3_BUCKET}.s3.amazonaws.com" if AWS_REGION == "us-east-1" else f"{S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com"
     return f"https://{host}/{key}"
 
-def _upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/pdf") -> str:
+def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/pdf") -> str:
     """bytes 데이터를 S3에 업로드"""
     if not USE_S3:
         return ""

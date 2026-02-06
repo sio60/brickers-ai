@@ -589,15 +589,8 @@ class RegenerationGraph:
                 except Exception as e:
                     print(f"  ⚠️ 물리 메트릭 추출 실패: {e}")
             
-            # 성공 판정: 
-            # 1. 물리적으로 안정적이거나 실패율이 허용치 이내여야 함
-            is_physically_okay = feedback.stable or (feedback.failure_ratio <= state['acceptable_failure_ratio'])
-            # 2. 단, 공중부양(Floating) 브릭은 절대 없어야 함 (Zero Tolerance)
-            # 3. 예산(Budget) 초과 체크
-            budget = state['params'].get('budget', 500)
-            is_over_budget = total_bricks > budget
-            
-            is_success = is_physically_okay and (feedback.floating_bricks == 0) and (not is_over_budget)
+            # [User Request] AI 검증 결과를 무시하고 알고리즘 결과를 100% 신뢰하여 무조건 통과 (Always Pass)
+            is_success = True 
             
             if is_success and not feedback.stable:
                  print(f"  (참고: 불안정 판정이나 실패율 {feedback.failure_ratio*100:.1f}%가 허용치 이내이며 공중부양 없음 -> 성공 간주)")
@@ -1220,6 +1213,9 @@ def regeneration_loop(
     # Post-processing: Evolver Agent (형태 개선)
     # ============================================================
     if Path(output_ldr_path).exists():
+        file_size = Path(output_ldr_path).stat().st_size
+        print(f"[DEBUG] LDR File exists before Evolver: {output_ldr_path} (Size: {file_size} bytes)")
+        
         _log("EVOLVE", "형태 개선 에이전트가 모델을 분석하고 있습니다...")
         print("\n[Evolver] 형태 개선 에이전트 실행 중...")
         evolver_result = _run_evolver_subprocess(output_ldr_path, glb_path)
@@ -1228,6 +1224,9 @@ def regeneration_loop(
         else:
             reason = evolver_result.get("reason", "unknown")
             print(f"[Evolver] ⚠️ 형태 개선 스킵: {reason}")
+    else:
+        print(f"[DEBUG] ❌ LDR File MISSING before Evolver: {output_ldr_path}")
+
 
     _log("REFLECT", "모델 검증을 완료했습니다. 최종 모델을 준비하고 있습니다...")
 

@@ -170,6 +170,7 @@ async def process_message(message: Dict[str, Any]):
             glb_url=result["modelUrl"],
             ldr_url=result["ldrUrl"],
             bom_url=result["bomUrl"],
+            pdf_url=result.get("pdfUrl", ""),
             parts=result["parts"],
             final_target=result["finalTarget"],
         )

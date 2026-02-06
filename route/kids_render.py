@@ -34,13 +34,17 @@ from tripo3d.models import TaskStatus
 from google import genai
 from google.genai import types as genai_types
 
+# PDF Generation
+from route.headless_renderer import HeadlessPdfService
+from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom, upload_bytes_to_s3
+
 
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
 # -----------------------------
 # Backend 연동 (Stage 업데이트)
 # -----------------------------
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").rstrip("/")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8080").rstrip("/")
 
 async def update_job_stage(job_id: str, stage: str) -> None:
     """
@@ -67,14 +71,17 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
         return
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.patch(
+            resp = await client.patch(
                 f"{BACKEND_URL}/api/kids/jobs/{job_id}/suggested-tags",
                 json={"suggestedTags": tags},
                 headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
             )
-        print(f"   ✅ [Suggested Tags] {tags}")
+            if resp.status_code >= 400:
+                 print(f"   ⚠️ [Suggested Tags] Backend 응답 에러: Status={resp.status_code} | Body={resp.text}")
+            else:
+                 print(f"   ✅ [Suggested Tags] 저장 성공: Status={resp.status_code} | Tags={tags}")
     except Exception as e:
-        print(f"   ⚠️ [Suggested Tags] 저장 실패 (무시) | tags={tags} | error={str(e)}")
+        print(f"   ⚠️ [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
 
 def _make_agent_log_sender(job_id: str):
     """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용 - requests 사용)"""
@@ -520,6 +527,10 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
         if hasattr(part, "text") and part.text:
             meta_text += part.text
             
+    # [Log] Gemini 응답 원본 확인
+    log(f"   🤖 [Gemini Raw Response] {meta_text.replace(chr(10), ' ')[:200]}...")
+
+            
     # 에러 방지: 이미지가 없으면 텍스트에서라도 이미지를 찾거나(Base64) 재시도 로직 고려 가능
     if out_bytes is None:
         # 텍스트 내에 Base64 이미지가 섞여 있을 가능성 체크
@@ -931,7 +942,7 @@ async def process_kids_request_internal(
             log(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
 
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
-                raise RuntimeError("LDR output missing/empty")
+                raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
 
             # -----------------
             # 5) 결과 URL 생성 및 BOM 파일 생성
@@ -951,6 +962,52 @@ async def process_kids_request_internal(
 
             log(f"✅ [STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
 
+            # -----------------
+            # 6) PDF 자동 생성 (Headless)
+            # -----------------
+            pdf_url = ""
+            try:
+                step_start = time.time()
+                log(f"📌 [STEP 5/5] PDF 자동 생성 시작 (Playwright)...")
+                
+                # LDR 내용 읽기
+                ldr_text = out_ldr.read_text(encoding="utf-8")
+                
+                # 이미지 캡처
+                step_images_bytes = await HeadlessPdfService.capture_step_images(ldr_text)
+                
+                if step_images_bytes:
+                    log(f"   📸 캡처 완료: {len(step_images_bytes)} steps")
+                    
+                    # BOM 파싱
+                    step_boms = parse_ldr_step_boms(ldr_text)
+                    
+                    # 커버 이미지 (마지막 스텝의 첫 뷰)
+                    cover_bytes = None
+                    if step_images_bytes[-1]:
+                        cover_bytes = step_images_bytes[-1][0]
+                        
+                    # PDF 생성
+                    pdf_bytes = generate_pdf_with_images_and_bom(
+                        model_name=f"Brickers_{job_id}",
+                        step_images=step_images_bytes,
+                        step_boms=step_boms,
+                        cover_image=cover_bytes
+                    )
+                    
+                    # S3 업로드
+                    now = datetime.now()
+                    pdf_filename = f"{uuid.uuid4().hex[:8]}_instructions.pdf"
+                    pdf_key = f"uploads/pdf/{now.year:04d}/{now.month:02d}/{pdf_filename}"
+                    
+                    pdf_url = upload_bytes_to_s3(pdf_bytes, pdf_key, "application/pdf")
+                    log(f"✅ [STEP 5/5] PDF 생성 및 업로드 완료 | url={pdf_url[:60]}... | {time.time()-step_start:.2f}s")
+                else:
+                    log(f"⚠️ [STEP 5/5] PDF 생성 실패 (이미지 캡처 실패) | {time.time()-step_start:.2f}s")
+
+            except Exception as e:
+                log(f"⚠️ [STEP 5/5] PDF 생성 중 에러 발생 (무시함) | error={str(e)}")
+
             total_elapsed = time.time() - total_start
             log("═" * 70)
             log(f"🎉 [AI-SERVER] 요청 완료! | jobId={job_id}")
@@ -965,6 +1022,7 @@ async def process_kids_request_internal(
                 "modelUrl": model_url,
                 "ldrUrl": ldr_url,
                 "bomUrl": bom_url,
+                "pdfUrl": pdf_url,
                 "subject": final_subject,
                 "tags": ai_tags,
                 "parts": int(result.get("parts", 0)),
