@@ -36,6 +36,7 @@ from service.backend_client import (
     update_job_stage,
     update_job_suggested_tags,
     make_agent_log_sender,
+    send_agent_log,
 )
 from service.bom_generator import generate_bom_from_ldr
 from service.brickify_loader import (
@@ -185,13 +186,12 @@ async def process_kids_request_internal(
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- SSE 실시간 로그 전송용 ---
-    _sse_sender = make_agent_log_sender(job_id)
-    def _sse(step: str, message: str):
-        try:
-            _sse_sender(step, message)
-        except Exception:
-            pass
+    # --- SSE 실시간 로그 전송용 (async) ---
+    _sse_sender = make_agent_log_sender(job_id)  # convert_glb_to_ldr 스레드용 (sync)
+
+    async def _sse(step: str, message: str):
+        """파이프라인 단계별 SSE 로그 전송 (async httpx)"""
+        await send_agent_log(job_id, step, message)
 
     _log("\u2550" * 70)
     _log(f"\U0001f680 [AI-SERVER] \uc694\uccad \uc2dc\uc791 | jobId={job_id}")
@@ -207,7 +207,7 @@ async def process_kids_request_internal(
             # 0) S3에서 원본 이미지 다운로드
             step_start = time.time()
             _log(f"\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
-            _sse("download", "그림을 받아서 살펴보고 있어요...")
+            await _sse("download", "그림을 받아서 살펴보고 있어요...")
             img_bytes = await _download_from_s3(source_image_url)
             raw_path = out_req_dir / "raw.png"
             await _write_bytes_async(raw_path, img_bytes)
@@ -216,7 +216,7 @@ async def process_kids_request_internal(
             # 1) Gemini 보정
             step_start = time.time()
             _log(f"\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
-            _sse("gemini", "어떤 모양인지 분석하고 있어요...")
+            await _sse("gemini", "어떤 모양인지 분석하고 있어요...")
             corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
 
             final_subject = subject or ai_subject
@@ -231,7 +231,7 @@ async def process_kids_request_internal(
             # 2) Tripo 3D
             step_start = time.time()
             _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
-            _sse("tripo", "입체적인 3D 모델을 상상하고 있어요...")
+            await _sse("tripo", "입체적인 3D 모델을 상상하고 있어요...")
             await update_job_stage(job_id, "THREE_D_PREVIEW")
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
@@ -368,7 +368,7 @@ async def process_kids_request_internal(
             step_start = time.time()
             s3_mode = "ON" if USE_S3 else "OFF"
             _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
-            _sse("bom", "어떤 부품이 필요한지 정리하고 있어요...")
+            await _sse("bom", "어떤 부품이 필요한지 정리하고 있어요...")
             ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
             print(f"   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
@@ -384,7 +384,7 @@ async def process_kids_request_internal(
             pdf_url = None
             _log(f"📌 [INFO] PDF 생성은 프론트엔드 캡처 후 /api/instructions/pdf-with-bom 호출을 사용하세요.")
 
-            _sse("complete", "완성! 브릭 모델이 준비됐어요!")
+            await _sse("complete", "완성! 브릭 모델이 준비됐어요!")
 
             total_elapsed = time.time() - total_start
             _log("\u2550" * 70)
