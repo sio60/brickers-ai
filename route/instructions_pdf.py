@@ -33,70 +33,12 @@ router = APIRouter(prefix="/api/instructions", tags=["instructions"])
 
 
 # =============================================
-# S3 Integration (kids_render.py에서 가져옴)
+# S3 Integration (service.s3_client에서 공유)
 # =============================================
-try:
-    import boto3
-    from botocore.exceptions import ClientError
-except ImportError:
-    boto3 = None
-    ClientError = Exception
+from service.s3_client import USE_S3, S3_BUCKET, upload_bytes_to_s3
 
-def _is_truthy(v: str) -> bool:
-    return v.strip().lower() in ("1", "true", "yes", "y", "on")
-
-AWS_REGION = os.environ.get("AWS_REGION", "").strip() or os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-2").strip()
-S3_BUCKET = os.environ.get("AWS_S3_BUCKET", "").strip()
-S3_PUBLIC_BASE_URL = os.environ.get("S3_PUBLIC_BASE_URL", "").strip().rstrip("/")
-USE_S3 = _is_truthy(os.environ.get("USE_S3", "true" if S3_BUCKET else "false"))
-S3_PREFIX = os.environ.get("S3_PREFIX", "uploads/pdf").strip().strip("/")
-S3_PRESIGN = _is_truthy(os.environ.get("S3_PRESIGN", "false"))
-S3_PRESIGN_EXPIRES = int(os.environ.get("S3_PRESIGN_EXPIRES", "86400"))
-
-_S3_CLIENT = None
-
-def _get_s3_client():
-    global _S3_CLIENT
-    if _S3_CLIENT is not None:
-        return _S3_CLIENT
-    if boto3 is None or not S3_BUCKET:
-        return None
-    _S3_CLIENT = boto3.client("s3", region_name=AWS_REGION)
-    return _S3_CLIENT
-
-def _s3_url_for_key(key: str) -> str:
-    if S3_PRESIGN:
-        client = _get_s3_client()
-        return client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": S3_BUCKET, "Key": key},
-            ExpiresIn=S3_PRESIGN_EXPIRES
-        )
-    if S3_PUBLIC_BASE_URL:
-        return f"{S3_PUBLIC_BASE_URL}/{key}"
-    host = f"{S3_BUCKET}.s3.amazonaws.com" if AWS_REGION == "us-east-1" else f"{S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com"
-    return f"https://{host}/{key}"
-
-def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/pdf") -> str:
-    """bytes 데이터를 S3에 업로드"""
-    if not USE_S3:
-        return ""
-    client = _get_s3_client()
-    if not client:
-        return ""
-    
-    extra_args = {
-        "ContentType": content_type,
-        "ContentDisposition": f'attachment; filename="{key.split("/")[-1]}"'
-    }
-    
-    client.put_object(
-        Bucket=S3_BUCKET,
-        Key=key,
-        Body=data,
-        **extra_args
-    )
-    return _s3_url_for_key(key)
+# PDF용 S3 prefix (kids_render와 다름)
+PDF_S3_PREFIX = os.environ.get("S3_PREFIX_PDF", "uploads/pdf").strip().strip("/")
 
 
 # =============================================
@@ -458,9 +400,9 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
         if USE_S3 and S3_BUCKET:
             now = datetime.now()
             safe_name = re.sub(r'[\\/:*?"<>|]+', "_", req.modelName or "instructions")
-            s3_key = f"{S3_PREFIX}/{now.year:04d}/{now.month:02d}/{uuid.uuid4().hex[:8]}_{safe_name}.pdf"
-            
-            pdf_url = _upload_bytes_to_s3(pdf_bytes, s3_key, "application/pdf")
+            s3_key = f"{PDF_S3_PREFIX}/{now.year:04d}/{now.month:02d}/{uuid.uuid4().hex[:8]}_{safe_name}.pdf"
+
+            pdf_url = upload_bytes_to_s3(pdf_bytes, s3_key, "application/pdf")
             print(f"[PDF] Uploaded to S3: {pdf_url}")
             
             return PdfWithBomResponse(ok=True, pdfUrl=pdf_url)
