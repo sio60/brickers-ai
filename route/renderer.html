@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Headless Renderer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #ffffff;
+        }
+
+        #canvas-container {
+            width: 1024px;
+            height: 768px;
+        }
+    </style>
+    <!-- Import Maps -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
+
+        // --- Global State ---
+        let scene, camera, renderer;
+        let modelGroup = null;
+        let stepObjects = []; // Array of groups or objects for each step
+
+        // --- Init Three.js ---
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xffffff);
+
+            // Camera (Perspective)
+            camera = new THREE.PerspectiveCamera(45, 1024 / 768, 1, 10000);
+            camera.position.set(200, -200, 200); // Default View
+            camera.lookAt(0, 0, 0);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+            renderer.setSize(1024, 768);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            dirLight.position.set(200, 500, 300);
+            scene.add(dirLight);
+
+            // Helpers (optional)
+            // const axes = new THREE.AxesHelper(100);
+            // scene.add(axes);
+
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        init();
+
+        // --- LDraw Loading Logic ---
+        // Parts Library path (CDN)
+        const PARTS_PATH = "https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/";
+
+        window.loadLdrContent = async function (ldrText) {
+            console.log("Loading LDR content...");
+
+            // Clear previous model
+            if (modelGroup) {
+                scene.remove(modelGroup);
+                modelGroup = null;
+                stepObjects = [];
+            }
+
+            // Create Blob URL for LDR content to let loader read it
+            const blob = new Blob([ldrText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+
+            // Loader setup
+            const loader = new LDrawLoader();
+            loader.setPartsLibraryPath(PARTS_PATH);
+
+            try {
+                // Load the main model
+                const group = await loader.loadAsync(url);
+
+                // LDraw models can be huge or tiny, and often inverted Y. 
+                // Standard Brickers usage: rotation.x = Math.PI to fix orientation if needed.
+                // But let's check bounding box first.
+                group.rotation.x = Math.PI; // Standard fix for LDraw coordinate system in Three.js
+
+                modelGroup = group;
+                scene.add(modelGroup);
+
+                // Center the model
+                const box = new THREE.Box3().setFromObject(group);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+
+                // Shift model to origin (0,0,0) - optional but good for consistent camera
+                // Actually, let's move the group position
+                group.position.sub(center);
+
+                // Adjust camera distance based on size
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const dist = maxDim * 2.5;
+                // Initial camera set will be overridden by setCameraView anyway, 
+                // but good to have a sensible default scale reference.
+
+                // --- Parse Steps ---
+                // For PDF, we need to show parts incrementally.
+                // LDrawLoader usually puts everything in one big group, 
+                // OR it might respect STEP commands if configured? 
+                // Three.js LDrawLoader documentation says file content is loaded as one Group.
+                // However, detailed step parsing is tricky.
+                // 
+                // Simplest approach for "Server rendering": 
+                // The loaded group hierarchy usually reflects the file structure.
+                // If it's a flat list of parts, we need to re-parse text to find step breaks 
+                // and assign parts to steps.
+
+                // Since LDrawLoader returns a Group containing potentially nested Groups/Meshes, 
+                // mapping them back to "LDR Steps" is hard without parsing the LDR text ourselves.
+                // 
+                // ALTERNATIVE: Use the LDR parsing logic similar to `page.tsx`.
+                // But recreating that full logic here is complex.
+                //
+                // Fast hack:
+                // Parse LDR text to find "0 STEP" commands.
+                // But we need to know *which mesh* belongs to *which step*.
+                //
+                // Better approach used in page.tsx:
+                // It builds cumulative LDR text for each step and re-loads/parses.
+                // That might be too slow for many steps?
+                // 
+                // Wait, LDrawLoader puts user data?
+                // Let's assume for now we just show the whole model if step parsing is too hard, 
+                // OR implement the cumulative loading method similar to page.tsx.
+                //
+                // Let's use the efficient "Cumulative Blob" method used in Frontend.
+                // But inside `renderer.html`?
+                // 
+                // `headless_renderer.py` calls `loadLdrContent(text)` once.
+                // It expects `total_steps` as return.
+                // Then calls `renderStep(stepIdx)`.
+                //
+                // If we want to support true step-by-step, `renderStep` needs to:
+                // 1. Hide all parts.
+                // 2. Show parts up to stepIdx.
+                //
+                // Is there an easy way? 
+                // Loader.userData.numBuildingSteps exists? No.
+                // 
+                // Let's implement the "Parse and separate" logic:
+                // 1. Parse LDR text into chunks separated by "0 STEP".
+                // 2. We can create separate LDrawLoaders? No, too heavy.
+                // 
+                // Actually, the most robust way matching Frontend `page.tsx` logic is:
+                // "Cumulative LDR" string generation.
+                // 
+                // Let's change strategy: 
+                // `loadLdrContent` will parse text into step segments.
+                // `renderStep(idx)` will build a cumulative LDR string for that step, 
+                // create a Blob URL, and load it.
+                // 
+                // ISSUE: Loading takes time! `renderStep` needs to be async or wait.
+                // Playwright `evaluate` awaits promises. So we can make `renderStep` async.
+
+                // Parse LDR text
+                window.ldrSegments = parseLdrToSegments(ldrText);
+                return window.ldrSegments.length;
+
+            } catch (e) {
+                console.error(e);
+                return 0;
+            }
+        };
+
+        // Helper: Parse LDR into segments (0 STEP split)
+        function parseLdrToSegments(text) {
+            const lines = text.replace(/\r\n/g, "\n").split("\n");
+            const segments = [];
+            let currentLines = [];
+
+            for (const line of lines) {
+                if (line.trim().startsWith("0 STEP") || line.trim().startsWith("0 ROTSTEP")) {
+                    if (currentLines.length > 0) {
+                        segments.push(currentLines.join("\n"));
+                        currentLines = [];
+                    }
+                } else {
+                    currentLines.push(line);
+                }
+            }
+            if (currentLines.length > 0) {
+                segments.push(currentLines.join("\n"));
+            }
+            return segments;
+        }
+
+        window.renderStep = async function (stepIdx) {
+            if (!window.ldrSegments || stepIdx < 0) return;
+
+            // Build cumulative text
+            // If segments[0] is header (no parts), it should always be included?
+            // Usually 0 is header.
+            // Let's just join from 0 to stepIdx.
+            const limit = Math.min(stepIdx + 1, window.ldrSegments.length);
+            const cumulativeText = window.ldrSegments.slice(0, limit).join("\n0 STEP\n");
+
+            const blob = new Blob([cumulativeText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+
+            const loader = new LDrawLoader();
+            loader.setPartsLibraryPath(PARTS_PATH);
+
+            try {
+                // Clear scene
+                if (modelGroup) scene.remove(modelGroup);
+
+                // Load new partial model
+                const group = await loader.loadAsync(url);
+                group.rotation.x = Math.PI;
+
+                // Center and view fit
+                const box = new THREE.Box3().setFromObject(group);
+                if (!box.isEmpty()) {
+                    const center = box.getCenter(new THREE.Vector3());
+                    group.position.sub(center); // Always center at 0,0,0
+                }
+
+                scene.add(group);
+                modelGroup = group;
+
+                URL.revokeObjectURL(url);
+                return true;
+            } catch (e) {
+                console.error("Step render failed", e);
+                return false;
+            }
+        };
+
+        // --- Camera Views ---
+        // 0: Main (Right Front Top)
+        // 1: Left Front Top
+        // 2: Back Top
+        const VIEWS = [
+            [200, -200, 200],
+            [-200, -200, 200],
+            [0, -300, -200]
+        ];
+
+        window.setCameraView = function (viewIdx) {
+            const pos = VIEWS[viewIdx] || VIEWS[0];
+            camera.position.set(pos[0], pos[1], pos[2]);
+            camera.lookAt(0, 0, 0);
+            camera.updateMatrixWorld();
+        };
+
+    </script>
+</body>
+
+</html>

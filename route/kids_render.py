@@ -147,6 +147,7 @@ class ProcessResp(BaseModel):
     ldrUrl: str
     ldrData: Optional[str] = None
     bomUrl: str
+    pdfUrl: Optional[str] = None # [New]
     subject: str
     tags: list[str]
     parts: int
@@ -496,6 +497,7 @@ async def process(request: KidsProcessRequest):
             "ldrUrl": result["ldrUrl"],
             "ldrData": ldr_data_uri,
             "bomUrl": result["bomUrl"],
+            "pdfUrl": result.get("pdfUrl"), # [New]
             "subject": result["subject"],
             "tags": result["tags"],
             "parts": result["parts"],
