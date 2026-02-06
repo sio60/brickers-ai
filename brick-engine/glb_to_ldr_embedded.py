@@ -462,6 +462,56 @@ def enforce_symmetry(grid: VoxelGrid, axis: Literal["x", "z"]) -> None:
                             cid[x, y, z] = cid[x, y, mz]
 
 
+def embed_voxels_downwards(grid: VoxelGrid) -> None:
+    """공중에 떠 있는 복셀(다리 등)을 바닥이나 인접 덩어리로 연결하여 절단 방지"""
+    occ, cid = grid.occupied, grid.color_ids
+    nx, ny, nz = occ.shape
+    
+    # 1. 접지(Grounded) 상태 확인 (바닥 y=0부터 시작)
+    grounded = np.zeros_like(occ, dtype=bool)
+    grounded[:, 0, :] = occ[:, 0, :]
+    
+    # 연결된 덩어리 전파 (최대 높이만큼 반복)
+    for _ in range(ny):
+        prev = grounded.copy()
+        # 수직 연결 (아래가 접지면 위도 접지 가능)
+        grounded[:, 1:, :] |= (occ[:, 1:, :] & grounded[:, :-1, :])
+        # 수평 연결 (사이드가 접지면 옆도 접지 가능)
+        grounded[1:, :, :] |= (occ[1:, :, :] & grounded[:-1, :, :])
+        grounded[:-1, :, :] |= (occ[:-1, :, :] & grounded[1:, :, :])
+        grounded[:, :, 1:] |= (occ[:, :, 1:] & grounded[:, :, :-1])
+        grounded[:, :, :-1] |= (occ[:, :, :-1] & grounded[:, :, 1:])
+        
+        if np.array_equal(prev, grounded):
+            break
+            
+    # 2. 떠 있는(Floating) 복셀 처리
+    floating = occ & (~grounded)
+    if not np.any(floating):
+        return
+
+    # 바닥 레이어부터 순차적으로 기둥(Pillar) 생성
+    for y in range(ny):
+        fx, fz = np.where(floating[:, y, :])
+        for x, z in zip(fx, fz):
+            # 현재 위치가 여전히 접지되지 않았다면
+            if not grounded[x, y, z]:
+                # 해당 복셀 색상 추출
+                color = int(cid[x, y, z])
+                if color < 0: color = 71
+                
+                # 아래로 내려가며 채움
+                for dy in range(y - 1, -1, -1):
+                    if occ[x, dy, z] and grounded[x, dy, z]:
+                        break # 접지된 곳에 닿음
+                    occ[x, dy, z] = True
+                    cid[x, dy, z] = color
+                    grounded[x, dy, z] = True
+                    
+                    # 주변으로도 전파 (덩어리 인식)
+                    # 이 시점부터는 해당 Column이 접지된 것으로 간주됨
+
+
 def greedy_pack_bricks(
     grid: VoxelGrid,
     parts: List[BrickPart],
@@ -824,6 +874,8 @@ def convert_glb_to_ldr_v3_inline(
     pitch = calculate_auto_pitch(scene, max(1, int(target_studs)))
     grid = voxelize_scene(scene, pitch, solid=solid, use_mesh_color=use_mesh_color, solid_color=solid_color)
     smooth_colors(grid, passes=color_smooth)
+    # [Fix] 떠 있는 부분(다리 등) 절단 방지 보정
+    embed_voxels_downwards(grid)
 
     if symmetry != "off":
         if symmetry == "auto":

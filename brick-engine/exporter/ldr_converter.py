@@ -919,8 +919,9 @@ def ldr_to_brick_model(
 
     # Y좌표로 레이어 자동 계산
     if bricks:
-        # Y좌표 기준 정렬 (LDraw: 작은 Y가 위)
-        y_values = sorted(set(b.position.y for b in bricks))
+        # Y좌표 기준 정렬 (LDraw: 큰 Y가 바닥/하단)
+        # bottom-up 조립을 위해 Y가 큰 값(바닥)부터 작은 값(상단) 순서로 레이어 번호 부여
+        y_values = sorted(set(b.position.y for b in bricks), reverse=True)
         y_to_layer = {y: i for i, y in enumerate(y_values)}
         for brick in bricks:
             brick.layer = y_to_layer[brick.position.y]

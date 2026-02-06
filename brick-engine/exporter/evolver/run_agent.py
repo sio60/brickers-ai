@@ -129,7 +129,7 @@ def run_agent(ldr_path: str, glb_path: str = None):
 
     # Save result
     output = Path(ldr_path).parent / f"{Path(ldr_path).stem}_evolved.ldr"
-    ldr = model_to_ldr(final_state["model"], parts_db, skip_validation=True, skip_physics=True)
+    ldr = model_to_ldr(final_state["model"], parts_db, skip_validation=True, skip_physics=True, step_mode='layer')
     with open(output, 'w', encoding='utf-8') as f:
         f.write(ldr)
 
