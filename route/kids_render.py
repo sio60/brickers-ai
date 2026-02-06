@@ -578,12 +578,12 @@ def _budget_to_start_target(eff_budget: int) -> int:
     # Frontend budgets: 300 / 350 / 400 (4-5 / 6-7 / 8-10)
     # [Increased] +10~15 to capture more detail like noses/tails
     if eff_budget <= 300:
-        return 90
+        return 110
     if eff_budget <= 350:
-        return 105
+        return 125
     if eff_budget <= 400:
-        return 120
-    return 125
+        return 140
+    return 145
 
 def _load_engine_convert():
     """
@@ -894,7 +894,7 @@ async def process_kids_request_internal(
                 "use_mesh_color": True,
                 "invert_y": False,
                 "smart_fix": True,
-                "fill": False,
+                "fill": False,  # [Reverted] Save budget for external detail
                 "step_order": "bottomup",
                 "span": 4,
                 "max_new_voxels": 18000,  # [Increased] 12000 -> 18000
@@ -902,7 +902,7 @@ async def process_kids_request_internal(
                 "ensure_connected": True,
                 "small_side_contact": False, # [Rollback] Must maintain vertical interlocking
                 "min_embed": 2,
-                "erosion_iters": 1,
+                "erosion_iters": 0,  # [Disabled] Prevent losing thin details (tails/noses)
                 "fast_search": True,
                 "extend_catalog": True,
                 "max_len": 8,
