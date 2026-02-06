@@ -70,6 +70,60 @@ def node_observe(state: AgentState) -> AgentState:
         if loaded_memory:
             memory = loaded_memory
 
+    # ========================================
+    # Vision 분석 먼저 (model_type 판단 필수)
+    # ========================================
+    vision_quality_score = state.get("vision_quality_score")
+    vision_problems = state.get("vision_problems", [])
+    model_type = state.get("model_type", "unknown")
+
+    if state['iteration'] == 0 and vision_quality_score is None:
+        print(f"  [Vision] Running Vision analysis (FIRST - model_type 판단)...")
+        try:
+            evolver_dir = setup_vision_paths()
+
+            from vision_analyzer import find_problems, analyze_multi_angle
+            from ldr_renderer import render_model_multi_angle
+
+            VISION_ANGLES = ["FRONT", "BACK", "RIGHT", "BOTTOM", "FRONT_RIGHT"]
+            images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)
+            if images:
+                import base64
+                render_dir = evolver_dir / "renders"
+                render_dir.mkdir(exist_ok=True)
+                for angle, b64_data in images.items():
+                    if b64_data:
+                        img_path = render_dir / f"{angle.lower()}.png"
+                        with open(img_path, "wb") as f:
+                            f.write(base64.b64decode(b64_data))
+                print(f"  [Vision] 렌더링 저장됨: {render_dir}")
+
+                # Vision LLM으로 모델 분석 (model_type 추출) - 가장 먼저!
+                model_name = getattr(state["model"], "name", "unknown")
+                analysis = analyze_multi_angle(images, model_name)
+                model_type = analysis.get("model_type", "unknown")
+                print(f"  [Vision] Model type: {model_type}")
+
+                # Vision LLM으로 문제점 찾기
+                result = find_problems(images, model_name)
+                vision_quality_score = result.get("overall_quality", 50)
+                all_problems = result.get("problems", [])
+                vision_problems = [p for p in all_problems if p.get("severity", "").lower() == "high"]
+
+                print(f"  [Vision] Quality: {vision_quality_score}/100")
+                print(f"  [Vision] Problems: {len(vision_problems)} high-severity (total: {len(all_problems)})")
+                for p in vision_problems[:3]:
+                    print(f"    - {p.get('location')}: {p.get('issue')}")
+            else:
+                print(f"  [Vision] Render failed, skipping")
+                vision_quality_score = 50
+
+        except Exception as e:
+            print(f"  [Vision] Error: {e}")
+            vision_quality_score = 50
+    elif vision_quality_score is not None:
+        print(f"  Vision: {vision_quality_score}/100 ({len(vision_problems)} problems), model_type: {model_type}")
+
     model_state = get_model_state(state["model"], get_config().parts_db)
 
     print(f"  Bricks: {model_state['total_bricks']}")
@@ -88,7 +142,7 @@ def node_observe(state: AgentState) -> AgentState:
             print(f"    - [{ev.severity}] {ev.type}: {ev.message[:80]}...")
 
     # Symmetry analysis (비대칭이 자연스러운 모형은 스킵)
-    model_type = state.get("model_type", "unknown")
+    # model_type은 위에서 Vision 분석으로 이미 결정됨
     symmetry_issues = []
 
     if model_type not in SKIP_SYMMETRY_TYPES:
@@ -99,63 +153,6 @@ def node_observe(state: AgentState) -> AgentState:
             print(f"  Symmetry: OK")
     else:
         print(f"  Symmetry: Skipped ({model_type} is naturally asymmetric)")
-
-    # Vision 분석 (floating=0이고 아직 분석 안 됐으면 수행)
-    vision_quality_score = state.get("vision_quality_score")
-    vision_problems = state.get("vision_problems", [])
-
-    if model_state["floating_count"] == 0 and vision_quality_score is None:
-        print(f"  [Vision] Running Vision analysis (floating=0, need shape check)...")
-        try:
-            # 공유 경로 유틸리티 사용
-            evolver_dir = setup_vision_paths()
-
-            from vision_analyzer import find_problems, analyze_multi_angle
-            from ldr_renderer import render_model_multi_angle
-
-            # 모델 렌더링 (5방향 - TOP, LEFT 제외)
-            VISION_ANGLES = ["FRONT", "BACK", "RIGHT", "BOTTOM", "FRONT_RIGHT"]
-            images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)
-            if images:
-                # 렌더링 이미지 저장
-                import base64
-                render_dir = evolver_dir / "renders"
-                render_dir.mkdir(exist_ok=True)
-                for angle, b64_data in images.items():
-                    if b64_data:
-                        img_path = render_dir / f"{angle.lower()}.png"
-                        with open(img_path, "wb") as f:
-                            f.write(base64.b64decode(b64_data))
-                print(f"  [Vision] 렌더링 저장됨: {render_dir}")
-
-                # Vision LLM으로 모델 분석 (model_type 추출)
-                model_name = getattr(state["model"], "name", "unknown")
-                analysis = analyze_multi_angle(images, model_name)
-                model_type = analysis.get("model_type", "unknown")
-                print(f"  [Vision] Model type: {model_type}")
-
-                # Vision LLM으로 문제점 찾기
-                result = find_problems(images, model_name)
-
-                vision_quality_score = result.get("overall_quality", 50)
-                all_problems = result.get("problems", [])
-
-                # severity가 "high"인 문제만 필터링 (오탐 방지)
-                vision_problems = [p for p in all_problems if p.get("severity", "").lower() == "high"]
-
-                print(f"  [Vision] Quality: {vision_quality_score}/100")
-                print(f"  [Vision] Problems: {len(vision_problems)} high-severity (total: {len(all_problems)})")
-                for p in vision_problems[:3]:
-                    print(f"    - {p.get('location')}: {p.get('issue')}")
-            else:
-                print(f"  [Vision] Render failed, skipping")
-                vision_quality_score = 50  # 기본값
-
-        except Exception as e:
-            print(f"  [Vision] Error: {e}")
-            vision_quality_score = 50  # 에러 시 기본값
-    elif vision_quality_score is not None:
-        print(f"  Vision: {vision_quality_score}/100 ({len(vision_problems)} problems)")
 
 
     return {
