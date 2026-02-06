@@ -900,9 +900,10 @@ async def process_kids_request_internal(
                 "fill": False,  # [Reverted] Save budget for external detail
                 "step_order": "bottomup",
                 "span": 4,
-                "max_new_voxels": 18000,  # [Increased] 12000 -> 18000
+                "max_new_voxels": 20000,  # [Increased] 12000 -> 20000
                 "refine_iters": 8,
                 "ensure_connected": True,
+                "mode": "kids", # [Explicit] Use kids catalog
                 "small_side_contact": False, # [Rollback] Must maintain vertical interlocking
                 "min_embed": 2,
                 "erosion_iters": 0,  # [Disabled] Prevent losing thin details (tails/noses)
