@@ -306,11 +306,6 @@ async def process_kids_request_internal(
             await update_job_stage(job_id, "MODEL")
 
             convert_fn = load_engine_convert()
-            regeneration_loop, GeminiClient = load_agent_modules()
-
-            gemini_key = os.environ.get("GEMINI_API_KEY", "")
-            llm_client = GeminiClient(api_key=gemini_key)
-
             out_ldr = out_brick_dir / "result.ldr"
 
             agent_params = {
@@ -341,20 +336,15 @@ async def process_kids_request_internal(
                 "extend_catalog": True,
                 "max_len": 8,
             }
-            agent_params["log_callback"] = make_agent_log_sender(job_id)
 
-            def run_agent_sync():
-                return regeneration_loop(
-                    glb_path=str(glb_path),
-                    output_ldr_path=str(out_ldr),
-                    subject_name=final_subject,
-                    llm_client=llm_client,
-                    max_retries=3,
-                    gui=False,
-                    params=agent_params,
+            def run_convert_sync():
+                return convert_fn(
+                    str(glb_path),
+                    str(out_ldr),
+                    **agent_params
                 )
 
-            result: Dict[str, Any] = await anyio.to_thread.run_sync(run_agent_sync)
+            result: Dict[str, Any] = await anyio.to_thread.run_sync(run_convert_sync)
 
             brickify_elapsed = time.time() - step_start
             _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
