@@ -25,6 +25,9 @@ RUN pip install --no-cache-dir \
     -r requirements.txt \
     && rm -rf /tmp/wheels
 
+# Playwright 브라우저 설치 (Headless Chrome)
+RUN playwright install --with-deps chromium
+
 # 소스코드 복사
 COPY . .
 

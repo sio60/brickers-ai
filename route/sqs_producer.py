@@ -64,6 +64,7 @@ async def send_result_message(
     glb_url: str = "",
     ldr_url: str = "",
     bom_url: str = "",
+    pdf_url: str = "",
     parts: int = 0,
     final_target: int = 0,
     error_message: Optional[str] = None,
@@ -78,6 +79,7 @@ async def send_result_message(
         glb_url: GLB 파일 URL
         ldr_url: LDR 파일 URL
         bom_url: BOM 파일 URL
+        pdf_url: PDF 파일 URL
         parts: 파츠 수
         final_target: 최종 타겟
         error_message: 실패 시 에러 메시지
@@ -104,6 +106,7 @@ async def send_result_message(
                 "glbUrl": glb_url,
                 "ldrUrl": ldr_url,
                 "bomUrl": bom_url,
+                "pdfUrl": pdf_url,
                 "parts": parts,
                 "finalTarget": final_target,
             })
