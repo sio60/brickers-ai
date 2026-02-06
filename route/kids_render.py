@@ -586,19 +586,19 @@ async def render_one_image_async(img_bytes: bytes, mime: str) -> tuple[bytes, st
 # -----------------------------
 # Brickify engine loader
 # -----------------------------
-AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400}
+AGE_TO_BUDGET = {"4-5": 400, "6-7": 450, "8-10": 500}
 
 
 def _budget_to_start_target(eff_budget: int) -> int:
     # Frontend budgets: 300 / 350 / 400 (4-5 / 6-7 / 8-10)
     # [Increased] +10~15 to capture more detail like noses/tails
-    if eff_budget <= 300:
-        return 110
-    if eff_budget <= 350:
-        return 125
     if eff_budget <= 400:
-        return 140
-    return 145
+        return 130
+    if eff_budget <= 450:
+        return 145
+    if eff_budget <= 500:
+        return 160
+    return 170
 
 def _load_engine_convert():
     """
@@ -908,13 +908,13 @@ async def process_kids_request_internal(
                 "solid_color": 4,
                 "use_mesh_color": True,
                 "invert_y": False,
-                "smart_fix": True,
                 "fill": False,  # [Reverted] Save budget for external detail
                 "step_order": "bottomup",
                 "span": 4,
-                "max_new_voxels": 18000,  # [Increased] 12000 -> 18000
+                "max_new_voxels": 20000,  # [Increased] 12000 -> 20000
                 "refine_iters": 8,
                 "ensure_connected": True,
+                "mode": "kids", # [Explicit] Use kids catalog
                 "small_side_contact": False, # [Rollback] Must maintain vertical interlocking
                 "min_embed": 2,
                 "erosion_iters": 0,  # [Disabled] Prevent losing thin details (tails/noses)
