@@ -276,16 +276,8 @@ class AgentState(TypedDict):
 # ============================================================================
 
 class RegenerationGraph:
-    def __init__(self, llm_client: Optional[BaseLLMClient] = None):
-        # 기본 클라이언트는 Gemini (비용 효율성)
-        self.gemini_client = GeminiClient()
-        self.default_client = llm_client if llm_client else self.gemini_client
-        
-        # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
-        self.gpt_client = None
-            
-        # 초기 시스템 프롬프트 (Tool 사용 권장)
-        self.SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
+    # 초기 시스템 프롬프트 (Tool 사용 권장)
+    SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
 주어진 3D 모델(GLB)을 레고(LDR)로 변환하는 과정에서 발생하는 구조적 불안정성 문제를 해결해야 합니다.
 
 **핵심 원칙: LLM은 검증/분석만, 개선은 알고리즘이 담당합니다.**
@@ -309,6 +301,14 @@ class RegenerationGraph:
 이전 시도의 검증 결과(안정성 등급, 점수, 실패율)를 분석하고 파라미터를 조정하세요.
 """
 
+    def __init__(self, llm_client: Optional[BaseLLMClient] = None):
+        # 기본 클라이언트는 Gemini (비용 효율성)
+        self.gemini_client = GeminiClient()
+        self.default_client = llm_client if llm_client else self.gemini_client
+        
+        # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
+        self.gpt_client = None
+            
         self.verifier = None
         
     # --- Nodes ---
