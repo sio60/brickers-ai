@@ -7,8 +7,8 @@ from playwright.async_api import async_playwright
 
 # Project Root determination (consistent with kids_render.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PUBLIC_DIR = PROJECT_ROOT / "public"
-RENDERER_HTML_PATH = PUBLIC_DIR / "renderer.html"
+# HTML is now in the same directory as this script (route/)
+RENDERER_HTML_PATH = Path(__file__).parent / "renderer.html"
 
 class HeadlessPdfService:
     @staticmethod
