@@ -276,27 +276,8 @@ class AgentState(TypedDict):
 # ============================================================================
 
 class RegenerationGraph:
-    def __init__(self, llm_client: Optional[BaseLLMClient] = None, log_callback=None):
-        # 기본 클라이언트는 Gemini (비용 효율성)
-        self.gemini_client = GeminiClient()
-        self.default_client = llm_client if llm_client else self.gemini_client
-
-        # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
-        self.gpt_client = None
-
-        # SSE 로그 콜백 (Kids 모드용)
-        self._log_callback = log_callback
-
-    def _log(self, step: str, message: str):
-        """SSE 로그 전송 헬퍼"""
-        if self._log_callback:
-            try:
-                self._log_callback(step, message)
-            except Exception:
-                pass  # fire-and-forget
-            
-        # 초기 시스템 프롬프트 (Tool 사용 권장)
-        self.SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
+    # 초기 시스템 프롬프트 (Tool 사용 권장)
+    SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
 주어진 3D 모델(GLB)을 레고(LDR)로 변환하는 과정에서 발생하는 구조적 불안정성 문제를 해결해야 합니다.
 
 **핵심 원칙: LLM은 검증/분석만, 개선은 알고리즘이 담당합니다.**
@@ -320,7 +301,25 @@ class RegenerationGraph:
 이전 시도의 검증 결과(안정성 등급, 점수, 실패율)를 분석하고 파라미터를 조정하세요.
 """
 
+    def __init__(self, llm_client: Optional[BaseLLMClient] = None, log_callback=None):
+        # 기본 클라이언트는 Gemini (비용 효율성)
+        self.gemini_client = GeminiClient()
+        self.default_client = llm_client if llm_client else self.gemini_client
+        
+        # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
+        self.gpt_client = None
+            
+        # SSE 로그 콜백 (Kids 모드용)
+        self._log_callback = log_callback
         self.verifier = None
+
+    def _log(self, step: str, message: str):
+        """SSE 로그 전송 헬퍼"""
+        if self._log_callback:
+            try:
+                self._log_callback(step, message)
+            except Exception:
+                pass  # fire-and-forget
         
     # --- Nodes ---
 
@@ -475,9 +474,9 @@ class RegenerationGraph:
     def node_generator(self, state: AgentState) -> Dict[str, Any]:
         """GLB -> LDR 변환 노드"""
         from glb_to_ldr_embedded import convert_glb_to_ldr
-
-        self._log("GENERATE", f"브릭 모델을 생성하고 있습니다... (시도 {state['attempts'] + 1}/{state['max_retries']})")
+        
         print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
+        self._log("GENERATE", f"브릭 모델을 생성하고 있습니다... (시도 {state['attempts'] + 1}/{state['max_retries']})")
         print(f"  Params: target={state['params'].get('target')}, budget={state['params'].get('budget')}")
         
         try:
@@ -509,8 +508,8 @@ class RegenerationGraph:
         from physical_verification.ldr_loader import LdrLoader
         from physical_verification.verifier import PhysicalVerifier
 
-        self._log("VERIFY", "물리 안정성을 검증하고 있습니다...")
         print("\n[Verifier] 물리 검증 수행 중...")
+        self._log("VERIFY", "물리 안정성을 검증하고 있습니다...")
 
         if not os.path.exists(state['ldr_path']):
             return {"messages": [HumanMessage(content="LDR 파일이 생성되지 않았습니다.")], "next_action": "model"}
@@ -670,10 +669,10 @@ class RegenerationGraph:
         """LLM이 상황을 분석하고 도구를 선택하는 노드"""
         import time
         # API Rate Limit (429) 방지를 위한 짧은 딜레이 (특히 Free Tier 사용 시)
-        time.sleep(2)
-
-        self._log("ANALYZE", "AI가 구조를 분석하고 개선 방안을 찾고 있습니다...")
+        time.sleep(2) 
+        
         print("\n[Co-Scientist] 상황 분석 중...")
+        self._log("ANALYZE", "AI가 구조를 분석하고 개선 방안을 찾고 있습니다...")
         
         # 사용 가능한 도구 정의
         tools = [TuneParameters]
@@ -908,11 +907,11 @@ class RegenerationGraph:
         """
         회고 노드: 검증 결과를 분석하고 성공/실패를 Memory에 기록합니다.
         Co-Scientist의 핵심 학습 메커니즘입니다.
-
+        
         이제 Verify 후에 호출되므로 실제 결과를 알 수 있습니다.
         """
-        self._log("REFLECT", "결과를 분석하고 학습하고 있습니다...")
         print("\n[Reflect] 실제 결과 분석 중...")
+        self._log("REFLECT", "결과를 분석하고 학습하고 있습니다...")
         
         # Memory 초기화 (없으면)
         memory = state.get('memory', {
