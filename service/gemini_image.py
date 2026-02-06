@@ -101,7 +101,8 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
         ):
             out_bytes = meta_text.strip()
         else:
-            raise ValueError(f"no image returned from model (meta_text len: {len(meta_text)})")
+            print(f"[Gemini] Warning: No image returned from model (meta_text len: {len(meta_text)}). Falling back to original image.")
+            out_bytes = img_bytes
 
     out_bytes = _decode_if_base64_image(out_bytes)
 
