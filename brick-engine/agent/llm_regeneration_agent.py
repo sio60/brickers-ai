@@ -85,8 +85,8 @@ DEFAULT_PARAMS = {
     "target": 60,              # 목표 스터드 크기 (400 브릭 기준 60 정도가 적절)
     "min_target": 5,           # 최소 스터드 크기
     "budget": 400,             # 최대 브릭 수 (Kids L1 기준)
-    "shrink": 0.85,            # 축소 비율 (0.85)
-    "search_iters": 6,         # 이진 탐색 반복 횟수
+    "shrink": 0.8,             # 축소 비율 (0.8로 강화)
+    "search_iters": 12,        # 이진 탐색 반복 횟수 (12회로 증가)
     "flipx180": False,         # X축 180도 회전
     "flipy180": False,         # Y축 180도 회전
     "flipz180": False,         # Z축 180도 회전
@@ -490,11 +490,11 @@ class RegenerationGraph:
             brick_count = result.get('parts', 0)
             final_target = result.get('final_target', 0)
             
-            print(f"  ✅ 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
+            print(f"  [OK] 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
             return {"attempts": state['attempts'] + 1, "next_action": "verify"}
             
         except Exception as e:
-            print(f"  ❌ 변환 실패: {e}")
+            print(f"  [Error] 변환 실패: {e}")
             # 변환 자체가 실패하면 에러 메시지를 history에 추가하고 Model에게 도움 요청
             error_msg = f"변환 중 치명적 오류 발생: {e}. 파라미터를 크게 변경해야 합니다."
             return {
@@ -1132,7 +1132,7 @@ def regeneration_loop(
     params: Optional[Dict[str, Any]] = None,
 ):
     print("=" * 60)
-    print("🤖 Co-Scientist Agent (Tool-Use Ver.)")
+    print("Co-Scientist Agent (Tool-Use Ver.)")
     print("=" * 60)
 
     # 로그 콜백 추출 (kids_render.py에서 주입)
