@@ -544,14 +544,17 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
     tags = ["Kids", "Brick"]
     
     try:
+        if meta_text:
+            print(f"[Gemini Meta] Raw extraction text: {meta_text[:100]}...")
+
         if "SUBJECT:" in meta_text:
             s_part = meta_text.split("SUBJECT:")[1].split("|")[0].strip()
             if s_part: subject = s_part
         if "TAGS:" in meta_text:
             t_part = meta_text.split("TAGS:")[1].strip()
             tags = [t.strip() for t in t_part.replace("#", "").split(",") if t.strip()]
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Gemini Meta] Tag parse error: {e}")
 
     return out_bytes, subject, tags
 
