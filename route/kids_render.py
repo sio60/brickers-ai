@@ -82,15 +82,21 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
 def _make_agent_log_sender(job_id: str):
     """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용)"""
     def send_log(step: str, message: str):
+        url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs"
+        token = os.environ.get("INTERNAL_API_TOKEN", "")
         try:
-            httpx.post(
-                f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs",
+            resp = httpx.post(
+                url,
                 json={"step": step, "message": message[:2000]},
-                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
+                headers={"X-Internal-Token": token},
                 timeout=5.0
             )
+            if resp.status_code == 200:
+                print(f"  [AgentLog] ✅ sent: [{step}] {message[:50]}...")
+            else:
+                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url} | token={'SET' if token else 'EMPTY'}")
         except Exception as e:
-            print(f"  [AgentLog] send failed: {e}")
+            print(f"  [AgentLog] ❌ failed: {e} | url={url}")
     return send_log
 
 # -----------------------------
@@ -551,14 +557,17 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
     tags = ["Kids", "Brick"]
     
     try:
+        if meta_text:
+            print(f"[Gemini Meta] Raw extraction text: {meta_text[:100]}...")
+
         if "SUBJECT:" in meta_text:
             s_part = meta_text.split("SUBJECT:")[1].split("|")[0].strip()
             if s_part: subject = s_part
         if "TAGS:" in meta_text:
             t_part = meta_text.split("TAGS:")[1].strip()
             tags = [t.strip() for t in t_part.replace("#", "").split(",") if t.strip()]
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Gemini Meta] Tag parse error: {e}")
 
     return out_bytes, subject, tags
 
@@ -574,13 +583,14 @@ AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400}
 
 def _budget_to_start_target(eff_budget: int) -> int:
     # Frontend budgets: 300 / 350 / 400 (4-5 / 6-7 / 8-10)
+    # [Increased] +10~15 to capture more detail like noses/tails
     if eff_budget <= 300:
-        return 75
+        return 110
     if eff_budget <= 350:
-        return 85
+        return 125
     if eff_budget <= 400:
-        return 95
-    return 100
+        return 140
+    return 145
 
 def _load_engine_convert():
     """
@@ -891,14 +901,15 @@ async def process_kids_request_internal(
                 "use_mesh_color": True,
                 "invert_y": False,
                 "smart_fix": True,
-                "fill": False,
+                "fill": False,  # [Reverted] Save budget for external detail
                 "step_order": "bottomup",
                 "span": 4,
-                "max_new_voxels": 12000,
+                "max_new_voxels": 18000,  # [Increased] 12000 -> 18000
                 "refine_iters": 8,
                 "ensure_connected": True,
+                "small_side_contact": False, # [Rollback] Must maintain vertical interlocking
                 "min_embed": 2,
-                "erosion_iters": 1,
+                "erosion_iters": 0,  # [Disabled] Prevent losing thin details (tails/noses)
                 "fast_search": True,
                 "extend_catalog": True,
                 "max_len": 8,
