@@ -576,13 +576,14 @@ AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400}
 
 def _budget_to_start_target(eff_budget: int) -> int:
     # Frontend budgets: 300 / 350 / 400 (4-5 / 6-7 / 8-10)
+    # [Increased] +10~15 to capture more detail like noses/tails
     if eff_budget <= 300:
-        return 75
+        return 90
     if eff_budget <= 350:
-        return 85
+        return 105
     if eff_budget <= 400:
-        return 95
-    return 100
+        return 120
+    return 125
 
 def _load_engine_convert():
     """
@@ -896,9 +897,10 @@ async def process_kids_request_internal(
                 "fill": False,
                 "step_order": "bottomup",
                 "span": 4,
-                "max_new_voxels": 12000,
+                "max_new_voxels": 18000,  # [Increased] 12000 -> 18000
                 "refine_iters": 8,
                 "ensure_connected": True,
+                "small_side_contact": False, # [Rollback] Must maintain vertical interlocking
                 "min_embed": 2,
                 "erosion_iters": 1,
                 "fast_search": True,
