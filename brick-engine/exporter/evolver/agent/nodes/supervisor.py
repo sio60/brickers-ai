@@ -44,10 +44,10 @@ strategy_llm = llm.with_structured_output(StrategyDecision)
 
 # ===== 전략 매핑 =====
 STRATEGY_MAP = {
-    "vision": ["RELOCATE", "ROTATE", "SYMMETRY_FIX"],
-    "symmetry": ["SYMMETRY_FIX"],
+    "vision": ["RELOCATE", "ROTATE"],  # SYMMETRY_FIX 제거 - 후순위로 이동
+    "symmetry": ["SYMMETRY_FIX"],  # 대칭 문제는 별도로, floating 해결 후 처리
     "floating": ["SELECTIVE_REMOVE", "BRIDGE"],
-    "fallback": ["ADD_SUPPORT", "REBUILD", "ROLLBACK"],
+    "fallback": ["ADD_SUPPORT", "REBUILD", "SYMMETRY_FIX", "ROLLBACK"],  # SYMMETRY_FIX를 fallback으로 이동
 }
 
 
@@ -175,9 +175,10 @@ def _build_context(state: AgentState, valid_strategies: List[str]) -> str:
 
 def _get_fallback_strategy(state: AgentState, valid_strategies: List[str]) -> str:
     """LLM 실패 시 fallback 전략 선택"""
-    # 우선순위: 형태 > 대칭 > 물리
-    priority = ["RELOCATE", "ROTATE", "REBUILD", "SYMMETRY_FIX",
-                "SELECTIVE_REMOVE", "BRIDGE", "ADD_SUPPORT", "ROLLBACK"]
+    # 우선순위: 형태 > 물리 > 대칭 (SYMMETRY_FIX는 최후순위)
+    priority = ["RELOCATE", "ROTATE", "REBUILD",
+                "SELECTIVE_REMOVE", "BRIDGE", "ADD_SUPPORT",
+                "SYMMETRY_FIX", "ROLLBACK"]
 
     for strategy in priority:
         if strategy in valid_strategies:
