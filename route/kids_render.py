@@ -54,9 +54,12 @@ __all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
 
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
-def log(msg: str) -> None:
+def log(msg: str, user_email: str = "System") -> None:
+    """타임스탬프 및 사용자 정보 포함 로그 출력"""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] {msg}")
+    # 긴 이메일은 앞부분만 출력
+    user_tag = f"[{user_email}]" if user_email else "[System]"
+    print(f"[{ts}] {user_tag} {msg}")
 
 
 # --------------- helpers ---------------
@@ -126,6 +129,7 @@ def _local_generated_path_from_url(u: str) -> Optional[Path]:
 
 class KidsProcessRequest(BaseModel):
     sourceImageUrl: str
+    userEmail: Optional[str] = "unknown@brickers.shop"  # [추가]
     age: str = "6-7"
     budget: Optional[int] = None
     subject: Optional[str] = None
@@ -157,12 +161,17 @@ async def process_kids_request_internal(
     age: str,
     budget: Optional[int] = None,
     subject: Optional[str] = None,
+    user_email: str = "unknown", # [추가]
 ) -> Dict[str, Any]:
     """
     Kids 렌더링 내부 로직 (SQS Consumer에서 호출)
     시그니처/리턴 100% 동일 유지
     """
     total_start = time.time()
+    
+    # 내부 래퍼 로그 (이메일 자동 주입)
+    def _log(msg: str):
+        log(msg, user_email=user_email)
 
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
@@ -176,28 +185,28 @@ async def process_kids_request_internal(
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
-    log("\u2550" * 70)
-    log(f"\U0001f680 [AI-SERVER] \uc694\uccad \uc2dc\uc791 | jobId={job_id}")
-    log(f"\U0001f4c1 \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 URL: {source_image_url}")
-    log(f"\U0001f4ca \ud30c\ub77c\ubbf8\ud130: subject={subject} | age={age} | budget={budget}")
+    _log("\u2550" * 70)
+    _log(f"\U0001f680 [AI-SERVER] \uc694\uccad \uc2dc\uc791 | jobId={job_id}")
+    _log(f"\U0001f4c1 \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 URL: {source_image_url}")
+    _log(f"\U0001f4ca \ud30c\ub77c\ubbf8\ud130: subject={subject} | age={age} | budget={budget}")
     s3_label = "ON" if USE_S3 else "OFF"
-    log(f"\u2699\ufe0f  S3 \ubaa8\ub4dc: {s3_label} | bucket={S3_BUCKET or 'N/A'}")
-    log("\u2550" * 70)
+    _log(f"\u2699\ufe0f  S3 \ubaa8\ub4dc: {s3_label} | bucket={S3_BUCKET or 'N/A'}")
+    _log("\u2550" * 70)
 
     try:
         with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
 
             # 0) S3에서 원본 이미지 다운로드
             step_start = time.time()
-            log(f"\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
+            _log(f"\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
             img_bytes = await _download_from_s3(source_image_url)
             raw_path = out_req_dir / "raw.png"
             await _write_bytes_async(raw_path, img_bytes)
-            log(f"\u2705 [STEP 0/5] \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+            _log(f"\u2705 [STEP 0/5] \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
             # 1) Gemini 보정
             step_start = time.time()
-            log(f"\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
+            _log(f"\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
             corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
 
             final_subject = subject or ai_subject
@@ -205,13 +214,13 @@ async def process_kids_request_internal(
             corrected_path = out_req_dir / "corrected.png"
             await _write_bytes_async(corrected_path, corrected_bytes)
             corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
-            log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+            _log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
 
             await update_job_suggested_tags(job_id, ai_tags)
 
             # 2) Tripo 3D
             step_start = time.time()
-            log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
+            _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
             await update_job_stage(job_id, "THREE_D_PREVIEW")
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
@@ -229,7 +238,7 @@ async def process_kids_request_internal(
                 print(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
 
             tripo_elapsed = time.time() - step_start
-            log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
+            _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
 
             # 3-1) downloaded 정규화
             fixed_downloaded: Dict[str, str] = {}
@@ -292,7 +301,7 @@ async def process_kids_request_internal(
             step_start = time.time()
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
             start_target = budget_to_start_target(eff_budget)
-            log(f"\U0001f4cc [STEP 3/4] Brickify LDR \ubcc0\ud658 \uc2dc\uc791... | budget={eff_budget} | target={start_target}")
+            _log(f"\U0001f4cc [STEP 3/4] Brickify LDR \ubcc0\ud658 \uc2dc\uc791... | budget={eff_budget} | target={start_target}")
 
             await update_job_stage(job_id, "MODEL")
 
@@ -348,7 +357,7 @@ async def process_kids_request_internal(
             result: Dict[str, Any] = await anyio.to_thread.run_sync(run_agent_sync)
 
             brickify_elapsed = time.time() - step_start
-            log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+            _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
 
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
                 raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
@@ -356,7 +365,7 @@ async def process_kids_request_internal(
             # 5) 결과 URL + BOM
             step_start = time.time()
             s3_mode = "ON" if USE_S3 else "OFF"
-            log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
+            _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
             ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
             print(f"   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
@@ -366,7 +375,7 @@ async def process_kids_request_internal(
             bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
             print(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
 
-            log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
+            _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
 
             # -----------------
             # 6) PDF 자동 생성 (Headless)
@@ -374,7 +383,7 @@ async def process_kids_request_internal(
             pdf_url = ""
             try:
                 step_start = time.time()
-                log(f"📌 [STEP 5/5] PDF 자동 생성 시작 (Playwright)...")
+                _log(f"📌 [STEP 5/5] PDF 자동 생성 시작 (Playwright)...")
                 
                 # LDR 내용 읽기
                 ldr_text = out_ldr.read_text(encoding="utf-8")
@@ -383,7 +392,7 @@ async def process_kids_request_internal(
                 step_images_bytes = await HeadlessPdfService.capture_step_images(ldr_text)
                 
                 if step_images_bytes:
-                    log(f"   📸 캡처 완료: {len(step_images_bytes)} steps")
+                    _log(f"   📸 캡처 완료: {len(step_images_bytes)} steps")
                     
                     # BOM 파싱
                     step_boms = parse_ldr_step_boms(ldr_text)
@@ -407,20 +416,20 @@ async def process_kids_request_internal(
                     pdf_key = f"uploads/pdf/{now.year:04d}/{now.month:02d}/{pdf_filename}"
                     
                     pdf_url = upload_bytes_to_s3(pdf_bytes, pdf_key, "application/pdf")
-                    log(f"✅ [STEP 5/5] PDF 생성 및 업로드 완료 | url={pdf_url[:60]}... | {time.time()-step_start:.2f}s")
+                    _log(f"✅ [STEP 5/5] PDF 생성 및 업로드 완료 | url={pdf_url[:60]}... | {time.time()-step_start:.2f}s")
                 else:
-                    log(f"⚠️ [STEP 5/5] PDF 생성 실패 (이미지 캡처 실패) | {time.time()-step_start:.2f}s")
+                    _log(f"⚠️ [STEP 5/5] PDF 생성 실패 (이미지 캡처 실패) | {time.time()-step_start:.2f}s")
 
             except Exception as e:
-                log(f"⚠️ [STEP 5/5] PDF 생성 중 에러 발생 (무시함) | error={str(e)}")
+                _log(f"⚠️ [STEP 5/5] PDF 생성 중 에러 발생 (무시함) | error={str(e)}")
 
             total_elapsed = time.time() - total_start
-            log("\u2550" * 70)
-            log(f"\U0001f389 [AI-SERVER] \uc694\uccad \uc644\ub8cc! | jobId={job_id}")
-            log(f"\u23f1\ufe0f  \ucd1d \uc18c\uc694\uc2dc\uac04: {total_elapsed:.2f}s ({total_elapsed/60:.1f}\ubd84)")
-            log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
-            log(f"   - Brickify: {brickify_elapsed:.2f}s")
-            log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
+            _log("\u2550" * 70)
+            _log(f"\U0001f389 [AI-SERVER] \uc694\uccad \uc644\ub8cc! | jobId={job_id}")
+            _log(f"\u23f1\ufe0f  \ucd1d \uc18c\uc694\uc2dc\uac04: {total_elapsed:.2f}s ({total_elapsed/60:.1f}\ubd84)")
+            _log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
+            _log(f"   - Brickify: {brickify_elapsed:.2f}s")
+            _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
             print("\u2550" * 70)
 
             return {
@@ -438,11 +447,11 @@ async def process_kids_request_internal(
     except Exception as e:
         total_elapsed = time.time() - total_start
         tb = traceback.format_exc()
-        log("\u2550" * 70)
-        log(f"\u274c [AI-SERVER] \uc694\uccad \uc2e4\ud328! | jobId={job_id} | \uc18c\uc694\uc2dc\uac04={total_elapsed:.2f}s")
-        log(f"\u274c \uc5d0\ub7ec: {str(e)}")
-        log("\u2550" * 70)
-        log(tb)
+        _log("\u2550" * 70)
+        _log(f"\u274c [AI-SERVER] \uc694\uccad \uc2e4\ud328! | jobId={job_id} | \uc18c\uc694\uc2dc\uac04={total_elapsed:.2f}s")
+        _log(f"\u274c \uc5d0\ub7ec: {str(e)}")
+        _log("\u2550" * 70)
+        log(tb, user_email=user_email)
         _write_error_log(out_req_dir, tb)
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
@@ -463,6 +472,7 @@ async def process(request: KidsProcessRequest):
             age=request.age,
             budget=request.budget,
             subject=request.subject,
+            user_email=request.userEmail or "unknown",
         )
 
         ldr_data_uri: Optional[str] = None
