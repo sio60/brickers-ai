@@ -46,11 +46,11 @@ AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400, "PRO": 2000}
 
 def budget_to_start_target(eff_budget: int) -> int:
     if eff_budget <= 300:
-        return 110
+        return 60
     if eff_budget <= 350:
-        return 125
+        return 70
     if eff_budget <= 400:
-        return 140
+        return 80
     if eff_budget <= 2000:
-        return 220 # Pro target (larger resolution)
-    return 240
+        return 150 # Pro target (Safe starting point)
+    return 160
