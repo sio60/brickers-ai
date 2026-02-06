@@ -34,6 +34,10 @@ from tripo3d.models import TaskStatus
 from google import genai
 from google.genai import types as genai_types
 
+# PDF Generation
+from route.headless_renderer import HeadlessPdfService
+from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom, upload_bytes_to_s3
+
 
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
@@ -951,6 +955,52 @@ async def process_kids_request_internal(
 
             log(f"✅ [STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
 
+            # -----------------
+            # 6) PDF 자동 생성 (Headless)
+            # -----------------
+            pdf_url = ""
+            try:
+                step_start = time.time()
+                log(f"📌 [STEP 5/5] PDF 자동 생성 시작 (Playwright)...")
+                
+                # LDR 내용 읽기
+                ldr_text = out_ldr.read_text(encoding="utf-8")
+                
+                # 이미지 캡처
+                step_images_bytes = await HeadlessPdfService.capture_step_images(ldr_text)
+                
+                if step_images_bytes:
+                    log(f"   📸 캡처 완료: {len(step_images_bytes)} steps")
+                    
+                    # BOM 파싱
+                    step_boms = parse_ldr_step_boms(ldr_text)
+                    
+                    # 커버 이미지 (마지막 스텝의 첫 뷰)
+                    cover_bytes = None
+                    if step_images_bytes[-1]:
+                        cover_bytes = step_images_bytes[-1][0]
+                        
+                    # PDF 생성
+                    pdf_bytes = generate_pdf_with_images_and_bom(
+                        model_name=f"Brickers_{job_id}",
+                        step_images=step_images_bytes,
+                        step_boms=step_boms,
+                        cover_image=cover_bytes
+                    )
+                    
+                    # S3 업로드
+                    now = datetime.now()
+                    pdf_filename = f"{uuid.uuid4().hex[:8]}_instructions.pdf"
+                    pdf_key = f"uploads/pdf/{now.year:04d}/{now.month:02d}/{pdf_filename}"
+                    
+                    pdf_url = upload_bytes_to_s3(pdf_bytes, pdf_key, "application/pdf")
+                    log(f"✅ [STEP 5/5] PDF 생성 및 업로드 완료 | url={pdf_url[:60]}... | {time.time()-step_start:.2f}s")
+                else:
+                    log(f"⚠️ [STEP 5/5] PDF 생성 실패 (이미지 캡처 실패) | {time.time()-step_start:.2f}s")
+
+            except Exception as e:
+                log(f"⚠️ [STEP 5/5] PDF 생성 중 에러 발생 (무시함) | error={str(e)}")
+
             total_elapsed = time.time() - total_start
             log("═" * 70)
             log(f"🎉 [AI-SERVER] 요청 완료! | jobId={job_id}")
@@ -965,6 +1015,7 @@ async def process_kids_request_internal(
                 "modelUrl": model_url,
                 "ldrUrl": ldr_url,
                 "bomUrl": bom_url,
+                "pdfUrl": pdf_url,
                 "subject": final_subject,
                 "tags": ai_tags,
                 "parts": int(result.get("parts", 0)),
