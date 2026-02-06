@@ -1,0 +1,1614 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧱 Brick Judge 3D Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        #viewer {
+            flex: 1;
+            position: relative;
+        }
+        #canvas {
+            width: 100%;
+            height: 100%;
+        }
+        .sidebar {
+            width: 320px;
+            background: #16213e;
+            padding: 20px;
+            overflow-y: auto;
+            border-left: 1px solid #0f3460;
+        }
+        h1 {
+            font-size: 1.4rem;
+            margin-bottom: 20px;
+            color: #e94560;
+        }
+        h2 {
+            font-size: 1rem;
+            margin: 20px 0 10px;
+            color: #0f4c75;
+            border-bottom: 1px solid #0f3460;
+            padding-bottom: 5px;
+        }
+        .upload-area {
+            border: 2px dashed #0f4c75;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #e94560;
+            background: rgba(233, 69, 96, 0.1);
+        }
+        .upload-area input {
+            display: none;
+        }
+        .btn {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            width: 100%;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+        .btn:hover {
+            background: #ff6b6b;
+        }
+        .btn:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .stats {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .stats-label {
+            color: #888;
+        }
+        .stats-value {
+            font-weight: bold;
+        }
+        .score {
+            font-size: 2rem;
+            text-align: center;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .score.stable {
+            background: linear-gradient(135deg, #1d976c, #93f9b9);
+            color: #000;
+        }
+        .score.unstable {
+            background: linear-gradient(135deg, #e94560, #ff6b6b);
+        }
+        .issue-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .issue-item {
+            background: #0f3460;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 4px solid;
+        }
+        .issue-item:hover {
+            transform: translateX(5px);
+        }
+        .issue-item.critical { border-color: #e94560; }
+        .issue-item.high { border-color: #ff9800; }
+        .issue-item.medium { border-color: #ffc107; }
+        .issue-item.low { border-color: #4caf50; }
+        .issue-type {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: #888;
+        }
+        .issue-msg {
+            margin-top: 5px;
+            font-size: 0.9rem;
+        }
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.8rem;
+        }
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .hidden { display: none; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+        textarea {
+            width: 100%;
+            height: 120px;
+            background: #0f3460;
+            border: 1px solid #1a1a2e;
+            border-radius: 6px;
+            color: #eee;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            resize: vertical;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="viewer">
+            <div id="canvas"></div>
+            <div id="info">마우스: 회전 | 스크롤: 줌 | Shift+드래그: 이동</div>
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+                <p style="margin-top: 15px;">LDR 로딩 중...</p>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <h1>🧱 Brick Judge 3D</h1>
+
+            <div class="upload-area" onclick="document.getElementById('ldrFile').click()">
+                <input type="file" id="ldrFile" accept=".ldr,.mpd,.dat">
+                <p>📁 LDR 파일을 선택하세요</p>
+                <p style="font-size: 0.8rem; color: #888; margin-top: 5px;">또는 드래그 앤 드롭</p>
+            </div>
+
+            <h2>📝 또는 LDR 직접 입력</h2>
+            <textarea id="ldrText" placeholder="0 My Model
+1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat
+1 1 0 -24 0 1 0 0 0 1 0 0 0 1 3003.dat"></textarea>
+            <button class="btn" id="analyzeBtn">🔍 분석하기</button>
+
+            <div id="resultPanel" class="hidden">
+                <h2>📊 분석 결과</h2>
+
+                <div id="scoreBox" class="score stable">
+                    <div id="scoreValue">100</div>
+                    <div style="font-size: 0.9rem;">점</div>
+                </div>
+
+                <div class="stats">
+                    <div class="stats-row">
+                        <span class="stats-label">브릭 수</span>
+                        <span class="stats-value" id="totalBricks">0</span>
+                    </div>
+                    <div class="stats-row">
+                        <span class="stats-label">문제 수</span>
+                        <span class="stats-value" id="issueCount">0</span>
+                    </div>
+                    <div class="stats-row">
+                        <span class="stats-label">안정성</span>
+                        <span class="stats-value" id="stability">-</span>
+                    </div>
+                    <div class="stats-row">
+                        <span class="stats-label">백엔드</span>
+                        <span class="stats-value" id="backendInfo">-</span>
+                    </div>
+                </div>
+
+                <h2>🎨 색상 범례</h2>
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #0055FF;"></div>
+                        <span>TOP_ONLY (위에서만 결합)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #FF0000;"></div>
+                        <span>FLOATING (공중에 떠있음)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #FFCC00;"></div>
+                        <span>ISOLATED (연결 없음)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #4caf50;"></div>
+                        <span>정상</span>
+                    </div>
+                </div>
+
+                <h2>⚠️ 발견된 문제</h2>
+                <div id="issueList" class="issue-list"></div>
+
+                <button class="btn" id="tourBtn" style="background: #e94560; margin-top: 20px;">
+                    ▶️ 자동 투어
+                </button>
+                <button class="btn" id="stopTourBtn" style="background: #555; margin-top: 5px; display: none;">
+                    ⏹️ 투어 중지
+                </button>
+                <div id="tourProgress" style="display: none; margin-top: 10px; text-align: center; color: #aaa;">
+                    <span id="tourCurrent">0</span> / <span id="tourTotal">0</span>
+                </div>
+                <button class="btn" id="blinkAllBtn" style="background: #ff5722; margin-top: 10px;">
+                    ⚡ 전체 불량 깜빡임
+                </button>
+
+                <button class="btn" id="physicsBtn" style="background: #9c27b0; margin-top: 20px;">
+                    🎮 물리 시뮬레이션
+                </button>
+                <button class="btn" id="resetBtn" style="background: #0f4c75; margin-top: 5px;">
+                    🔄 리셋
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ES Module imports -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
+
+        // ============================================
+        // Three.js 설정
+        // ============================================
+        let scene, camera, renderer, controls;
+        let model = null;
+        let brickMeshes = new Map();
+
+        const LDRAW_PATH = 'https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/';
+
+        const ISSUE_COLORS = {
+            floating: 0xe94560,
+            unstable_base: 0xff9800,
+            isolated: 0xffc107,
+            weak: 0x4caf50,
+            off_balance: 0x9c27b0,
+        };
+
+        function initThree() {
+            const container = document.getElementById('canvas');
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e);
+
+            camera = new THREE.PerspectiveCamera(
+                45,
+                container.clientWidth / container.clientHeight,
+                1,
+                10000
+            );
+            camera.position.set(150, 200, 250);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+
+            // 조명
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(100, 200, 100);
+            scene.add(dirLight);
+
+            // 그리드
+            const gridHelper = new THREE.GridHelper(500, 50, 0x0f4c75, 0x0f3460);
+            scene.add(gridHelper);
+
+            // 축
+            const axesHelper = new THREE.AxesHelper(100);
+            scene.add(axesHelper);
+
+            window.addEventListener('resize', onResize);
+            animate();
+        }
+
+        function onResize() {
+            const container = document.getElementById('canvas');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // ============================================
+        // LDR 로더
+        // ============================================
+        async function loadLDR(ldrContent) {
+            showLoading(true);
+
+            if (model) {
+                scene.remove(model);
+                model = null;
+            }
+            brickMeshes.clear();
+
+            return new Promise((resolve, reject) => {
+                const loader = new LDrawLoader();
+                loader.setPartsLibraryPath(LDRAW_PATH);
+                loader.smoothNormals = false;
+
+                loader.parse(ldrContent, (group) => {
+                    model = group;
+                    model.rotation.x = Math.PI;  // LDraw 좌표계 뒤집기
+
+                    const box = new THREE.Box3().setFromObject(model);
+                    const center = box.getCenter(new THREE.Vector3());
+
+                    // X, Z는 중심 정렬, Y는 바닥이 그리드(Y=0)에 오도록
+                    model.position.x = -center.x;
+                    model.position.z = -center.z;
+                    model.position.y = -box.min.y;  // 바닥을 Y=0에 맞춤
+
+                    let brickId = 0;
+                    model.traverse((child) => {
+                        if (child.isMesh) {
+                            child.userData.brickId = brickId;
+                            child.userData.originalMaterial = child.material;
+                            brickMeshes.set(brickId, child);
+                            brickId++;
+                        }
+                    });
+
+                    scene.add(model);
+
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    camera.position.set(maxDim, maxDim * 1.5, maxDim * 2);
+                    controls.target.set(0, size.y / 2, 0);
+                    controls.update();
+
+                    showLoading(false);
+                    resolve(brickId);
+                },
+                undefined,
+                (error) => {
+                    showLoading(false);
+                    reject(error);
+                });
+            });
+        }
+
+        // ============================================
+        // Brick Judge (간단 버전)
+        // ============================================
+        function judgeBricks(ldrContent) {
+            const lines = ldrContent.split('\n');
+            const bricks = [];
+            const issues = [];
+
+            let brickId = 0;
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('0')) continue;
+
+                if (trimmed.startsWith('1 ')) {
+                    const parts = trimmed.split(/\s+/);
+                    if (parts.length >= 15) {
+                        const color = parseInt(parts[1]);
+                        const x = parseFloat(parts[2]);
+                        const y = parseFloat(parts[3]);
+                        const z = parseFloat(parts[4]);
+                        // 회전 행렬: a b c / d e f / g h i
+                        const rotA = parseFloat(parts[5]);
+                        const rotC = parseFloat(parts[7]);
+                        const part = parts[14];
+
+                        // 90도 회전 감지 (a≈0, c≈±1 이면 회전됨)
+                        const isRotated = Math.abs(rotA) < 0.5 && Math.abs(rotC) > 0.5;
+
+                        bricks.push({
+                            id: brickId,
+                            color, x, y, z, part,
+                            height: -y,
+                            isRotated  // 회전 여부 저장
+                        });
+                        brickId++;
+                    }
+                }
+            }
+
+            // 브릭 크기 (LDU 단위)
+            const PART_SIZE = {
+                '3001.dat': { w: 80, d: 40, h: 24 },  // 2x4
+                '3002.dat': { w: 60, d: 40, h: 24 },  // 2x3
+                '3003.dat': { w: 40, d: 40, h: 24 },  // 2x2
+                '3004.dat': { w: 40, d: 20, h: 24 },  // 1x2
+                '3005.dat': { w: 20, d: 20, h: 24 },  // 1x1
+                '3008.dat': { w: 160, d: 20, h: 24 }, // 1x8
+                '3009.dat': { w: 120, d: 20, h: 24 }, // 1x6
+                '3010.dat': { w: 80, d: 20, h: 24 },  // 1x4
+                '3622.dat': { w: 60, d: 20, h: 24 },  // 1x3
+                '3007.dat': { w: 160, d: 40, h: 24 }, // 2x8
+                '3006.dat': { w: 120, d: 40, h: 24 }, // 2x6
+                '3020.dat': { w: 80, d: 40, h: 8 },   // plate 2x4
+                '3021.dat': { w: 60, d: 40, h: 8 },   // plate 2x3
+                '3022.dat': { w: 40, d: 40, h: 8 },   // plate 2x2
+                '3023.dat': { w: 40, d: 20, h: 8 },   // plate 1x2
+                '3024.dat': { w: 20, d: 20, h: 8 },   // plate 1x1
+                '3460.dat': { w: 160, d: 20, h: 8 },  // plate 1x8
+                '3666.dat': { w: 120, d: 20, h: 8 },  // plate 1x6
+                '3710.dat': { w: 80, d: 20, h: 8 },   // plate 1x4
+                '3623.dat': { w: 60, d: 20, h: 8 },   // plate 1x3
+            };
+
+            // 실제 브릭 무게 (g) - Luo et al. "Legolization" 논문 데이터
+            const BRICK_WEIGHT = {
+                '3005.dat': 0.44,  // 1x1
+                '3004.dat': 0.78,  // 1x2
+                '3622.dat': 1.18,  // 1x3
+                '3010.dat': 1.74,  // 1x4
+                '3009.dat': 2.40,  // 1x6
+                '3008.dat': 3.08,  // 1x8
+                '3003.dat': 1.18,  // 2x2
+                '3002.dat': 1.78,  // 2x3
+                '3001.dat': 2.20,  // 2x4
+                '3006.dat': 3.30,  // 2x6
+                '3007.dat': 4.40,  // 2x8
+                // Plate는 브릭의 1/3 높이 → 무게도 약 1/3
+                '3024.dat': 0.15,  // plate 1x1
+                '3023.dat': 0.26,  // plate 1x2
+                '3623.dat': 0.39,  // plate 1x3
+                '3710.dat': 0.58,  // plate 1x4
+                '3666.dat': 0.80,  // plate 1x6
+                '3460.dat': 1.03,  // plate 1x8
+                '3022.dat': 0.39,  // plate 2x2
+                '3021.dat': 0.59,  // plate 2x3
+                '3020.dat': 0.73,  // plate 2x4
+            };
+            // 1스터드 최대 마찰 하중 (g) - 논문 실측값
+            const MAX_FRICTION_LOAD = 71.658;
+
+            const getWeight = (part) => BRICK_WEIGHT[part] || 1.0;  // 기본 1g
+            // 회전 고려한 크기 반환
+            const getSize = (part, isRotated = false) => {
+                const size = PART_SIZE[part] || { w: 40, d: 40, h: 24 };
+                // 90도 회전 시 w와 d 교환
+                if (isRotated) {
+                    return { w: size.d, d: size.w, h: size.h };
+                }
+                return size;
+            };
+
+            // 두 브릭의 XZ 평면 겹침 여부 (영역 기반, 회전 고려)
+            function hasXZOverlap(b1, b2) {
+                const s1 = getSize(b1.part, b1.isRotated);
+                const s2 = getSize(b2.part, b2.isRotated);
+
+                const b1_minX = b1.x - s1.w / 2;
+                const b1_maxX = b1.x + s1.w / 2;
+                const b1_minZ = b1.z - s1.d / 2;
+                const b1_maxZ = b1.z + s1.d / 2;
+
+                const b2_minX = b2.x - s2.w / 2;
+                const b2_maxX = b2.x + s2.w / 2;
+                const b2_minZ = b2.z - s2.d / 2;
+                const b2_maxZ = b2.z + s2.d / 2;
+
+                // 겹침 = 두 영역이 교차
+                const xOverlap = b1_minX < b2_maxX && b1_maxX > b2_minX;
+                const zOverlap = b1_minZ < b2_maxZ && b1_maxZ > b2_minZ;
+
+                return xOverlap && zOverlap;
+            }
+
+            // 연결 그래프 구축 (위/아래 스터드 연결)
+            const connections = new Map();
+            for (const brick of bricks) {
+                connections.set(brick.id, new Set());
+            }
+
+            for (const brick of bricks) {
+                const brickSize = getSize(brick.part, brick.isRotated);
+
+                for (const other of bricks) {
+                    if (other.id === brick.id) continue;
+
+                    const otherSize = getSize(other.part, other.isRotated);
+
+                    // XZ 평면에서 영역 겹침 확인
+                    if (!hasXZOverlap(brick, other)) continue;
+
+                    // 아래에서 지지 (other의 윗면 = brick의 바닥)
+                    const otherTop = other.y - otherSize.h;
+                    if (Math.abs(otherTop - brick.y) < 5) {
+                        connections.get(brick.id).add(other.id);
+                        connections.get(other.id).add(brick.id);
+                    }
+
+                    // 위에서 연결 (brick의 윗면 = other의 바닥)
+                    const brickTop = brick.y - brickSize.h;
+                    if (Math.abs(brickTop - other.y) < 5) {
+                        connections.get(brick.id).add(other.id);
+                        connections.get(other.id).add(brick.id);
+                    }
+                }
+            }
+
+            // 바닥 브릭 찾기 (가장 큰 Y값 = LDraw에서 바닥)
+            const maxY = Math.max(...bricks.map(b => b.y));
+            const groundBricks = new Set(bricks.filter(b => b.y >= maxY - 10).map(b => b.id));
+            console.log(`바닥 Y: ${maxY}, 바닥 브릭 수: ${groundBricks.size}`);
+
+            // BFS로 바닥과 연결된 브릭 찾기
+            const connectedToGround = new Set();
+            const queue = [...groundBricks];
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (connectedToGround.has(current)) continue;
+                connectedToGround.add(current);
+                for (const neighbor of connections.get(current) || []) {
+                    if (!connectedToGround.has(neighbor)) {
+                        queue.push(neighbor);
+                    }
+                }
+            }
+
+            // 브릭 크기 정보 (스터드 개수 추정)
+            const PART_STUDS = {
+                '3005.dat': 1,  // 1x1
+                '3004.dat': 2,  // 1x2
+                '3622.dat': 3,  // 1x3
+                '3010.dat': 4,  // 1x4
+                '3009.dat': 6,  // 1x6
+                '3008.dat': 8,  // 1x8
+                '3003.dat': 4,  // 2x2
+                '3002.dat': 6,  // 2x3
+                '3001.dat': 8,  // 2x4
+                '3006.dat': 12, // 2x6
+                '3007.dat': 16, // 2x8
+                '3024.dat': 1,  // plate 1x1
+                '3023.dat': 2,  // plate 1x2
+                '3623.dat': 3,  // plate 1x3
+                '3710.dat': 4,  // plate 1x4
+                '3666.dat': 6,  // plate 1x6
+                '3460.dat': 8,  // plate 1x8
+                '3022.dat': 4,  // plate 2x2
+                '3021.dat': 6,  // plate 2x3
+                '3020.dat': 8,  // plate 2x4
+            };
+            const getStuds = (part) => PART_STUDS[part] || 1;
+
+            // 결합 강도 계산 (겹치는 스터드 면적, 회전 고려)
+            function calcConnectionStrength(brick1, brick2) {
+                const s1 = getSize(brick1.part, brick1.isRotated);
+                const s2 = getSize(brick2.part, brick2.isRotated);
+
+                // 각 브릭의 경계 계산
+                const b1_minX = brick1.x - s1.w / 2;
+                const b1_maxX = brick1.x + s1.w / 2;
+                const b1_minZ = brick1.z - s1.d / 2;
+                const b1_maxZ = brick1.z + s1.d / 2;
+
+                const b2_minX = brick2.x - s2.w / 2;
+                const b2_maxX = brick2.x + s2.w / 2;
+                const b2_minZ = brick2.z - s2.d / 2;
+                const b2_maxZ = brick2.z + s2.d / 2;
+
+                // 겹치는 영역 계산
+                const overlapX = Math.max(0, Math.min(b1_maxX, b2_maxX) - Math.max(b1_minX, b2_minX));
+                const overlapZ = Math.max(0, Math.min(b1_maxZ, b2_maxZ) - Math.max(b1_minZ, b2_minZ));
+
+                // 스터드 단위로 변환 (20 LDU = 1 스터드)
+                const studOverlap = Math.floor((overlapX * overlapZ) / 400);
+                return Math.max(1, studOverlap);  // 최소 1
+            }
+
+            // 위에서 매달린 브릭 무게 계산 (BFS로 하위 브릭 합산) - 실제 그램 단위
+            function calcHangingWeight(brickId, visited = new Set()) {
+                if (visited.has(brickId)) return 0;
+                visited.add(brickId);
+
+                const brick = bricks.find(b => b.id === brickId);
+                if (!brick) return 0;
+
+                let weight = getWeight(brick.part); // 자기 무게 (그램)
+
+                // 아래에 연결된 브릭들의 무게 합산
+                for (const otherId of connections.get(brickId) || []) {
+                    const other = bricks.find(b => b.id === otherId);
+                    if (other && other.y < brick.y) { // 아래에 있는 브릭
+                        weight += calcHangingWeight(otherId, visited);
+                    }
+                }
+                return weight;
+            }
+
+            // 물리 검사
+            for (const brick of bricks) {
+                // 바닥에 있으면 OK
+                if (brick.y >= -10) continue;
+
+                // 바닥과 연결되지 않은 브릭 = FLOATING
+                if (!connectedToGround.has(brick.id)) {
+                    issues.push({
+                        brick_id: brick.id,
+                        type: 'floating',
+                        severity: 'critical',
+                        message: `브릭 #${brick.id} (${brick.part}) 바닥과 연결 안됨 - 높이 ${brick.height.toFixed(0)} LDU`
+                    });
+                    continue;
+                }
+
+                const brickSize = getSize(brick.part, brick.isRotated);
+
+                // 아래에서 지지받는 브릭 찾기
+                const supportFromBelow = bricks.some(other => {
+                    if (other.id === brick.id) return false;
+                    const otherSize = getSize(other.part, other.isRotated);
+                    // other의 윗면이 brick의 바닥과 맞닿음
+                    const otherTop = other.y - otherSize.h;
+                    const heightMatch = Math.abs(otherTop - brick.y) < 5;
+                    // XZ 영역 겹침
+                    return heightMatch && hasXZOverlap(brick, other);
+                });
+
+                if (!supportFromBelow) {
+                    // 위에서만 연결된 경우 - 위쪽 브릭이 안정적인지 확인
+                    const aboveBricks = bricks.filter(other => {
+                        if (other.id === brick.id) return false;
+                        // brick의 윗면이 other의 바닥과 맞닿음
+                        const brickTop = brick.y - brickSize.h;
+                        const heightMatch = Math.abs(brickTop - other.y) < 5;
+                        return heightMatch && hasXZOverlap(brick, other);
+                    });
+
+                    if (aboveBricks.length > 0) {
+                        // 위쪽 브릭들이 아래에서 안정적으로 지지받는지 확인
+                        // (지그재그/넓은 영역 구조면 안정적)
+                        const aboveBricksHaveSupport = aboveBricks.some(ab => {
+                            const abSize = getSize(ab.part, ab.isRotated);
+                            // 위쪽 브릭이 아래에서 지지받는 브릭이 있는지
+                            return bricks.some(support => {
+                                if (support.id === ab.id || support.id === brick.id) return false;
+                                const supportSize = getSize(support.part, support.isRotated);
+                                const supportTop = support.y - supportSize.h;
+                                const heightMatch = Math.abs(supportTop - ab.y) < 5;
+                                return heightMatch && hasXZOverlap(ab, support);
+                            });
+                        });
+
+                        // 위쪽 브릭이 안정적이면 이 브릭도 OK
+                        if (aboveBricksHaveSupport) {
+                            continue;  // WEAK 체크 스킵
+                        }
+
+                        // 총 결합 강도
+                        const totalStrength = aboveBricks.reduce((sum, ab) =>
+                            sum + calcConnectionStrength(brick, ab), 0);
+
+                        // 매달린 무게
+                        const hangingWeight = calcHangingWeight(brick.id);
+
+                        // 결합력 vs 무게 체크 (Luo 논문 기반)
+                        // 1스터드 최대 마찰 하중: 71.658g
+                        // 안전 계수 2배 적용 (실제 사용 시 절반만 허용)
+                        const safeLoadPerStud = MAX_FRICTION_LOAD / 2;  // 35.8g per stud
+                        const maxSupportableWeight = totalStrength * safeLoadPerStud;
+
+                        if (hangingWeight > maxSupportableWeight) {
+                            // 위험도 계산: 무게가 지탱 가능량의 몇 배인지
+                            const ratio = hangingWeight / maxSupportableWeight;
+                            const severity = ratio > 2 ? 'high' : (ratio > 1.5 ? 'medium' : 'low');
+                            issues.push({
+                                brick_id: brick.id,
+                                type: 'weak',
+                                severity: severity,
+                                message: `브릭 #${brick.id} 위쪽 결합 약함 (${totalStrength}스터드 지탱 ${maxSupportableWeight.toFixed(1)}g < 실제 ${hangingWeight.toFixed(1)}g)`
+                            });
+                        }
+                    }
+                }
+            }
+
+            // 고립된 브릭 검사 (아무 연결도 없음)
+            for (const brick of bricks) {
+                const connCount = connections.get(brick.id)?.size || 0;
+                if (connCount === 0 && bricks.length > 1) {
+                    // 이미 다른 문제로 잡혔으면 스킵
+                    if (issues.some(i => i.brick_id === brick.id)) continue;
+
+                    issues.push({
+                        brick_id: brick.id,
+                        type: 'isolated',
+                        severity: 'high',
+                        message: `브릭 #${brick.id} (${brick.part}) 다른 브릭과 연결 없음`
+                    });
+                }
+            }
+
+            if (bricks.length > 2) {
+                const avgX = bricks.reduce((s, b) => s + b.x, 0) / bricks.length;
+                const avgZ = bricks.reduce((s, b) => s + b.z, 0) / bricks.length;
+                const baseBricks = bricks.filter(b => b.y >= -10);
+
+                if (baseBricks.length > 0) {
+                    const baseAvgX = baseBricks.reduce((s, b) => s + b.x, 0) / baseBricks.length;
+                    const baseAvgZ = baseBricks.reduce((s, b) => s + b.z, 0) / baseBricks.length;
+                    const offset = Math.sqrt((avgX - baseAvgX) ** 2 + (avgZ - baseAvgZ) ** 2);
+
+                    if (offset > 50) {
+                        issues.push({
+                            brick_id: null,
+                            type: 'off_balance',
+                            severity: 'high',
+                            message: `무게중심이 베이스에서 ${offset.toFixed(0)} LDU 벗어남`
+                        });
+                    }
+                }
+            }
+
+            let score = 100;
+            for (const issue of issues) {
+                if (issue.severity === 'critical') score -= 30;
+                else if (issue.severity === 'high') score -= 15;
+                else if (issue.severity === 'medium') score -= 5;
+                else score -= 2;
+            }
+            score = Math.max(0, Math.min(100, score));
+
+            return {
+                totalBricks: bricks.length,
+                issues,
+                score,
+                stable: !issues.some(i => i.severity === 'critical') && score >= 50
+            };
+        }
+
+        // ============================================
+        // UI 업데이트
+        // ============================================
+        // 이슈 타입별 색상 (API에서도 제공하지만 폴백용)
+        const ISSUE_TYPE_COLORS = {
+            top_only: 0x0055FF,      // 🔵 파란색 - 위에서만 결합
+            floating: 0xFF0000,      // 🔴 빨간색 - 공중에 떠있음
+            isolated: 0xFFCC00,      // 🟡 노란색 - 연결 없음
+            weak_connection: 0xFF8800,  // 🟠 주황색 - 약한 결합
+            unstable_base: 0xFF00FF,    // 🟣 보라색 - 불안정한 베이스
+            weak: 0xFF8800,          // 🟠 주황색 (레거시)
+            off_balance: 0x9C27B0    // 보라색
+        };
+
+        function highlightIssues(issues, brickColors = {}) {
+            // API에서 받은 brick_colors 사용 (brick_id → hex color)
+            // brickColors가 있으면 그걸 사용, 없으면 issues에서 직접 추출
+
+            // 문제 브릭 ID 수집
+            const issueBrickIds = new Set(
+                issues.map(i => i.brick_id).filter(id => id !== null)
+            );
+
+            // 모든 브릭 색상 설정
+            brickMeshes.forEach((mesh, id) => {
+                if (issueBrickIds.has(id)) {
+                    let color;
+
+                    // 1. API에서 받은 brick_colors 사용 (우선)
+                    if (brickColors[id]) {
+                        color = parseInt(brickColors[id].replace('#', ''), 16);
+                    }
+                    // 2. issues에서 color 필드 사용
+                    else {
+                        const issue = issues.find(i => i.brick_id === id);
+                        if (issue && issue.color) {
+                            color = parseInt(issue.color.replace('#', ''), 16);
+                        } else if (issue) {
+                            // 3. 폴백: 이슈 타입으로 색상 결정
+                            color = ISSUE_TYPE_COLORS[issue.type] || 0xFF0000;
+                        } else {
+                            color = 0xFF0000;
+                        }
+                    }
+
+                    mesh.material = new THREE.MeshStandardMaterial({
+                        color: color,
+                        emissive: color,
+                        emissiveIntensity: 0.4,
+                        roughness: 0.5,
+                        metalness: 0.1
+                    });
+                } else {
+                    // 정상 브릭 → 초록색
+                    mesh.material = new THREE.MeshStandardMaterial({
+                        color: 0x4caf50,
+                        emissive: 0x4caf50,
+                        emissiveIntensity: 0.2,
+                        roughness: 0.5,
+                        metalness: 0.1
+                    });
+                }
+            });
+        }
+
+        function updateUI(result) {
+            document.getElementById('resultPanel').classList.remove('hidden');
+
+            const scoreBox = document.getElementById('scoreBox');
+            const scoreValue = document.getElementById('scoreValue');
+            scoreValue.textContent = result.score;
+            scoreBox.className = 'score ' + (result.stable ? 'stable' : 'unstable');
+
+            document.getElementById('totalBricks').textContent = result.totalBricks;
+            document.getElementById('issueCount').textContent = result.issues.length;
+            document.getElementById('stability').textContent = result.stable ? '✅ 안정' : '⚠️ 불안정';
+
+            // Rust 백엔드 정보 표시
+            const backendInfo = document.getElementById('backendInfo');
+            if (backendInfo) {
+                if (result.backend === 'rust') {
+                    backendInfo.innerHTML = `🦀 <span style="color: #ff6b6b;">RUST</span> (${result.elapsed_ms?.toFixed(2) || '?'}ms)`;
+                } else {
+                    backendInfo.innerHTML = `🐍 <span style="color: #ffc107;">Python</span>`;
+                }
+            }
+
+            const issueList = document.getElementById('issueList');
+            issueList.innerHTML = '';
+
+            if (result.issues.length === 0) {
+                issueList.innerHTML = '<p style="color: #4caf50; text-align: center; padding: 20px;">✅ 문제 없음!</p>';
+            } else {
+                for (const issue of result.issues) {
+                    const item = document.createElement('div');
+                    item.className = `issue-item ${issue.severity}`;
+                    item.innerHTML = `
+                        <div class="issue-type">${issue.type} (${issue.severity})</div>
+                        <div class="issue-msg">${issue.message}</div>
+                    `;
+                    item.onclick = () => focusOnBrick(issue.brick_id);
+                    issueList.appendChild(item);
+                }
+            }
+        }
+
+        let blinkInterval = null;
+        let blinkState = null;  // 깜빡임 상태 저장
+
+        function focusOnBrick(brickId) {
+            if (brickId === null || !model) return;
+
+            const mesh = brickMeshes.get(brickId);
+            if (mesh) {
+                // 카메라 이동
+                const worldPos = new THREE.Vector3();
+                mesh.getWorldPosition(worldPos);
+                controls.target.copy(worldPos);
+                controls.update();
+
+                // 이전 깜빡임 중지 & 복원
+                if (blinkInterval) {
+                    clearInterval(blinkInterval);
+                    restoreAllMaterials();
+                }
+
+                // 모든 브릭의 원본 material 저장
+                const originalMaterials = new Map();
+                brickMeshes.forEach((m, id) => {
+                    originalMaterials.set(id, m.material);
+                });
+
+                // 다른 브릭들 반투명으로 (대상 브릭 제외)
+                const ghostMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x888888,
+                    transparent: true,
+                    opacity: 0.15,
+                    depthWrite: false
+                });
+
+                brickMeshes.forEach((m, id) => {
+                    if (id !== brickId) {
+                        m.material = ghostMaterial;
+                    }
+                });
+
+                // 대상 브릭 깜빡임용 material
+                const originalMaterial = mesh.material;
+                const highlightMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xff0000,
+                    emissive: 0xff0000,
+                    emissiveIntensity: 0.5,
+                    transparent: true,
+                    opacity: 0.9
+                });
+
+                blinkState = { originalMaterials, targetId: brickId };
+
+                // 깜빡임 효과 (5번)
+                let count = 0;
+                let isHighlight = false;
+                blinkInterval = setInterval(() => {
+                    isHighlight = !isHighlight;
+                    mesh.material = isHighlight ? highlightMaterial : originalMaterial;
+                    count++;
+                    if (count >= 10) {  // 5번 깜빡임
+                        clearInterval(blinkInterval);
+                        blinkInterval = null;
+                        restoreAllMaterials();
+                    }
+                }, 200);
+            }
+        }
+
+        function restoreAllMaterials() {
+            if (blinkState && blinkState.originalMaterials) {
+                blinkState.originalMaterials.forEach((mat, id) => {
+                    const m = brickMeshes.get(id);
+                    if (m) m.material = mat;
+                });
+                blinkState = null;
+            }
+        }
+
+        // ============================================
+        // 자동 투어 시스템
+        // ============================================
+        let tourQueue = [];
+        let tourRunning = false;
+        let tourIndex = 0;
+
+        function startTour() {
+            if (!lastAnalysisResult || lastAnalysisResult.issues.length === 0) {
+                alert('분석할 이슈가 없습니다');
+                return;
+            }
+            if (tourRunning) return;
+
+            // 이슈 큐 생성 (brick_id가 있는 것만)
+            tourQueue = lastAnalysisResult.issues
+                .filter(i => i.brick_id !== null)
+                .map(i => ({ brickId: i.brick_id, message: i.message, type: i.type }));
+
+            if (tourQueue.length === 0) {
+                alert('하이라이트할 브릭이 없습니다');
+                return;
+            }
+
+            tourRunning = true;
+            tourIndex = 0;
+
+            // UI 업데이트
+            document.getElementById('tourBtn').style.display = 'none';
+            document.getElementById('stopTourBtn').style.display = 'block';
+            document.getElementById('tourProgress').style.display = 'block';
+            document.getElementById('tourTotal').textContent = tourQueue.length;
+
+            // 첫 번째 시작
+            showNextInTour();
+        }
+
+        function stopTour() {
+            tourRunning = false;
+            tourQueue = [];
+            tourIndex = 0;
+
+            // 진행 중인 깜빡임 중지
+            if (blinkInterval) {
+                clearInterval(blinkInterval);
+                blinkInterval = null;
+            }
+            restoreAllMaterials();
+
+            // UI 복원
+            document.getElementById('tourBtn').style.display = 'block';
+            document.getElementById('stopTourBtn').style.display = 'none';
+            document.getElementById('tourProgress').style.display = 'none';
+        }
+
+        function showNextInTour() {
+            if (!tourRunning || tourIndex >= tourQueue.length) {
+                // 투어 완료
+                stopTour();
+                return;
+            }
+
+            const item = tourQueue[tourIndex];
+            document.getElementById('tourCurrent').textContent = tourIndex + 1;
+
+            // 해당 이슈 아이템 하이라이트
+            const issueItems = document.querySelectorAll('.issue-item');
+            issueItems.forEach((el, idx) => {
+                el.style.outline = idx === tourIndex ? '2px solid #e94560' : 'none';
+            });
+
+            // 깜빡임 시작 (콜백으로 다음 진행)
+            focusOnBrickWithCallback(item.brickId, () => {
+                tourIndex++;
+                // 잠시 대기 후 다음
+                setTimeout(() => {
+                    showNextInTour();
+                }, 500);
+            });
+        }
+
+        function focusOnBrickWithCallback(brickId, onComplete) {
+            if (brickId === null || !model) {
+                if (onComplete) onComplete();
+                return;
+            }
+
+            const mesh = brickMeshes.get(brickId);
+            if (!mesh) {
+                if (onComplete) onComplete();
+                return;
+            }
+
+            // 카메라 이동
+            const worldPos = new THREE.Vector3();
+            mesh.getWorldPosition(worldPos);
+            controls.target.copy(worldPos);
+            controls.update();
+
+            // 이전 깜빡임 중지 & 복원
+            if (blinkInterval) {
+                clearInterval(blinkInterval);
+                restoreAllMaterials();
+            }
+
+            // 모든 브릭의 원본 material 저장
+            const originalMaterials = new Map();
+            brickMeshes.forEach((m, id) => {
+                originalMaterials.set(id, m.material);
+            });
+
+            // 다른 브릭들 반투명으로
+            const ghostMaterial = new THREE.MeshStandardMaterial({
+                color: 0x888888,
+                transparent: true,
+                opacity: 0.15,
+                depthWrite: false
+            });
+
+            brickMeshes.forEach((m, id) => {
+                if (id !== brickId) {
+                    m.material = ghostMaterial;
+                }
+            });
+
+            // 대상 브릭 깜빡임
+            const originalMaterial = mesh.material;
+            const highlightMaterial = new THREE.MeshStandardMaterial({
+                color: 0xff0000,
+                emissive: 0xff0000,
+                emissiveIntensity: 0.5,
+                transparent: true,
+                opacity: 0.9
+            });
+
+            blinkState = { originalMaterials, targetId: brickId };
+
+            let count = 0;
+            let isHighlight = false;
+            blinkInterval = setInterval(() => {
+                isHighlight = !isHighlight;
+                mesh.material = isHighlight ? highlightMaterial : originalMaterial;
+                count++;
+                if (count >= 6) {  // 3번 깜빡임 (투어는 짧게)
+                    clearInterval(blinkInterval);
+                    blinkInterval = null;
+                    restoreAllMaterials();
+                    if (onComplete) onComplete();
+                }
+            }, 180);
+        }
+
+        // ============================================
+        // 전체 불량 브릭 깜빡임
+        // ============================================
+        let blinkAllInterval = null;
+
+        function blinkAllBadBricks() {
+            if (!lastAnalysisResult || lastAnalysisResult.issues.length === 0) {
+                alert('분석할 이슈가 없습니다');
+                return;
+            }
+
+            // 진행 중인 깜빡임 중지
+            if (blinkInterval) {
+                clearInterval(blinkInterval);
+                blinkInterval = null;
+            }
+            if (blinkAllInterval) {
+                clearInterval(blinkAllInterval);
+                blinkAllInterval = null;
+            }
+            stopTour();
+            restoreAllMaterials();
+
+            // 불량 브릭 ID 수집 (top_only는 제외 - 조립 순서 문제일 뿐 심각한 불량 아님)
+            const badBrickIds = new Set(
+                lastAnalysisResult.issues
+                    .filter(i => i.type !== 'top_only')  // top_only 제외
+                    .map(i => i.brick_id)
+                    .filter(id => id !== null)
+            );
+
+            if (badBrickIds.size === 0) {
+                alert('불량 브릭이 없습니다!');
+                return;
+            }
+
+            // 원본 material 저장
+            const originalMaterials = new Map();
+            brickMeshes.forEach((m, id) => {
+                originalMaterials.set(id, m.material);
+            });
+
+            // 불량 브릭 하이라이트 material (보일 때)
+            const badVisibleMaterial = new THREE.MeshStandardMaterial({
+                color: 0xff0000,
+                emissive: 0xff0000,
+                emissiveIntensity: 0.6,
+                transparent: false,
+                opacity: 1.0
+            });
+
+            // 불량 브릭 투명 material (안 보일 때)
+            const badInvisibleMaterial = new THREE.MeshStandardMaterial({
+                color: 0xff0000,
+                transparent: true,
+                opacity: 0.0,
+                depthWrite: false
+            });
+
+            // 정상 브릭 반투명
+            const goodGhostMaterial = new THREE.MeshStandardMaterial({
+                color: 0x4caf50,
+                emissive: 0x4caf50,
+                emissiveIntensity: 0.2,
+                transparent: true,
+                opacity: 0.7,
+                depthWrite: true
+            });
+
+            // 초기 상태: 정상은 반투명, 불량은 투명
+            brickMeshes.forEach((m, id) => {
+                if (badBrickIds.has(id)) {
+                    m.material = badInvisibleMaterial;
+                } else {
+                    m.material = goodGhostMaterial;
+                }
+            });
+
+            blinkState = { originalMaterials, targetId: null };
+
+            // 깜빡임 (전체 불량 동시: 투명 ↔ 빨강)
+            let count = 0;
+            let isVisible = false;
+            blinkAllInterval = setInterval(() => {
+                isVisible = !isVisible;
+                badBrickIds.forEach(id => {
+                    const mesh = brickMeshes.get(id);
+                    if (mesh) {
+                        mesh.material = isVisible ? badVisibleMaterial : badInvisibleMaterial;
+                    }
+                });
+                count++;
+                if (count >= 10) {  // 5번 깜빡임
+                    clearInterval(blinkAllInterval);
+                    blinkAllInterval = null;
+                    restoreAllMaterials();
+                }
+            }, 300);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('hidden', !show);
+        }
+
+        // ============================================
+        // 물리 시뮬레이션
+        // ============================================
+        let physicsRunning = false;
+        let fallingBricks = [];
+        let originalPositions = new Map();
+        let lastAnalysisResult = null;
+
+        function startPhysicsSimulation() {
+            if (!model || !lastAnalysisResult) {
+                alert('먼저 분석을 실행하세요');
+                return;
+            }
+            if (physicsRunning) return;
+
+            physicsRunning = true;
+            fallingBricks = [];
+
+            // 원래 위치 저장
+            brickMeshes.forEach((mesh, id) => {
+                originalPositions.set(id, mesh.position.clone());
+            });
+
+            // 문제 있는 브릭들 (FLOATING, WEAK) 찾기
+            const problemBrickIds = new Set(
+                lastAnalysisResult.issues
+                    .filter(i => i.type === 'floating' || i.type === 'weak' || i.type === 'isolated')
+                    .map(i => i.brick_id)
+                    .filter(id => id !== null)
+            );
+
+            // 떨어질 브릭 설정
+            problemBrickIds.forEach(id => {
+                const mesh = brickMeshes.get(id);
+                if (mesh) {
+                    fallingBricks.push({
+                        mesh,
+                        velocity: 0,
+                        rotation: (Math.random() - 0.5) * 0.1,  // 랜덤 회전
+                        rotationAxis: Math.random() > 0.5 ? 'x' : 'z'
+                    });
+                }
+            });
+
+            if (fallingBricks.length === 0) {
+                alert('떨어질 브릭이 없습니다! (안정적인 구조)');
+                physicsRunning = false;
+                return;
+            }
+
+            // 물리 애니메이션 시작
+            animatePhysics();
+        }
+
+        function animatePhysics() {
+            if (!physicsRunning) return;
+
+            const gravity = 2;  // 중력 가속도
+            const groundY = 300;  // 바닥 Y 위치 (LDraw: +Y가 아래)
+            const bounce = 0.3;  // 튕김 계수
+            let allStopped = true;
+
+            for (const brick of fallingBricks) {
+                // 속도 업데이트 (중력)
+                brick.velocity += gravity;
+
+                // 위치 업데이트 (Y 증가 = 아래로)
+                brick.mesh.position.y += brick.velocity;
+
+                // 회전 추가 (떨어지는 동안)
+                if (brick.mesh.position.y < groundY) {
+                    if (brick.rotationAxis === 'x') {
+                        brick.mesh.rotation.x += brick.rotation;
+                    } else {
+                        brick.mesh.rotation.z += brick.rotation;
+                    }
+                }
+
+                // 바닥 충돌
+                if (brick.mesh.position.y > groundY) {
+                    brick.mesh.position.y = groundY;
+                    brick.velocity = -brick.velocity * bounce;
+
+                    // 속도가 작으면 멈춤
+                    if (Math.abs(brick.velocity) < 1) {
+                        brick.velocity = 0;
+                    }
+                }
+
+                // 아직 움직이는 브릭이 있는지
+                if (Math.abs(brick.velocity) > 0.1 || brick.mesh.position.y < groundY - 1) {
+                    allStopped = false;
+                }
+            }
+
+            if (!allStopped) {
+                requestAnimationFrame(animatePhysics);
+            } else {
+                physicsRunning = false;
+            }
+        }
+
+        function resetSimulation() {
+            physicsRunning = false;
+            fallingBricks = [];
+
+            // 원래 위치로 복원
+            originalPositions.forEach((pos, id) => {
+                const mesh = brickMeshes.get(id);
+                if (mesh) {
+                    mesh.position.copy(pos);
+                    mesh.rotation.set(Math.PI, 0, 0);  // LDraw 기본 회전
+                }
+            });
+
+            // 모델 전체 회전 리셋
+            if (model) {
+                model.rotation.set(Math.PI, 0, 0);
+            }
+        }
+
+        // ============================================
+        // 이벤트 핸들러
+        // ============================================
+
+        // Rust 백엔드 API 호출 (가속 물리 엔진)
+        async function analyzeWithRust(ldrContent) {
+            const response = await fetch('/api/test/all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ldr_content: ldrContent })
+            });
+            const data = await response.json();
+
+            // 서버 응답을 클라이언트 형식으로 변환
+            const issues = data.issues.map(i => ({
+                brick_id: i.brick_id,
+                type: i.type,
+                severity: i.severity,
+                message: i.message,
+                color: i.color  // 이슈 타입별 색상 (hex)
+            }));
+
+            // 이슈 기반 점수 계산 (원래 JS 로직과 동일)
+            let score = 100;
+            for (const issue of issues) {
+                if (issue.severity === 'critical') score -= 30;
+                else if (issue.severity === 'high') score -= 15;
+                else if (issue.severity === 'medium') score -= 5;
+                else score -= 2;
+            }
+            score = Math.max(0, Math.min(100, score));
+
+            return {
+                totalBricks: data.brick_count,
+                issues: issues,
+                score: score,
+                stable: !issues.some(i => i.severity === 'critical') && score >= 50,
+                backend: data.backend,
+                elapsed_ms: data.elapsed_ms,
+                brick_colors: data.brick_colors || {},  // brick_id → hex color
+                issue_colors: data.issue_colors || {}   // 이슈 타입별 색상 범례
+            };
+        }
+
+        async function analyze(ldrContent) {
+            try {
+                await loadLDR(ldrContent);
+
+                // 🚀 Rust 백엔드 API 사용 (가속!)
+                let result;
+                try {
+                    result = await analyzeWithRust(ldrContent);
+                    console.log(`🦀 Rust 백엔드 사용: ${result.elapsed_ms?.toFixed(3)}ms`);
+                } catch (apiError) {
+                    console.warn('Rust API 실패, JS 폴백:', apiError);
+                    result = judgeBricks(ldrContent);  // 폴백
+                }
+
+                lastAnalysisResult = result;  // 결과 저장
+                highlightIssues(result.issues, result.brick_colors || {});
+                updateUI(result);
+            } catch (error) {
+                console.error('분석 실패:', error);
+                alert('LDR 분석 실패: ' + error.message);
+                showLoading(false);
+            }
+        }
+
+        document.getElementById('ldrFile').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const content = await file.text();
+            document.getElementById('ldrText').value = content;
+            await analyze(content);
+        });
+
+        document.getElementById('analyzeBtn').addEventListener('click', async () => {
+            const content = document.getElementById('ldrText').value.trim();
+            if (!content) {
+                alert('LDR 내용을 입력하세요');
+                return;
+            }
+            await analyze(content);
+        });
+
+        // 드래그 앤 드롭
+        const uploadArea = document.querySelector('.upload-area');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.style.borderColor = '#e94560';
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.style.borderColor = '#0f4c75';
+        });
+        uploadArea.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            uploadArea.style.borderColor = '#0f4c75';
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                // LDR 파일만 허용
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (!['ldr', 'mpd', 'dat'].includes(ext)) {
+                    alert('LDR 파일만 업로드 가능합니다 (.ldr, .mpd, .dat)');
+                    return;
+                }
+                const content = await file.text();
+                document.getElementById('ldrText').value = content;
+                await analyze(content);
+            }
+        });
+
+        // 자동 투어 버튼
+        document.getElementById('tourBtn').addEventListener('click', () => {
+            startTour();
+        });
+
+        document.getElementById('stopTourBtn').addEventListener('click', () => {
+            stopTour();
+        });
+
+        // 전체 불량 깜빡임 버튼
+        document.getElementById('blinkAllBtn').addEventListener('click', () => {
+            blinkAllBadBricks();
+        });
+
+        // 물리 시뮬레이션 버튼
+        document.getElementById('physicsBtn').addEventListener('click', () => {
+            startPhysicsSimulation();
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            resetSimulation();
+            stopTour();  // 투어도 중지
+            // 다시 분석
+            const content = document.getElementById('ldrText').value.trim();
+            if (content) {
+                analyze(content);
+            }
+        });
+
+        // 초기화
+        initThree();
+
+        // 사용자 제공 실제 LDR (회전 브릭 포함)
+        const demoLDR = `0 efb42b2a-be35-44e1-80bc-fe891c464be8_pbr.glb (tgt=16)
+0 Author: glb_to_ldr_embedded
+1 5 -20.00 0.00 -140.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 5 30.00 0.00 -140.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3004.dat
+1 5 -50.00 0.00 -130.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3003.dat
+1 1 0.00 0.00 -130.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 5 60.00 0.00 -130.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 5 40.00 0.00 -120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+0 STEP
+1 5 -40.00 -24.00 -130.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3002.dat
+1 1 0.00 -24.00 -130.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 5 40.00 -24.00 -130.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3002.dat
+1 1 0.00 -24.00 -100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+0 STEP
+1 5 -30.00 -48.00 -130.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3003.dat
+1 1 0.00 -48.00 -130.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 5 30.00 -48.00 -130.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3003.dat
+1 5 -60.00 -48.00 -120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 5 60.00 -48.00 -120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 -10.00 -48.00 -100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3004.dat
+1 1 20.00 -48.00 -100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+0 STEP
+1 1 -10.00 -72.00 -120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3004.dat
+1 1 20.00 -72.00 -110.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 -20.00 -72.00 -100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 0.00 -72.00 -90.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 14 -20.00 -72.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 20.00 -72.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+0 STEP
+1 1 10.00 -96.00 -120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3004.dat
+1 1 -20.00 -96.00 -110.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 20.00 -96.00 -100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 -10.00 -96.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3004.dat
+1 14 20.00 -96.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+0 STEP
+1 1 0.00 -120.00 -130.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 -20.00 -120.00 -110.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 20.00 -120.00 -110.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 14 -10.00 -120.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3004.dat
+1 14 20.00 -120.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 5 -40.00 -120.00 -70.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 5 40.00 -120.00 -70.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+0 STEP
+1 5 0.00 -144.00 -150.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 0.00 -144.00 -120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 -20.00 -144.00 -110.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3010.dat
+1 1 20.00 -144.00 -110.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3010.dat
+1 14 0.00 -144.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 5 -40.00 -144.00 -70.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 5 40.00 -144.00 -70.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 5 -20.00 -144.00 -60.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 5 20.00 -144.00 -60.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 -40.00 -144.00 80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 40.00 -144.00 80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 0.00 -144.00 90.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3002.dat
+1 14 -40.00 -144.00 100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 40.00 -144.00 100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 -40.00 -144.00 120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 -10.00 -144.00 120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3004.dat
+1 14 20.00 -144.00 120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 40.00 -144.00 120.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 0.00 -144.00 140.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 -20.00 -144.00 150.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 20.00 -144.00 150.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 0.00 -144.00 160.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+0 STEP
+1 5 0.00 -168.00 -150.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 -20.00 -168.00 -130.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 20.00 -168.00 -130.00 0.000000 0.000000 -1.000000 0.000000 1.000000 0.000000 1.000000 0.000000 0.000000 3004.dat
+1 1 -20.00 -168.00 -100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 1 20.00 -168.00 -100.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 19 -20.00 -168.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 14 0.00 -168.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat
+1 19 20.00 -168.00 -80.00 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat`;
+
+        document.getElementById('ldrText').value = demoLDR;
+    </script>
+</body>
+</html>

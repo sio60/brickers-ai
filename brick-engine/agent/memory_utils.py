@@ -15,6 +15,7 @@ from queue import Queue
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+import numpy as np
 
 # LangSmith Tracing (Optional)
 try:
@@ -239,23 +240,102 @@ class MemoryUtils:
             
         return []
 
-    def _format_context_for_embedding(self, observation: str, verification: Dict[str, Any] = None) -> str:
-        """[신규] 임베딩용 문맥 포맷팅 (정확도 향상용)"""
+    def calculate_model_metrics(self, plan: Any, verification_result: Any = None) -> Dict[str, Any]:
+        """[신규] LDR 모델의 물리적 특성(부피, 형태, 충돌 등)을 추출"""
+        metrics = {
+            "total_bricks": 0,
+            "total_volume": 0.0,
+            "bounding_box": {"min": [0,0,0], "max": [0,0,0]},
+            "dimensions": {"width": 0.0, "height": 0.0, "depth": 0.0},
+            "aspect_ratio": 1.0,
+            "collision_count": 0,
+            "floating_count": 0,
+        }
+        
+        bricks = plan.get_all_bricks() if hasattr(plan, 'get_all_bricks') else []
+        metrics["total_bricks"] = len(bricks)
+        
+        if bricks:
+            origins = []
+            total_vol = 0.0
+            for b in bricks:
+                if b.origin:
+                    origins.append(b.origin)
+                # Brick 클래스에 volume 속성이 있으면 사용
+                if hasattr(b, 'volume'):
+                    total_vol += b.volume
+                else:
+                    # 근사치 (1x1 기준)
+                    total_vol += 1.0
+            
+            metrics["total_volume"] = total_vol
+            
+            if origins:
+                arr = np.array(origins)
+                min_xyz = np.min(arr, axis=0).tolist()
+                max_xyz = np.max(arr, axis=0).tolist()
+                metrics["bounding_box"] = {"min": min_xyz, "max": max_xyz}
+                
+                dx = abs(max_xyz[0] - min_xyz[0])
+                dy = abs(max_xyz[1] - min_xyz[1]) # LDraw Y is height
+                dz = abs(max_xyz[2] - min_xyz[2])
+                metrics["dimensions"] = {"width": dx, "height": dy, "depth": dz}
+                metrics["aspect_ratio"] = dx / dz if dz > 0 else 1.0
+
+        if verification_result:
+            metrics["floating_count"] = getattr(verification_result, 'floating_bricks', 0)
+            # Evidence에서 충돌 횟수 추출
+            evidences = getattr(verification_result, 'evidence', [])
+            metrics["collision_count"] = len([ev for ev in evidences if getattr(ev, 'type', '') == 'COLLISION'])
+        
+        return metrics
+
+    def _format_context_for_embedding(self, observation: str, verification: Dict[str, Any] = None, subject_name: str = None) -> str:
+        """[고도화] 임베딩용 문맥 포맷팅 (의미론적 사물 이름 및 물리적 결함 정보 주입)"""
         context_parts = []
         
+        # 0. 사물 이름(의미론적 정보) - 최우선 순위
+        metrics = verification.get("metrics_after", verification) if verification else {}
+        subject = subject_name or metrics.get("subject_name", "Unknown Object")
+        context_parts.append(f"Subject: {subject}")
+
         if verification:
-            # 1. 실패 유형 명시
-            if not verification.get("stable", True):
-                context_parts.append("Status: Unstable")
-            elif verification.get("floating_bricks_count", 0) > 0:
-                context_parts.append(f"Status: Floating Bricks ({verification.get('floating_bricks_count')} bricks)")
+            # 1. 실패 유형 및 상태 명시
+            metrics = verification.get("metrics_after", verification) # metrics_after가 있으면 우선 사용
             
-            # 2. 핵심 수치 정보
-            if "small_brick_ratio" in verification:
-                ratio = float(verification["small_brick_ratio"])
-                context_parts.append(f"SmallBrickRatio: {ratio:.2f}")
+            if not verification.get("stable", True):
+                context_parts.append("Status: Unstable (Structural Collapse)")
+            
+            f_count = metrics.get("floating_count", 0)
+            if f_count > 0:
+                f_ids = metrics.get("floating_ids", [])
+                id_str = f" IDs:{f_ids[:5]}" if f_ids else ""
+                context_parts.append(f"Status: Floating Bricks ({f_count} bricks{id_str})")
+            
+            fallen_count = metrics.get("fallen_count", 0)
+            if fallen_count > 0:
+                context_parts.append(f"Status: Fallen Bricks ({fallen_count} bricks)")
+
+            if metrics.get("budget_exceeded"):
+                context_parts.append(f"Status: Budget Exceeded (Max:{metrics.get('target_budget')})")
+
+            # 2. 물리적 형태 및 규모 (RAG 매칭용)
+            vol = metrics.get("total_volume", 0)
+            if vol > 0:
+                context_parts.append(f"Volume: {vol:.1f}")
+            
+            dims = metrics.get("dimensions", {})
+            if dims:
+                context_parts.append(f"Size: {dims.get('width', 0):.0f}x{dims.get('height', 0):.0f}x{dims.get('depth', 0):.0f}")
+
+            # 3. 핵심 수치 정보
+            ratio = metrics.get("failure_ratio", 0)
+            context_parts.append(f"FailureRatio: {ratio:.2f}")
+            
+            s_ratio = metrics.get("small_brick_ratio", 0)
+            context_parts.append(f"SmallBrickRatio: {s_ratio:.2f}")
                 
-        # 3. 관찰 텍스트
+        # 3. 관찰 및 의미론적 텍스트
         context_parts.append(f"Observation: {observation}")
         
         return " | ".join(context_parts)
@@ -274,7 +354,7 @@ class MemoryUtils:
                 {"$vectorSearch": {
                     "index": self.vector_index_name,
                     "path": "embedding",
-                    "queryVector": [0.0] * 384,  # 더미 벡터
+                    "queryVector": [0.1] * 384,  # 더미 벡터 (Zero Vector 에러 방지를 위해 0.1 사용)
                     "numCandidates": 1,
                     "limit": 1
                 }}
@@ -330,9 +410,11 @@ class MemoryUtils:
         # "상황 유사도" 정확도 향상을 위해 구조화된 포맷 사용
         search_text = self._format_context_for_embedding(hypothesis.get('observation', ''), verification)
         
-        # LLM에게 보여줄 전체 요약
+        # LLM에게 보여줄 전체 요약 (상세 분석용)
+        # 물리적 결함의 구체적 원인( floating_ids 등)이 포함됨
         summary_text = (
             f"Observation: {hypothesis.get('observation', '')} "
+            f"Detailed Status: {search_text} " # 상세 문맥 포함
             f"Hypothesis: {hypothesis.get('hypothesis', '')} "
             f"Action: {experiment.get('tool', '')} "
             f"Result: {verification.get('numerical_analysis', '')} "
@@ -409,7 +491,7 @@ class MemoryUtils:
             logger.error(f"Failed to end session: {e}")
 
     @traceable(name="MemoryUtils.search_similar_cases")
-    def search_similar_cases(self, observation: str, limit: int = 10, min_score: float = 0.5, verification_metrics: Dict[str, Any] = None) -> List[Dict]:
+    def search_similar_cases(self, observation: str, limit: int = 10, min_score: float = 0.5, verification_metrics: Dict[str, Any] = None, subject_name: str = None) -> List[Dict]:
         """RAG: 유사 후보군 검색 (Re-ranking을 위해 넉넉히 검색)"""
         if not self.use_vector or self.collection_exps is None:
             return []
@@ -419,7 +501,7 @@ class MemoryUtils:
             return []
             
         # 검색용 텍스트 생성 (메트릭 포함)
-        query_text = self._format_context_for_embedding(observation, verification_metrics)
+        query_text = self._format_context_for_embedding(observation, verification_metrics, subject_name=subject_name)
         query_vector = self._get_embedding(query_text)
         if not query_vector:
             return []
@@ -429,7 +511,7 @@ class MemoryUtils:
             {
                 "$vectorSearch": {
                     "index": self.vector_index_name,
-                    "path": "observation_embedding",  # [변경] 상황 유사도 기준 검색
+                    "path": "embedding",  # [복구] 기존에 색인된 기본 필드 사용 (호환성 우선)
                     "queryVector": query_vector,
                     "numCandidates": limit * 10,
                     "limit": limit * 2
@@ -467,7 +549,7 @@ class MemoryUtils:
                     {
                         "$vectorSearch": {
                             "index": self.vector_index_name,
-                            "path": "observation_embedding",
+                            "path": "embedding",
                             "queryVector": query_vector,
                             "numCandidates": 10,
                             "limit": 1
@@ -476,7 +558,6 @@ class MemoryUtils:
                     {
                         "$project": {
                             "_id": 0,
-                            # embedding 포함
                             "session_id": 0,
                         }
                     }
@@ -485,7 +566,18 @@ class MemoryUtils:
                 if results:
                     logger.info("🔍 Fallback successful: Found 1 similar case.")
             else:
-                logger.info(f"🔍 Found {len(results)} similar cases (score >= {min_score})")
+                logger.info(f"🔍 Found {len(results)} similar cases (score >= 0.3)")
+                
+            # 3. 결과에 신뢰도 딱지 붙이기 (Standard min_score 기준)
+            # 이 로직은 if/else 블록 외부(try 블록 내부)에 위치해야 합니다.
+            for res in results:
+                score = res.get("similarity_score", 0)
+                if score >= min_score:
+                    res["reliability"] = "high"
+                elif score >= (min_score - 0.1): # 상대적 중위권 (약 0.4)
+                    res["reliability"] = "medium"
+                else:
+                    res["reliability"] = "low"
                 
             return results
         except Exception as e:

@@ -21,6 +21,13 @@ from chat.router import router as chat_router
 from chat.memory import InMemoryConversationStore
 from chat.service import ChatService
 
+
+
+
+# app.include_router(chat_router)
+
+# app = FastAPI(title="Brickers AI API - Kids Mode", version="0.2.0")
+
 # ============================================================================
 # 앱 인스턴스 생성 (단 한 번만!)
 # ============================================================================
