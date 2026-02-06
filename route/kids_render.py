@@ -80,38 +80,24 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
         print(f"   ⚠️ [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
 
 def _make_agent_log_sender(job_id: str):
-    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용 - async httpx 사용)"""
-    import asyncio
-
-    async def _send_log_async(step: str, message: str):
+    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용)"""
+    def send_log(step: str, message: str):
         url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs"
         token = os.environ.get("INTERNAL_API_TOKEN", "")
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(
-                    url,
-                    json={"step": step, "message": message[:2000]},
-                    headers={"X-Internal-Token": token},
-                )
+            # Sync context 이므로 httpx.post(sync) 사용
+            resp = httpx.post(
+                url,
+                json={"step": step, "message": message[:2000]},
+                headers={"X-Internal-Token": token},
+                timeout=5.0
+            )
             if resp.status_code == 200:
                 print(f"  [AgentLog] ✅ sent: [{step}] {message[:50]}...")
             else:
-                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url} | token={'SET' if token else 'EMPTY'}")
+                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url}")
         except Exception as e:
-            print(f"  [AgentLog] ❌ failed: {e} | url={url}")
-
-    def send_log(step: str, message: str):
-        """sync 컨텍스트에서 async httpx 호출을 위해 새 이벤트 루프 생성"""
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(_send_log_async(step, message))
-            finally:
-                loop.close()
-        except Exception as e:
-            print(f"  [AgentLog] ❌ loop error: {e}")
-
+            print(f"  [AgentLog] ❌ failed: {e}")
     return send_log
 
 # -----------------------------
@@ -593,19 +579,19 @@ async def render_one_image_async(img_bytes: bytes, mime: str) -> tuple[bytes, st
 # -----------------------------
 # Brickify engine loader
 # -----------------------------
-AGE_TO_BUDGET = {"4-5": 400, "6-7": 450, "8-10": 500}
+AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400}
 
 
 def _budget_to_start_target(eff_budget: int) -> int:
     # Frontend budgets: 300 / 350 / 400 (4-5 / 6-7 / 8-10)
     # [Increased] +10~15 to capture more detail like noses/tails
+    if eff_budget <= 300:
+        return 110
+    if eff_budget <= 350:
+        return 125
     if eff_budget <= 400:
-        return 130
-    if eff_budget <= 450:
-        return 145
-    if eff_budget <= 500:
-        return 160
-    return 170
+        return 140
+    return 145
 
 def _load_engine_convert():
     """
@@ -915,6 +901,7 @@ async def process_kids_request_internal(
                 "solid_color": 4,
                 "use_mesh_color": True,
                 "invert_y": False,
+                "smart_fix": True,
                 "fill": False,  # [Reverted] Save budget for external detail
                 "step_order": "bottomup",
                 "span": 4,
