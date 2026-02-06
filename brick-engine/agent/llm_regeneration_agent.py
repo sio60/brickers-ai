@@ -276,13 +276,24 @@ class AgentState(TypedDict):
 # ============================================================================
 
 class RegenerationGraph:
-    def __init__(self, llm_client: Optional[BaseLLMClient] = None):
+    def __init__(self, llm_client: Optional[BaseLLMClient] = None, log_callback=None):
         # 기본 클라이언트는 Gemini (비용 효율성)
         self.gemini_client = GeminiClient()
         self.default_client = llm_client if llm_client else self.gemini_client
-        
+
         # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
         self.gpt_client = None
+
+        # SSE 로그 콜백 (Kids 모드용)
+        self._log_callback = log_callback
+
+    def _log(self, step: str, message: str):
+        """SSE 로그 전송 헬퍼"""
+        if self._log_callback:
+            try:
+                self._log_callback(step, message)
+            except Exception:
+                pass  # fire-and-forget
             
         # 초기 시스템 프롬프트 (Tool 사용 권장)
         self.SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문가(Co-Scientist)입니다.
@@ -377,6 +388,7 @@ class RegenerationGraph:
     def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
         """[신규] 가설 생성 노드: RAG 검색 및 구체적 가설 수립"""
         print("\n[Hypothesize] 가설 수립 및 RAG 검색 중...")
+        self._log("HYPOTHESIZE", "유사 사례를 검색하고 가설을 수립하고 있습니다...")
         
         # 1. RAG 검색
         current_observation = ""
@@ -438,6 +450,7 @@ class RegenerationGraph:
 
     def node_strategy(self, state: AgentState) -> Dict[str, Any]:
         """[신규] 전략 결정 노드: 난이도에 따른 LLM 모델 선택"""
+        self._log("STRATEGY", "최적의 전략을 결정하고 있습니다...")
         hypothesis = state.get("current_hypothesis", {})
         difficulty = hypothesis.get("difficulty", "Medium")
         
@@ -462,7 +475,8 @@ class RegenerationGraph:
     def node_generator(self, state: AgentState) -> Dict[str, Any]:
         """GLB -> LDR 변환 노드"""
         from glb_to_ldr_embedded import convert_glb_to_ldr
-        
+
+        self._log("GENERATE", f"브릭 모델을 생성하고 있습니다... (시도 {state['attempts'] + 1}/{state['max_retries']})")
         print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
         print(f"  Params: target={state['params'].get('target')}, budget={state['params'].get('budget')}")
         
@@ -495,6 +509,7 @@ class RegenerationGraph:
         from physical_verification.ldr_loader import LdrLoader
         from physical_verification.verifier import PhysicalVerifier
 
+        self._log("VERIFY", "물리 안정성을 검증하고 있습니다...")
         print("\n[Verifier] 물리 검증 수행 중...")
 
         if not os.path.exists(state['ldr_path']):
@@ -655,8 +670,9 @@ class RegenerationGraph:
         """LLM이 상황을 분석하고 도구를 선택하는 노드"""
         import time
         # API Rate Limit (429) 방지를 위한 짧은 딜레이 (특히 Free Tier 사용 시)
-        time.sleep(2) 
-        
+        time.sleep(2)
+
+        self._log("ANALYZE", "AI가 구조를 분석하고 개선 방안을 찾고 있습니다...")
         print("\n[Co-Scientist] 상황 분석 중...")
         
         # 사용 가능한 도구 정의
@@ -892,9 +908,10 @@ class RegenerationGraph:
         """
         회고 노드: 검증 결과를 분석하고 성공/실패를 Memory에 기록합니다.
         Co-Scientist의 핵심 학습 메커니즘입니다.
-        
+
         이제 Verify 후에 호출되므로 실제 결과를 알 수 있습니다.
         """
+        self._log("REFLECT", "결과를 분석하고 학습하고 있습니다...")
         print("\n[Reflect] 실제 결과 분석 중...")
         
         # Memory 초기화 (없으면)
@@ -1137,7 +1154,7 @@ def regeneration_loop(
 
     _log("ANALYZE", "모델 구조를 분석하고 있습니다...")
 
-    graph_builder = RegenerationGraph(llm_client)
+    graph_builder = RegenerationGraph(llm_client, log_callback=log_callback)
     app = graph_builder.build()
     
     # 시스템 메시지 및 초기 설정
