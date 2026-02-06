@@ -41,7 +41,7 @@ TRIPO_WAIT_TIMEOUT_SEC = int(os.environ.get("TRIPO_WAIT_TIMEOUT_SEC", "900"))
 DOWNLOAD_TIMEOUT_SEC = float(os.environ.get("KIDS_DOWNLOAD_TIMEOUT_SEC", "180.0"))
 
 # Age → budget mapping
-AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400}
+AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400, "PRO": 2000}
 
 
 def budget_to_start_target(eff_budget: int) -> int:
@@ -51,4 +51,6 @@ def budget_to_start_target(eff_budget: int) -> int:
         return 125
     if eff_budget <= 400:
         return 140
-    return 145
+    if eff_budget <= 2000:
+        return 220 # Pro target (larger resolution)
+    return 240
