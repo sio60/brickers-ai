@@ -225,6 +225,7 @@ class AgentState(TypedDict):
     # 입력 및 설정
     glb_path: str
     ldr_path: str
+    subject_name: str          # [추가] 사물의 정체성 (예: "강아지", "자동차")
     params: Dict[str, Any]
     max_retries: int
     acceptable_failure_ratio: float
@@ -602,11 +603,20 @@ class RegenerationGraph:
                 "total_bricks": total_bricks,
                 "floating_count": feedback.floating_bricks,
                 "fallen_count": feedback.fallen_bricks,
-                "floating_ids": floating_ids,  # [추가] 상세 브릭 ID
-                "fallen_ids": [ev.brick_ids for ev in stab_result.evidence if ev.type == "FALLEN_PART"],  # [추가] 
-                "budget_exceeded": total_bricks > budget, # [추가] 예산 초과 여부
-                "target_budget": budget
+                "floating_ids": floating_ids,
+                "fallen_ids": [ev.brick_ids for ev in stab_result.evidence if ev.type == "FALLEN_PART"],
+                "budget_exceeded": total_bricks > budget,
+                "target_budget": budget,
+                "subject_name": state.get("subject_name", "Unknown Object")  # [추가] 사물 이름 주입
             }
+            
+            # [추가] 상세 물리 메트릭 (부피, 형태 등)
+            if memory_manager:
+                try:
+                    phys_metrics = memory_manager.calculate_model_metrics(plan, stab_result)
+                    current_metrics.update(phys_metrics)
+                except Exception as e:
+                    print(f"  ⚠️ 물리 메트릭 추출 실패: {e}")
             
             # 성공 판정: 
             # 1. 물리적으로 안정적이거나 실패율이 허용치 이내여야 함
@@ -702,9 +712,10 @@ class RegenerationGraph:
         # --- [Memory 정보 주입 (RAG)] ---
         # Vector Search를 통해 현재 상황과 가장 유사한 과거 사례를 검색
         
-        # 현재 관찰 요약 (검색 쿼리용)
+        # 현재 관찰 + 사물 이름 결합 (의미론적 검색 쿼리 고도화)
         last_human_msg = next((m for m in reversed(messages_to_send) if isinstance(m, HumanMessage)), None)
-        current_observation = last_human_msg.content if last_human_msg else ""
+        subject_prefix = f"[{state.get('subject_name', 'Object')}] "
+        current_observation = subject_prefix + (last_human_msg.content if last_human_msg else "")
         
         if memory_manager:
             # 1. 넓은 범위 검색 (Top 10) - 메트릭 포함
@@ -712,8 +723,9 @@ class RegenerationGraph:
             raw_cases = memory_manager.search_similar_cases(
                 current_observation, 
                 limit=10, 
-                min_score=0.5,
-                verification_metrics=verification_metrics
+                min_score=0.4, # 의미론적 결합 시 약간 낮춰서 더 많은 후보군 확보
+                verification_metrics=verification_metrics,
+                subject_name=state.get("subject_name", "Object")
             )
             # 2. LLM Re-ranking (Top 3 선별)
             similar_cases = self._rerank_and_filter_cases(current_observation, raw_cases)
@@ -721,17 +733,29 @@ class RegenerationGraph:
             if similar_cases:
                 memory_info = "\n**📚 유사한 과거 실험 사례 (RAG):**\n"
                 for i, case in enumerate(similar_cases, 1):
-                    # RAG 검색 결과 포맷팅
-                    tool = case['experiment'].get('tool', 'Unknown')
-                    result = case['verification'].get('numerical_analysis', 'N/A')
-                    lesson = case['improvement'].get('lesson_learned', 'No lesson')
-                    outcome = "성공" if case.get('result_success') else "실패"
+                    exp = case.get('experiment', {})
+                    ver = case.get('verification', {})
+                    imp = case.get('improvement', {})
                     
-                    memory_info += f"[{i}] {outcome} 사례 (도구: {tool})\n"
-                    memory_info += f"    결과: {result}\n"
-                    memory_info += f"    교훈: {lesson}\n"
+                    # 물리 메트릭 추출 (고도화됨)
+                    metrics = ver.get('metrics_after', ver)
+                    vol = metrics.get('total_volume', 0)
+                    dims = metrics.get('dimensions', {})
+                    dim_str = f"{dims.get('width', 0):.0f}x{dims.get('height', 0):.0f}x{dims.get('depth', 0):.0f}" if dims else "N/A"
+                    
+                    tool = exp.get('tool', 'Unknown')
+                    result = ver.get('numerical_analysis', 'N/A')
+                    lesson = imp.get('lesson_learned', 'No lesson')
+                    outcome = "성공" if case.get('result_success') else "실패"
+                    score = case.get('similarity_score', 0)
+                    rel = case.get('reliability_grade', 'Low') # 점수에 따른 신뢰도
+                    
+                    memory_info += f"[{i}] {outcome} 사례 (신뢰도: {rel}, 유사도: {score:.2f})\n"
+                    memory_info += f"    - 물리 특성: 부피 {vol:.1f}, 크기 {dim_str}, 브릭 {metrics.get('total_bricks', 0)}개\n"
+                    memory_info += f"    - 도구: {tool} -> 결과: {result}\n"
+                    memory_info += f"    - 교훈: {lesson}\n"
                 
-                memory_info += "\n위 사례를 참고하여 성공 확률이 높은 전략을 수립하세요.\n"
+                memory_info += "\n위 부피와 형태적 유사성을 고려하여 최적의 파라미터를 결정하세요.\n"
                 messages_to_send.append(SystemMessage(content=memory_info))
                 print(f"  📚 RAG 검색 결과 {len(similar_cases)}건 주입됨")
         
@@ -1134,11 +1158,12 @@ def _run_evolver_subprocess(ldr_path: str, glb_path: str = None) -> dict:
 def regeneration_loop(
     glb_path: str,
     output_ldr_path: str,
+    subject_name: str = "Unknown Object", # [추가] 사물의 이름
     llm_client: Optional[BaseLLMClient] = None,
     max_retries: int = 5,
     acceptable_failure_ratio: float = 0.1,
     gui: bool = False,
-    params: Optional[Dict[str, Any]] = None,  # [수정] 외부 파라미터 주입 허용
+    params: Optional[Dict[str, Any]] = None,
 ):
     print("=" * 60)
     print("🤖 Co-Scientist Agent (Tool-Use Ver.)")
@@ -1185,6 +1210,7 @@ def regeneration_loop(
     initial_state = AgentState(
         glb_path=glb_path,
         ldr_path=output_ldr_path,
+        subject_name=subject_name,      # [추가] 사물 이름 주입
         params=merged_params,
         attempts=0,
         session_id=memory_manager.start_session(Path(glb_path).name, "main_agent") if memory_manager else "offline",
@@ -1192,7 +1218,10 @@ def regeneration_loop(
         acceptable_failure_ratio=acceptable_failure_ratio,
         verification_duration=2.0,
         gui=gui,
-        messages=[system_msg], # History 시작
+        messages=[
+            system_msg,
+            HumanMessage(content=f"'{subject_name}' 모델의 물리적 안정성을 최적화하고 LDR 파일을 설계하세요.")
+        ], # History 시작
         verification_raw_result=None,
         floating_bricks_ids=[],
         verification_errors=0,  # 검증 에러 카운터 초기화

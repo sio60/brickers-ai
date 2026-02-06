@@ -58,6 +58,24 @@ async def update_job_stage(job_id: str, stage: str) -> None:
     except Exception as e:
         print(f"   ⚠️ [Stage Update] 실패 (무시) | stage={stage} | error={str(e)}")
 
+async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
+    """
+    Backend에 Gemini가 추출한 suggested_tags 저장 요청
+    - 실패해도 전체 플로우에 영향 없음 (로그만 출력)
+    """
+    if not tags:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.patch(
+                f"{BACKEND_URL}/api/kids/jobs/{job_id}/suggested-tags",
+                json={"suggestedTags": tags},
+                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
+            )
+        print(f"   ✅ [Suggested Tags] {tags}")
+    except Exception as e:
+        print(f"   ⚠️ [Suggested Tags] 저장 실패 (무시) | tags={tags} | error={str(e)}")
+
 def _make_agent_log_sender(job_id: str):
     """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용)"""
     def send_log(step: str, message: str):
@@ -419,7 +437,10 @@ Requirements:
 - Simplify complex textures into solid, uniform colors
 - Maintain the overall shape and proportions of the subject
 
-Output a single, polished image optimized for 3D mesh generation.
+[METADATA_REQUEST]
+Also, identify the subject in a single word and provide 3-5 relevant hashtags.
+Format: SUBJECT: <word> | TAGS: <tag1>, <tag2>, ...
+Example: SUBJECT: Pikachu | TAGS: Pokemon, Kids, Brick, Yellow
 """
 
 def _decode_if_base64_image(data: bytes | str) -> bytes:
@@ -454,7 +475,7 @@ def _decode_if_base64_image(data: bytes | str) -> bytes:
 
     return data if isinstance(data, (bytes, bytearray)) else s.encode("utf-8")
 
-def _render_one_image_sync(img_bytes: bytes, mime: str) -> bytes:
+def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, list[str]]:
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if not gemini_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
@@ -476,34 +497,65 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> bytes:
 
     parts = resp.candidates[0].content.parts if resp.candidates[0].content else []
     out_bytes = None
-    for part in parts:
-        inline = getattr(part, "inline_data", None)
-        if inline and getattr(inline, "data", None):
-            out_bytes = inline.data
-            break
+    meta_text = ""
+    
+    for i, part in enumerate(parts):
+        # 1. 이미지 데이터 추출
+        if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
+            out_bytes = part.inline_data.data
+        elif hasattr(part, "file_data") and part.file_data: # 만약의 경우를 대비한 file_data 체크
+            # file_data는 보통 가공이 더 필요하지만 여기선 inline 위주로 처리
+            pass
 
+        # 2. 메타데이터 (텍스트) 추출
+        if hasattr(part, "text") and part.text:
+            meta_text += part.text
+            
+    # 에러 방지: 이미지가 없으면 텍스트에서라도 이미지를 찾거나(Base64) 재시도 로직 고려 가능
     if out_bytes is None:
-        raise ValueError("no image returned from model")
+        # 텍스트 내에 Base64 이미지가 섞여 있을 가능성 체크
+        if "data:image" in meta_text or (len(meta_text) > 1000 and any(prefix in meta_text for prefix in ["iVBOR", "/9j/"])):
+             out_bytes = meta_text.strip() # _decode_if_base64_image에서 처리될 것
+        else:
+             raise ValueError(f"no image returned from model (meta_text len: {len(meta_text)})")
 
     out_bytes = _decode_if_base64_image(out_bytes)
 
+    # --- [이미지 유효성 체크 로직 복구] ---
+    is_valid_image = False
     # PNG/JPG 매직넘버 체크
     if len(out_bytes) >= 2 and out_bytes[0] == 0xFF and out_bytes[1] == 0xD8:
-        return out_bytes
-    if len(out_bytes) >= 8 and out_bytes[:8] == b"\x89PNG\r\n\x1a\n":
-        return out_bytes
+        is_valid_image = True
+    elif len(out_bytes) >= 8 and out_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        is_valid_image = True
+    
+    # 매직넘버가 없으면 남아있는 base64 한 번 더 시도
+    if not is_valid_image:
+        try:
+            head = out_bytes[:20].decode("utf-8", errors="ignore")
+            if head.startswith("iVBOR") or head.startswith("/9j/"):
+                out_bytes = base64.b64decode(out_bytes, validate=False)
+        except Exception:
+            pass
+    # ----------------------------------
 
-    # 남아있는 base64 한 번 더
+    # 메타데이터 파싱 (SUBJECT: ..., TAGS: ...)
+    subject = "Object"
+    tags = ["Kids", "Brick"]
+    
     try:
-        head = out_bytes[:20].decode("utf-8", errors="ignore")
-        if head.startswith("iVBOR") or head.startswith("/9j/"):
-            out_bytes = base64.b64decode(out_bytes, validate=False)
+        if "SUBJECT:" in meta_text:
+            s_part = meta_text.split("SUBJECT:")[1].split("|")[0].strip()
+            if s_part: subject = s_part
+        if "TAGS:" in meta_text:
+            t_part = meta_text.split("TAGS:")[1].strip()
+            tags = [t.strip() for t in t_part.replace("#", "").split(",") if t.strip()]
     except Exception:
         pass
 
-    return out_bytes
+    return out_bytes, subject, tags
 
-async def render_one_image_async(img_bytes: bytes, mime: str) -> bytes:
+async def render_one_image_async(img_bytes: bytes, mime: str) -> tuple[bytes, str, list[str]]:
     # ✅ gemini 호출은 동기라서 thread로 빼야 “완전 async 안전”
     return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime)
 
@@ -587,8 +639,9 @@ class KidsProcessRequest(BaseModel):
     sourceImageUrl: str  # S3 URL (Frontend가 직접 업로드한 URL)
     age: str = "6-7"
     budget: Optional[int] = None
+    subject: Optional[str] = None  # [추가] 사물 이름 (예: "강아지")
     prompt: Optional[str] = None
-    returnLdrData: bool = False  # S3 사용 시 기본값 False
+    returnLdrData: bool = False
 
 # Response schema
 # -----------------------------
@@ -605,6 +658,9 @@ class ProcessResp(BaseModel):
     ldrUrl: str
     ldrData: Optional[str] = None
     bomUrl: str  # ✅ BOM 파일 URL 추가
+    
+    subject: str # [추가] 사물 명칭
+    tags: list[str] # [추가] 해시태그 목록
 
     parts: int
     finalTarget: int
@@ -617,6 +673,7 @@ async def process_kids_request_internal(
     source_image_url: str,
     age: str,
     budget: Optional[int] = None,
+    subject: Optional[str] = None, # [추가] 사물 명칭
 ) -> Dict[str, Any]:
     """
     Kids 렌더링 내부 로직 (SQS Consumer에서 호출)
@@ -663,7 +720,7 @@ async def process_kids_request_internal(
     log("═" * 70)
     log(f"🚀 [AI-SERVER] 요청 시작 | jobId={job_id}")
     log(f"📁 원본 이미지 URL: {source_image_url}")
-    log(f"📊 파라미터: age={age} | budget={budget}")
+    log(f"📊 파라미터: subject={subject} | age={age} | budget={budget}")
     log(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
     log("═" * 70)
 
@@ -681,16 +738,22 @@ async def process_kids_request_internal(
             await _write_bytes_async(raw_path, img_bytes)
             log(f"✅ [STEP 0/5] 다운로드 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
-            # -----------------
             # 1) 보정 (Gemini) - thread로 안전
             # -----------------
             step_start = time.time()
-            log(f"📌 [STEP 1/5] Gemini 이미지 보정 시작...")
-            corrected_bytes = await render_one_image_async(img_bytes, "image/png")
+            log(f"📌 [STEP 1/5] Gemini 이미지 보정 및 태그 추출 시작...")
+            corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
+            
+            # 사용자 제공 subject가 없으면 AI가 찾은 이름 사용
+            final_subject = subject or ai_subject
+            
             corrected_path = out_req_dir / "corrected.png"
             await _write_bytes_async(corrected_path, corrected_bytes)
             corrected_url = _to_generated_url(corrected_path, out_dir=out_req_dir)
-            log(f"✅ [STEP 1/5] Gemini 보정 완료 | {len(corrected_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+            log(f"✅ [STEP 1/5] Gemini 완료 | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+            
+            # ✅ Backend에 Gemini가 추출한 태그 저장
+            await update_job_suggested_tags(job_id, ai_tags)
 
             # -----------------
             # 2) Tripo 3D (이미지 → 3D 모델 생성)
@@ -840,6 +903,7 @@ async def process_kids_request_internal(
                 return regeneration_loop(
                     glb_path=str(glb_path),
                     output_ldr_path=str(out_ldr),
+                    subject_name=final_subject, # [수정] 자동 인식된 이름 전달
                     llm_client=llm_client,
                     max_retries=3,
                     gui=False,
@@ -886,6 +950,8 @@ async def process_kids_request_internal(
                 "modelUrl": model_url,
                 "ldrUrl": ldr_url,
                 "bomUrl": bom_url,
+                "subject": final_subject,
+                "tags": ai_tags,
                 "parts": int(result.get("parts", 0)),
                 "finalTarget": int(result.get("final_target", 0)),
             }
@@ -923,6 +989,7 @@ async def process(request: KidsProcessRequest):
             source_image_url=request.sourceImageUrl,
             age=request.age,
             budget=request.budget,
+            subject=request.subject, # [추가]
         )
 
         # ✅ S3 사용 시에는 ldrData 생략 (불필요한 base64 인코딩 제거)
@@ -945,6 +1012,8 @@ async def process(request: KidsProcessRequest):
             "ldrUrl": result["ldrUrl"],
             "ldrData": ldr_data_uri,
             "bomUrl": result["bomUrl"],
+            "subject": result["subject"],
+            "tags": result["tags"],
             "parts": result["parts"],
             "finalTarget": result["finalTarget"],
         }
