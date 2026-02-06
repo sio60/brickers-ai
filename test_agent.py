@@ -1,6 +1,6 @@
-
 import sys
 import os
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -11,64 +11,58 @@ load_dotenv()
 current_dir = Path(__file__).resolve().parent
 brick_engine_dir = current_dir / "brick-engine"
 sys.path.append(str(brick_engine_dir))
-
-# Also add brick-engine/agent to path if needed (for internal imports)
 sys.path.append(str(brick_engine_dir / "agent"))
 
 try:
     from agent.llm_regeneration_agent import regeneration_loop
     from agent.llm_clients import GeminiClient
 except ImportError as e:
-    print(f"Import Error: {e}")
-    print("Trying alternative import...")
     sys.path.append(str(brick_engine_dir / "agent"))
     from llm_regeneration_agent import regeneration_loop
     from llm_clients import GeminiClient
 
 def test_kids_generation():
-    # 1. Inputs
-    # You need a sample GLB file. Change this path to a real GLB file on your system.
-    # If users have one in uploads, use that.
-    # Searching for a GLB file...
-    glb_path = "uploads/test.glb" 
-    # If no file exists, we can't test. User needs to provide one.
-    # But for the script, I'll assume one exists or ask user to provide path.
+    parser = argparse.ArgumentParser(description="Test AI Agent for Lego Generation")
+    parser.add_argument("glb_path", nargs="?", default="uploads/test.glb", help="Path to input GLB file")
+    parser.add_argument("budget_pos", nargs="?", type=int, help="Target brick count budget (positional)")
+    parser.add_argument("--budget", type=int, help="Target brick count budget (option)")
+    parser.add_argument("--out", default="output_test.ldr", help="Path to output LDR file")
+    parser.add_argument("--target", type=int, default=60, help="Resolution target (studs)")
     
-    if len(sys.argv) > 1:
-        glb_path = sys.argv[1]
+    args = parser.parse_args()
     
-    if not os.path.exists(glb_path):
-        print(f"❌ GLB file not found: {glb_path}")
-        print("Usage: python test_agent.py <path_to_glb>")
-        return
+    # Priority: --budget > positional budget > default 400
+    effective_budget = args.budget if args.budget is not None else (args.budget_pos if args.budget_pos is not None else 400)
 
-    output_ldr = "output_test.ldr"
+    if not os.path.exists(args.glb_path):
+        print(f"FAILED: GLB file not found: {args.glb_path}")
+        parser.print_help()
+        return
 
     # 2. Params (Kids Mode L1 Config)
     params = {
-        "target": 60,
-        "budget": 400,
-        "shrink": 0.85,
+        "target": args.target,
+        "budget": effective_budget,
+        "shrink": 0.8,
+        "search_iters": 12,
         "flipx180": False,
-        "flipy180": False, # Adjust if needed
+        "flipy180": False,
         "invert_y": False,
         "smart_fix": True,
-        "smart_fix": True,
-        "support_ratio": 0.3,      # default
+        "support_ratio": 0.3,
         "small_side_contact": True,
-        "fill": True,              # [IMPORTANT] Solid
-        "erosion_iters": 1,        # default
-        # Force v3 logic
+        "fill": True,
+        "erosion_iters": 1,
         "span": 4,
         "max_new_voxels": 12000,
     }
 
     print("="*60)
-    print(f"🚀 Testing Agent with Kids Params: Target={params['target']}, Budget={params['budget']}")
+    print(f"Testing Agent: {args.glb_path}")
+    print(f"   Target Studs: {params['target']}, Budget: {params['budget']}")
     print("="*60)
 
-    # 3. initialize LLM (optional, falls back if None but better to have)
-    # Assumes GENAI_API_KEY or GEMINI_API_KEY is set in env
+    # 3. initialize LLM
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GENAI_API_KEY")
     client = None
     if api_key:
@@ -78,8 +72,8 @@ def test_kids_generation():
 
     # 4. Run Loop
     final_state = regeneration_loop(
-        glb_path=glb_path,
-        output_ldr_path=output_ldr,
+        glb_path=args.glb_path,
+        output_ldr_path=args.out,
         llm_client=client,
         max_retries=3,
         params=params,
@@ -88,11 +82,11 @@ def test_kids_generation():
 
     # 5. Check Result
     print("\n" + "="*60)
-    if os.path.exists(output_ldr) and os.path.getsize(output_ldr) > 0:
-        print(f"✅ Success: LDR generated at {output_ldr}")
-        print(f"   Size: {os.path.getsize(output_ldr)} bytes")
+    if os.path.exists(args.out) and os.path.getsize(args.out) > 0:
+        print(f"SUCCESS: LDR generated at {args.out}")
+        print(f"   Size: {os.path.getsize(args.out)} bytes")
     else:
-        print("❌ Failure: LDR not generated or empty.")
+        print("FAILURE: LDR not generated or empty.")
 
 if __name__ == "__main__":
     test_kids_generation()
