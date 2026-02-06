@@ -136,9 +136,20 @@ def convert_glb_to_ldr(
     GLB to LDR conversion with budget-seeking loop.
     If the resulting brick count exceeds the budget, shrink target and retry.
     """
+    # --- SSE log callback ---
+    _log_cb = kwargs.pop("log_callback", None)
+    def _log(step: str, message: str):
+        if _log_cb:
+            try:
+                _log_cb(step, message)
+            except Exception:
+                pass
+
     print(f"[Engine] Starting conversion: {glb_path} -> {out_ldr_path}")
     print(f"[Engine] Target: {target} studs, Budget: {budget} bricks")
-    
+
+    _log("brickify", "브릭으로 어떻게 만들지 고민하고 있어요...")
+
     # 1. Load meshes
     scene = trimesh.load(glb_path, force='scene')
     if isinstance(scene, trimesh.Trimesh):
@@ -164,6 +175,7 @@ def convert_glb_to_ldr(
     for i in range(search_iters):
         print(f"\n[Engine] SEARCH ITERATION {i+1}/{search_iters}")
         print(f"[Engine] Current Target Studs: {int(curr_target)}")
+        _log("brickify", f"브릭을 하나씩 쌓아보고 있어요... ({i+1}/{search_iters})")
         parts_count, optimized = _single_conversion(
             combined=combined,
             out_ldr_path=out_ldr_path,
@@ -184,6 +196,7 @@ def convert_glb_to_ldr(
         
         if parts_count <= budget:
             print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
+            _log("brickify", f"딱 맞게 {parts_count}개로 쌓았어요!")
             break
         
         if i < search_iters - 1:
@@ -191,6 +204,7 @@ def convert_glb_to_ldr(
             if curr_target < 5: # Don't go below 5 studs
                 curr_target = 5
             print(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
+            _log("brickify", "브릭이 좀 많네요, 다시 고민해볼게요...")
         else:
             print(f"[Engine] WARNING: Failed to meet budget after {search_iters} iters.")
 
@@ -198,12 +212,16 @@ def convert_glb_to_ldr(
     if not final_optimized:
         raise RuntimeError("Failed to generate any bricks")
 
+    _log("brickify", "조립 순서를 고민하고 있어요...")
+
     write_ldr(
         out_ldr_path,
         final_optimized,
         step_order=step_order,
         title=Path(glb_path).stem
     )
+
+    _log("brickify", "브릭 설계가 끝났어요!")
 
     return {
         "parts": len(final_optimized),
