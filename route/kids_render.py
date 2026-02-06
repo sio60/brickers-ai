@@ -938,7 +938,7 @@ async def process_kids_request_internal(
             log(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
 
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
-                raise RuntimeError("LDR output missing/empty")
+                raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
 
             # -----------------
             # 5) 결과 URL 생성 및 BOM 파일 생성
