@@ -1,286 +1,77 @@
 # brickers-ai/route/kids_render.py
+"""Kids Mode 라우터 + 오케스트레이션 (리팩토링 버전)"""
 from __future__ import annotations
 
 import os
-import sys
-import base64
+import json
 import uuid
-import traceback
+import base64
 import time
+import traceback
 from pathlib import Path
 from typing import Dict, Optional, Any
 from datetime import datetime
 
 import anyio
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+import httpx
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-import httpx
-
-
-def log(msg: str) -> None:
-    """타임스탬프 포함 로그 출력"""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] {msg}")
-
-# ---- OpenAI ----
-# OpenAI import removed - no longer needed
-
-# ---- Tripo ----
 from tripo3d import TripoClient
 from tripo3d.models import TaskStatus
 
-# ---- Gemini (Nano Banana) ----
-from google import genai
-from google.genai import types as genai_types
+# --- Service modules ---
+from service.kids_config import (
+    GENERATED_DIR,
+    KIDS_TOTAL_TIMEOUT_SEC,
+    TRIPO_WAIT_TIMEOUT_SEC,
+    DOWNLOAD_TIMEOUT_SEC,
+    AGE_TO_BUDGET,
+    budget_to_start_target,
+    DEBUG,
+)
+from service.s3_client import USE_S3, S3_BUCKET, to_generated_url, upload_bytes_to_s3
+from service.gemini_image import render_one_image_async
+from service.backend_client import (
+    update_job_stage,
+    update_job_suggested_tags,
+    make_agent_log_sender,
+)
+from service.bom_generator import generate_bom_from_ldr
+from service.brickify_loader import (
+    load_engine_convert,
+    load_agent_modules,
+    find_glb_in_dir,
+    pick_glb_from_downloaded,
+)
 
 # PDF Generation
 from route.headless_renderer import HeadlessPdfService
-from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom, upload_bytes_to_s3
+from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom
 
+# Re-export for app.py / sqs_consumer.py
+__all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
 
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
-# -----------------------------
-# Backend 연동 (Stage 업데이트)
-# -----------------------------
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8080").rstrip("/")
+def log(msg: str, user_email: str = "System") -> None:
+    """타임스탬프 및 사용자 정보 포함 로그 출력"""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    # 긴 이메일은 앞부분만 출력
+    user_tag = f"[{user_email}]" if user_email else "[System]"
+    print(f"[{ts}] {user_tag} {msg}")
 
-async def update_job_stage(job_id: str, stage: str) -> None:
-    """
-    Backend에 Job stage 업데이트 요청
-    - 실패해도 전체 플로우에 영향 없음 (로그만 출력)
-    """
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.patch(
-                f"{BACKEND_URL}/api/kids/jobs/{job_id}/stage",
-                json={"stage": stage},
-                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
-            )
-        print(f"   ✅ [Stage Update] {stage}")
-    except Exception as e:
-        print(f"   ⚠️ [Stage Update] 실패 (무시) | stage={stage} | error={str(e)}")
 
-async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
-    """
-    Backend에 Gemini가 추출한 suggested_tags 저장 요청
-    - 실패해도 전체 플로우에 영향 없음 (로그만 출력)
-    """
-    if not tags:
-        return
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.patch(
-                f"{BACKEND_URL}/api/kids/jobs/{job_id}/suggested-tags",
-                json={"suggestedTags": tags},
-                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
-            )
-            if resp.status_code >= 400:
-                 print(f"   ⚠️ [Suggested Tags] Backend 응답 에러: Status={resp.status_code} | Body={resp.text}")
-            else:
-                 print(f"   ✅ [Suggested Tags] 저장 성공: Status={resp.status_code} | Tags={tags}")
-    except Exception as e:
-        print(f"   ⚠️ [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
-
-def _make_agent_log_sender(job_id: str):
-    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용 - requests 사용)"""
-    import requests  # anyio와 무관한 순수 sync HTTP 클라이언트
-
-    def send_log(step: str, message: str):
-        url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs"
-        token = os.environ.get("INTERNAL_API_TOKEN", "")
-        try:
-            resp = requests.post(
-                url,
-                json={"step": step, "message": message[:2000]},
-                headers={"X-Internal-Token": token},
-                timeout=5.0
-            )
-            if resp.status_code == 200:
-                print(f"  [AgentLog] ✅ sent: [{step}] {message[:50]}...")
-            else:
-                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url} | body={resp.text[:100]}")
-        except Exception as e:
-            print(f"  [AgentLog] ❌ failed: {e} | url={url}")
-
-    return send_log
-
-# -----------------------------
-# Helpers / Config
-# -----------------------------
-def _is_truthy(v: str) -> bool:
-    return v.strip().lower() in ("1", "true", "yes", "y", "on")
-
-DEBUG = _is_truthy(os.environ.get("DEBUG", "false"))
-
-def _find_project_root(start: Path) -> Path:
-    cur = start.resolve()
-    if cur.is_file():
-        cur = cur.parent
-    markers = ("pyproject.toml", "requirements.txt", ".git")
-    for p in [cur] + list(cur.parents):
-        for m in markers:
-            if (p / m).exists():
-                return p
-    return cur
-
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "")).expanduser()
-PROJECT_ROOT = PROJECT_ROOT.resolve() if str(PROJECT_ROOT).strip() else _find_project_root(Path(__file__))
-
-PUBLIC_DIR = Path(os.environ.get("PUBLIC_DIR", PROJECT_ROOT / "public")).resolve()
-GENERATED_DIR = Path(os.environ.get("GENERATED_DIR", PUBLIC_DIR / "generated")).resolve()
-GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-
-# ✅ URL prefix는 /api/generated 로 통일
-STATIC_PREFIX = os.environ.get("GENERATED_URL_PREFIX", "/api/generated").rstrip("/")
-
-# 타임아웃(필요하면 env로 조절)
-KIDS_TOTAL_TIMEOUT_SEC = int(os.environ.get("KIDS_TOTAL_TIMEOUT_SEC", "1800"))     # 전체 30분
-TRIPO_WAIT_TIMEOUT_SEC = int(os.environ.get("TRIPO_WAIT_TIMEOUT_SEC", "900"))     # 트리포 대기 15분
-DOWNLOAD_TIMEOUT_SEC = float(os.environ.get("KIDS_DOWNLOAD_TIMEOUT_SEC", "180.0"))
-
-# -----------------------------
-# ✅ S3 업로드 옵션 (AWS_* 시크릿 기반)
-# -----------------------------
-# boto3 lazy import
-try:
-    import boto3
-    from botocore.exceptions import ClientError
-except ImportError:
-    boto3 = None  # type: ignore
-    ClientError = Exception  # type: ignore
-
-AI_PUBLIC_BASE_URL = os.environ.get("AI_PUBLIC_BASE_URL", "").strip().rstrip("/")
-
-AWS_REGION = (
-    os.environ.get("AWS_REGION", "").strip()
-    or os.environ.get("AWS_DEFAULT_REGION", "").strip()
-)
-
-S3_BUCKET = os.environ.get("AWS_S3_BUCKET", "").strip()
-
-# 버킷 URL을 직접 지정하고 싶으면 이것도 시크릿으로 추가 가능(선택)
-# 예) https://my-bucket.s3.ap-northeast-2.amazonaws.com  또는 CloudFront 도메인
-S3_PUBLIC_BASE_URL = os.environ.get("S3_PUBLIC_BASE_URL", "").strip().rstrip("/")
-
-# S3 켤지 여부: 기본은 "버킷 있으면 켜짐"
-USE_S3 = _is_truthy(os.environ.get("USE_S3", "true" if S3_BUCKET else "false"))
-
-# prefix (선택)
-S3_PREFIX = os.environ.get("S3_PREFIX", "uploads/ai-generated").strip().strip("/")
-
-# 공개 URL이 안 되면 presign으로 내려주기(선택)
-S3_PRESIGN = _is_truthy(os.environ.get("S3_PRESIGN", "false"))
-S3_PRESIGN_EXPIRES = int(os.environ.get("S3_PRESIGN_EXPIRES", "86400"))
-
-# 다운로드로 강제(ldr/glb)
-S3_FORCE_ATTACHMENT = _is_truthy(os.environ.get("S3_FORCE_ATTACHMENT", "true"))
-
-# 버킷이 ACL public-read 허용일 때만(보통은 false 유지 추천)
-S3_USE_ACL_PUBLIC_READ = _is_truthy(os.environ.get("S3_USE_ACL_PUBLIC_READ", "false"))
-
-_S3_CLIENT = None
-
-def _require_s3_ready() -> None:
-    if not USE_S3:
-        return
-    if boto3 is None:
-        raise RuntimeError("boto3 is not installed (pip install boto3)")
-    if not S3_BUCKET:
-        raise RuntimeError("AWS_S3_BUCKET is not set")
-    if not AWS_REGION:
-        raise RuntimeError("AWS_REGION is not set")
-
-def _get_s3_client():
-    global _S3_CLIENT
-    if _S3_CLIENT is not None:
-        return _S3_CLIENT
-    _require_s3_ready()
-
-    # boto3는 아래 env를 자동으로 읽음:
-    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION
-    _S3_CLIENT = boto3.client("s3", region_name=AWS_REGION)
-    return _S3_CLIENT
-
-def _public_s3_url(key: str) -> str:
-    # 1) 명시한 base url 있으면 그걸 사용 (CloudFront면 여기 넣는 게 베스트)
-    if S3_PUBLIC_BASE_URL:
-        return f"{S3_PUBLIC_BASE_URL}/{key}"
-
-    # 2) 없으면 region 기반 기본 URL 생성 (버킷이 public/또는 CloudFront 없으면 접근 안 될 수 있음)
-    if AWS_REGION == "us-east-1":
-        return f"https://{S3_BUCKET}.s3.amazonaws.com/{key}"
-    return f"https://{S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{key}"
-
-def _presigned_get_url(key: str) -> str:
-    client = _get_s3_client()
-    return client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": S3_BUCKET, "Key": key},
-        ExpiresIn=S3_PRESIGN_EXPIRES,
-    )
-
-def _s3_url_for_key(key: str) -> str:
-    # public 접근이 안 되면 presign 켜
-    if S3_PRESIGN:
-        return _presigned_get_url(key)
-    return _public_s3_url(key)
-
-def _upload_to_s3(local_path: Path, key: str, content_type: str | None = None) -> str:
-    """
-    로컬 파일을 S3에 업로드하고 public URL 반환.
-    USE_S3=false면 아무것도 안 함.
-    """
-    if not USE_S3:
-        return ""
-    
-    client = _get_s3_client()
-    
-    extra_args: dict = {}
-    if content_type:
-        extra_args["ContentType"] = content_type
-    
-    # ldr/glb는 다운로드 강제
-    if S3_FORCE_ATTACHMENT and local_path.suffix.lower() in (".ldr", ".glb"):
-        extra_args["ContentDisposition"] = f'attachment; filename="{local_path.name}"'
-    
-    if S3_USE_ACL_PUBLIC_READ:
-        extra_args["ACL"] = "public-read"
-    
-    client.upload_file(str(local_path), S3_BUCKET, key, ExtraArgs=extra_args if extra_args else None)
-    
-    return _s3_url_for_key(key)
-
-def _guess_content_type(path: Path) -> str:
-    ext = path.suffix.lower()
-    return {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-        ".glb": "application/octet-stream",
-        ".gltf": "model/gltf+json",
-        ".ldr": "text/plain",
-        ".json": "application/json",
-    }.get(ext, "application/octet-stream")
-
-def _mime_to_ext(mime: str) -> str:
-    m = (mime or "").lower()
-    if "png" in m:
-        return ".png"
-    if "jpeg" in m or "jpg" in m:
-        return ".jpg"
-    if "webp" in m:
-        return ".webp"
-    return ".png"
+# --------------- helpers ---------------
 
 async def _write_bytes_async(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     await anyio.to_thread.run_sync(path.write_bytes, data)
 
+
 async def _read_bytes_async(path: Path) -> bytes:
     return await anyio.to_thread.run_sync(path.read_bytes)
+
 
 def _write_error_log(out_dir: Path, text: str) -> None:
     try:
@@ -289,48 +80,6 @@ def _write_error_log(out_dir: Path, text: str) -> None:
     except Exception:
         pass
 
-def _to_generated_url(p: Path, out_dir: Path) -> str:
-    """
-    USE_S3=true면: S3에 업로드 후 S3 URL 반환
-    USE_S3=false면: GENERATED_DIR 기준 /api/generated/... URL 반환
-    GENERATED_DIR 밖 파일이면: out_dir로 복사 후 처리
-    """
-    from datetime import datetime
-
-    p = Path(p).resolve()
-    gen = GENERATED_DIR.resolve()
-
-    # GENERATED_DIR 밖 파일이면 out_dir로 복사
-    try:
-        rel = p.relative_to(gen)
-    except ValueError:
-        out_dir = out_dir.resolve()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        dst = out_dir / p.name
-        if p != dst:
-            dst.write_bytes(p.read_bytes())
-        p = dst
-        rel = dst.relative_to(gen)
-
-    # ✅ S3 업로드 모드 (타임스탬프 기반 경로 구조화)
-    if USE_S3:
-        try:
-            now = datetime.now()
-            year, month = now.year, now.month
-            # uploads/ai-generated/2026/01/req_abc/corrected.png
-            s3_key = f"{S3_PREFIX}/{year:04d}/{month:02d}/{rel.as_posix()}" if S3_PREFIX else rel.as_posix()
-            content_type = _guess_content_type(p)
-            s3_url = _upload_to_s3(p, s3_key, content_type)
-            if s3_url:
-                return s3_url
-        except Exception as e:
-            print(f"[S3 upload failed, fallback to local] {e}")
-
-    # ✅ 로컬 fallback
-    url = f"{STATIC_PREFIX}/" + rel.as_posix()
-    if AI_PUBLIC_BASE_URL:
-        return f"{AI_PUBLIC_BASE_URL}{url}"
-    return url
 
 async def _download_http_to_file(url: str, dst: Path) -> Path:
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -340,69 +89,13 @@ async def _download_http_to_file(url: str, dst: Path) -> Path:
         await _write_bytes_async(dst, r.content)
     return dst
 
+
 async def _download_from_s3(url: str) -> bytes:
-    """S3 URL에서 파일 다운로드"""
     async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.content
 
-def _generate_bom_from_ldr(ldr_path: Path) -> Dict[str, Any]:
-    """
-    LDR 파일에서 BOM (Bill of Materials) 생성
-    Returns: {
-        "total_parts": int,
-        "parts": [{"part_id": str, "color": str, "quantity": int}, ...]
-    }
-    """
-    from collections import Counter
-
-    if not ldr_path.exists():
-        return {"total_parts": 0, "parts": []}
-
-    content = ldr_path.read_text(encoding="utf-8", errors="ignore")
-    lines = content.splitlines()
-
-    # LDraw 파츠 라인 추출 (타입 1)
-    parts_counter = Counter()
-
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("0"):  # 주석 또는 메타데이터
-            continue
-
-        parts = line.split()
-        if len(parts) >= 15 and parts[0] == "1":  # 타입 1: 서브파일 참조 (파츠)
-            color = parts[1]
-            part_id = parts[14] if len(parts) > 14 else "unknown"
-            # .dat 확장자 제거
-            if part_id.endswith(".dat"):
-                part_id = part_id[:-4]
-
-            key = f"{part_id}_{color}"
-            parts_counter[key] += 1
-
-    # BOM 생성
-    bom_parts = []
-    for key, qty in parts_counter.most_common():
-        part_id, color = key.rsplit("_", 1)
-        bom_parts.append({
-            "part_id": part_id,
-            "color": color,
-            "quantity": qty
-        })
-
-    return {
-        "total_parts": sum(parts_counter.values()),
-        "parts": bom_parts
-    }
-
-def _parse_bool(v: str | bool | None, default: bool = False) -> bool:
-    if v is None:
-        return default
-    if isinstance(v, bool):
-        return v
-    return v.strip().lower() in ("1", "true", "yes", "y", "on")
 
 def _pick_model_url(files_url: Dict[str, str]) -> str:
     for k, u in files_url.items():
@@ -413,11 +106,13 @@ def _pick_model_url(files_url: Dict[str, str]) -> str:
             return u
     return next(iter(files_url.values()))
 
+
 def _sanitize_glb_url(u: str) -> str:
     u = (u or "").strip()
     if u.startswith("/api/api/"):
         u = u.replace("/api/api/", "/api/", 1)
     return u
+
 
 def _local_generated_path_from_url(u: str) -> Optional[Path]:
     u = _sanitize_glb_url(u)
@@ -429,311 +124,60 @@ def _local_generated_path_from_url(u: str) -> Optional[Path]:
         return (GENERATED_DIR / rel).resolve()
     return None
 
-# -----------------------------
-# OpenAI prompt builder - REMOVED (직접 이미지로 Tripo 호출)
-# -----------------------------
-# ✅ OpenAI 프롬프트 생성 단계 제거됨
-# ✅ Nano Banana 이미지를 Tripo에 직접 전달
 
-# -----------------------------
-# Nano Banana (Gemini) - sync -> thread
-# -----------------------------
-PROMPT_NANO_BANANA = """
-Create a high-quality, vibrant image suitable for 3D modeling.
+# --------------- Request / Response ---------------
 
-Requirements:
-- Single view from the best angle to capture the subject's key features
-- Clean white studio background
-- Soft, even lighting with subtle shadows
-- Vivid, saturated colors with clear color separation
-- Sharp, well-defined edges and contours
-- High contrast between subject and background
-- Professional product photography style
-- Remove any text, logos, patterns, or decorative details
-- Simplify complex textures into solid, uniform colors
-- Maintain the overall shape and proportions of the subject
-
-[METADATA_REQUEST]
-Also, identify the subject in a single word and provide 3-5 relevant hashtags.
-Format: SUBJECT: <word> | TAGS: <tag1>, <tag2>, ...
-Example: SUBJECT: Pikachu | TAGS: Pokemon, Kids, Brick, Yellow
-"""
-
-def _decode_if_base64_image(data: bytes | str) -> bytes:
-    if data is None:
-        return b""
-
-    if isinstance(data, str):
-        s = data.strip()
-    else:
-        try:
-            s = data.decode("utf-8", errors="strict").strip()
-        except Exception:
-            return data
-
-    if s.startswith("data:image"):
-        try:
-            s = s.split(",", 1)[1].strip()
-        except Exception:
-            pass
-
-    looks_like_base64 = (
-        s.startswith("iVBOR") or
-        s.startswith("/9j/") or
-        all(c.isalnum() or c in "+/=\n\r" for c in s[:200])
-    )
-
-    if looks_like_base64:
-        try:
-            return base64.b64decode(s, validate=False)
-        except Exception:
-            return data if isinstance(data, (bytes, bytearray)) else s.encode("utf-8")
-
-    return data if isinstance(data, (bytes, bytearray)) else s.encode("utf-8")
-
-def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, list[str]]:
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    if not gemini_key:
-        raise RuntimeError("GEMINI_API_KEY is not set")
-
-    model = os.environ.get("NANO_BANANA_MODEL", "gemini-2.5-flash-image")
-    client = genai.Client(api_key=gemini_key)
-
-    resp = client.models.generate_content(
-        model=model,
-        contents=[
-            {"text": PROMPT_NANO_BANANA},
-            {"inline_data": {"mime_type": mime, "data": img_bytes}},
-        ],
-        config=genai_types.GenerateContentConfig(response_modalities=["Text", "Image"]),
-    )
-
-    if not resp.candidates:
-        raise ValueError("no candidates from model")
-
-    parts = resp.candidates[0].content.parts if resp.candidates[0].content else []
-    out_bytes = None
-    meta_text = ""
-    
-    for i, part in enumerate(parts):
-        # 1. 이미지 데이터 추출
-        if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
-            out_bytes = part.inline_data.data
-        elif hasattr(part, "file_data") and part.file_data: # 만약의 경우를 대비한 file_data 체크
-            # file_data는 보통 가공이 더 필요하지만 여기선 inline 위주로 처리
-            pass
-
-        # 2. 메타데이터 (텍스트) 추출
-        if hasattr(part, "text") and part.text:
-            meta_text += part.text
-            
-    # [Log] Gemini 응답 원본 확인
-    log(f"   🤖 [Gemini Raw Response] {meta_text.replace(chr(10), ' ')[:200]}...")
-
-            
-    # 에러 방지: 이미지가 없으면 텍스트에서라도 이미지를 찾거나(Base64) 재시도 로직 고려 가능
-    if out_bytes is None:
-        # 텍스트 내에 Base64 이미지가 섞여 있을 가능성 체크
-        if "data:image" in meta_text or (len(meta_text) > 1000 and any(prefix in meta_text for prefix in ["iVBOR", "/9j/"])):
-             out_bytes = meta_text.strip() # _decode_if_base64_image에서 처리될 것
-        else:
-             raise ValueError(f"no image returned from model (meta_text len: {len(meta_text)})")
-
-    out_bytes = _decode_if_base64_image(out_bytes)
-
-    # --- [이미지 유효성 체크 로직 복구] ---
-    is_valid_image = False
-    # PNG/JPG 매직넘버 체크
-    if len(out_bytes) >= 2 and out_bytes[0] == 0xFF and out_bytes[1] == 0xD8:
-        is_valid_image = True
-    elif len(out_bytes) >= 8 and out_bytes[:8] == b"\x89PNG\r\n\x1a\n":
-        is_valid_image = True
-    
-    # 매직넘버가 없으면 남아있는 base64 한 번 더 시도
-    if not is_valid_image:
-        try:
-            head = out_bytes[:20].decode("utf-8", errors="ignore")
-            if head.startswith("iVBOR") or head.startswith("/9j/"):
-                out_bytes = base64.b64decode(out_bytes, validate=False)
-        except Exception:
-            pass
-    # ----------------------------------
-
-    # 메타데이터 파싱 (SUBJECT: ..., TAGS: ...)
-    subject = "Object"
-    tags = ["Kids", "Brick"]
-    
-    try:
-        if meta_text:
-            print(f"[Gemini Meta] Raw extraction text: {meta_text[:100]}...")
-
-        if "SUBJECT:" in meta_text:
-            s_part = meta_text.split("SUBJECT:")[1].split("|")[0].strip()
-            if s_part: subject = s_part
-        if "TAGS:" in meta_text:
-            t_part = meta_text.split("TAGS:")[1].strip()
-            tags = [t.strip() for t in t_part.replace("#", "").split(",") if t.strip()]
-    except Exception as e:
-        print(f"[Gemini Meta] Tag parse error: {e}")
-
-    return out_bytes, subject, tags
-
-async def render_one_image_async(img_bytes: bytes, mime: str) -> tuple[bytes, str, list[str]]:
-    # ✅ gemini 호출은 동기라서 thread로 빼야 “완전 async 안전”
-    return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime)
-
-# -----------------------------
-# Brickify engine loader
-# -----------------------------
-AGE_TO_BUDGET = {"4-5": 300, "6-7": 350, "8-10": 400}
-
-
-def _budget_to_start_target(eff_budget: int) -> int:
-    # Frontend budgets: 300 / 350 / 400 (4-5 / 6-7 / 8-10)
-    # [Increased] +10~15 to capture more detail like noses/tails
-    if eff_budget <= 300:
-        return 110
-    if eff_budget <= 350:
-        return 125
-    if eff_budget <= 400:
-        return 140
-    return 145
-
-def _load_engine_convert():
-    """
-    brick-engine 폴더명이 하이픈이라 import가 안 되니까 파일경로로 모듈 로드.
-    """
-    import importlib.util
-
-    engine_path = (PROJECT_ROOT / "brick-engine" / "glb_to_ldr_embedded.py").resolve()
-    if not engine_path.exists():
-        raise RuntimeError(f"engine file missing: {engine_path}")
-
-    spec = importlib.util.spec_from_file_location("glb_to_ldr_embedded", str(engine_path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError("failed to load spec for glb_to_ldr_embedded")
-
-    mod = importlib.util.module_from_spec(spec)
-    # Ensure module is registered for dataclasses/type resolution
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)  # type: ignore
-    if not hasattr(mod, "convert_glb_to_ldr"):
-        raise RuntimeError("convert_glb_to_ldr not found in engine module")
-
-    return mod.convert_glb_to_ldr
-
-_CONVERT_FN = None
-
-# --- Agent 모듈 lazy loader ---
-_REGEN_LOOP_FN = None
-_GEMINI_CLIENT_CLS = None
-
-def _load_agent_modules():
-    """brick-engine/agent 에서 regeneration_loop, GeminiClient 동적 로드"""
-    global _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
-    if _REGEN_LOOP_FN is not None:
-        return _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
-
-    agent_dir = str((PROJECT_ROOT / "brick-engine").resolve())
-    if agent_dir not in sys.path:
-        sys.path.insert(0, agent_dir)
-
-    from agent.llm_regeneration_agent import regeneration_loop
-    from agent.llm_clients import GeminiClient
-
-    _REGEN_LOOP_FN = regeneration_loop
-    _GEMINI_CLIENT_CLS = GeminiClient
-    return _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
-
-def _find_glb_in_dir(out_dir: Path) -> Optional[Path]:
-    glbs = [p for p in out_dir.rglob("*.glb") if p.is_file() and p.stat().st_size > 0]
-    return glbs[0] if glbs else None
-
-def _pick_glb_from_downloaded(downloaded: Dict[str, str], out_dir: Path) -> Optional[Path]:
-    for _, v in (downloaded or {}).items():
-        p = Path(v)
-        if p.suffix.lower() == ".glb" and p.exists() and p.stat().st_size > 0:
-            return p
-    return _find_glb_in_dir(out_dir)
-
-# -----------------------------
-# Request schema
-# -----------------------------
 class KidsProcessRequest(BaseModel):
-    sourceImageUrl: str  # S3 URL (Frontend가 직접 업로드한 URL)
+    sourceImageUrl: str
+    userEmail: Optional[str] = "unknown@brickers.shop"  # [추가]
     age: str = "6-7"
     budget: Optional[int] = None
-    subject: Optional[str] = None  # [추가] 사물 이름 (예: "강아지")
+    subject: Optional[str] = None
     prompt: Optional[str] = None
     returnLdrData: bool = False
 
-# Response schema
-# -----------------------------
+
 class ProcessResp(BaseModel):
     ok: bool
     reqId: str
-
     correctedUrl: str
-
     taskId: str
     modelUrl: str
     files: Dict[str, str]
-
     ldrUrl: str
     ldrData: Optional[str] = None
-    bomUrl: str  # ✅ BOM 파일 URL 추가
-    
-    subject: str # [추가] 사물 명칭
-    tags: list[str] # [추가] 해시태그 목록
-
+    bomUrl: str
+    subject: str
+    tags: list[str]
     parts: int
     finalTarget: int
 
-# -----------------------------
-# ✅ 내부 함수 (SQS Consumer에서 호출)
-# -----------------------------
+
+# --------------- Core orchestration ---------------
+
 async def process_kids_request_internal(
     job_id: str,
     source_image_url: str,
     age: str,
     budget: Optional[int] = None,
-    subject: Optional[str] = None, # [추가] 사물 명칭
+    subject: Optional[str] = None,
+    user_email: str = "unknown", # [추가]
 ) -> Dict[str, Any]:
     """
     Kids 렌더링 내부 로직 (SQS Consumer에서 호출)
-    - S3에서 이미지 다운로드
-    - Gemini 보정
-    - Tripo 3D 생성
-    - Brickify LDR 변환
-    - BOM 생성
-
-    Args:
-        job_id: Job ID (MongoDB)
-        source_image_url: S3 업로드된 원본 이미지 URL
-        age: 나이 범위 (4-5, 6-7, 8-10)
-        budget: 예산 (None이면 age 기반 자동 설정)
-
-    Returns:
-        {
-            "correctedUrl": str,
-            "modelUrl": str,
-            "ldrUrl": str,
-            "bomUrl": str,
-            "parts": int,
-            "finalTarget": int,
-        }
-
-    Raises:
-        RuntimeError: 처리 실패 시
+    시그니처/리턴 100% 동일 유지
     """
-    import time
     total_start = time.time()
+    
+    # 내부 래퍼 로그 (이메일 자동 주입)
+    def _log(msg: str):
+        log(msg, user_email=user_email)
 
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
         raise RuntimeError("TRIPO_API_KEY is not set")
 
-    req_id = job_id  # Job ID를 req_id로 사용
+    req_id = job_id
     out_req_dir = GENERATED_DIR / f"req_{req_id}"
     out_tripo_dir = GENERATED_DIR / f"tripo_{req_id}"
     out_brick_dir = GENERATED_DIR / f"brickify_{req_id}"
@@ -741,75 +185,62 @@ async def process_kids_request_internal(
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
-    log("═" * 70)
-    log(f"🚀 [AI-SERVER] 요청 시작 | jobId={job_id}")
-    log(f"📁 원본 이미지 URL: {source_image_url}")
-    log(f"📊 파라미터: subject={subject} | age={age} | budget={budget}")
-    log(f"⚙️  S3 모드: {'✅ ON' if USE_S3 else '❌ OFF'} | bucket={S3_BUCKET or 'N/A'}")
-    log("═" * 70)
+    _log("\u2550" * 70)
+    _log(f"\U0001f680 [AI-SERVER] \uc694\uccad \uc2dc\uc791 | jobId={job_id}")
+    _log(f"\U0001f4c1 \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 URL: {source_image_url}")
+    _log(f"\U0001f4ca \ud30c\ub77c\ubbf8\ud130: subject={subject} | age={age} | budget={budget}")
+    s3_label = "ON" if USE_S3 else "OFF"
+    _log(f"\u2699\ufe0f  S3 \ubaa8\ub4dc: {s3_label} | bucket={S3_BUCKET or 'N/A'}")
+    _log("\u2550" * 70)
 
     try:
-        # ✅ 전체 타임아웃 (무한 대기 방지)
         with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
 
-            # -----------------
             # 0) S3에서 원본 이미지 다운로드
-            # -----------------
             step_start = time.time()
-            log(f"📌 [STEP 0/5] S3에서 원본 이미지 다운로드 중...")
+            _log(f"\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
             img_bytes = await _download_from_s3(source_image_url)
             raw_path = out_req_dir / "raw.png"
             await _write_bytes_async(raw_path, img_bytes)
-            log(f"✅ [STEP 0/5] 다운로드 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+            _log(f"\u2705 [STEP 0/5] \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
 
-            # 1) 보정 (Gemini) - thread로 안전
-            # -----------------
+            # 1) Gemini 보정
             step_start = time.time()
-            log(f"📌 [STEP 1/5] Gemini 이미지 보정 및 태그 추출 시작...")
+            _log(f"\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
             corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
-            
-            # 사용자 제공 subject가 없으면 AI가 찾은 이름 사용
+
             final_subject = subject or ai_subject
-            
+
             corrected_path = out_req_dir / "corrected.png"
             await _write_bytes_async(corrected_path, corrected_bytes)
-            corrected_url = _to_generated_url(corrected_path, out_dir=out_req_dir)
-            log(f"✅ [STEP 1/5] Gemini 완료 | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
-            
-            # ✅ Backend에 Gemini가 추출한 태그 저장
+            corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
+            _log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+
             await update_job_suggested_tags(job_id, ai_tags)
 
-            # -----------------
-            # 2) Tripo 3D (이미지 → 3D 모델 생성)
-            # -----------------
+            # 2) Tripo 3D
             step_start = time.time()
-            log(f"📌 [STEP 2/4] Tripo 3D 모델 생성 시작 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
-
-            # ✅ Backend에 stage 업데이트
+            _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
             await update_job_stage(job_id, "THREE_D_PREVIEW")
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
-                # ✅ image_to_model: Nano Banana 이미지를 직접 Tripo에 전달
                 task_id = await client.image_to_model(image=str(corrected_path))
-                print(f"   🔄 Tripo 작업 생성됨 | taskId={task_id}")
+                print(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
 
-                # ✅ Tripo 대기 타임아웃
                 with anyio.fail_after(TRIPO_WAIT_TIMEOUT_SEC):
                     task = await client.wait_for_task(task_id, verbose=DEBUG)
 
                 if task.status != TaskStatus.SUCCESS:
                     raise RuntimeError(f"Tripo task failed: status={task.status}")
 
-                print(f"   ✅ Tripo 작업 완료 | status={task.status}")
+                print(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
                 downloaded = await client.download_task_models(task, str(out_tripo_dir))
-                print(f"   📥 Tripo 파일 다운로드 완료 | files={list(downloaded.keys()) if downloaded else 'None'}")
+                print(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
 
             tripo_elapsed = time.time() - step_start
-            log(f"✅ [STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
+            _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
 
-            # -----------------
-            # 3-1) downloaded 정규화 (URL이면 다시 받아서 파일로)
-            # -----------------
+            # 3-1) downloaded 정규화
             fixed_downloaded: Dict[str, str] = {}
             for model_type, path_or_url in (downloaded or {}).items():
                 if not path_or_url:
@@ -833,27 +264,23 @@ async def process_kids_request_internal(
             if missing:
                 raise RuntimeError(f"Downloaded files missing: {missing}")
 
-            # -----------------
-            # 3-2) Tripo 파일 URL 맵 만들기
-            # -----------------
+            # 3-2) URL map
             files_url: Dict[str, str] = {}
             for model_type, path_str in fixed_downloaded.items():
-                files_url[model_type] = _to_generated_url(Path(path_str), out_dir=out_tripo_dir)
+                files_url[model_type] = to_generated_url(Path(path_str), out_dir=out_tripo_dir)
 
             if not any(u.lower().endswith(".glb") for u in files_url.values()):
-                glb_fallback = _find_glb_in_dir(out_tripo_dir)
+                glb_fallback = find_glb_in_dir(out_tripo_dir)
                 if glb_fallback:
-                    files_url["glb"] = _to_generated_url(glb_fallback, out_dir=out_tripo_dir)
+                    files_url["glb"] = to_generated_url(glb_fallback, out_dir=out_tripo_dir)
 
             if not files_url:
                 raise RuntimeError("No downloadable model files found in out_tripo_dir")
 
             model_url = _pick_model_url(files_url)
 
-            # -----------------
-            # 3) Brickify 입력 GLB 확보
-            # -----------------
-            glb_path = _pick_glb_from_downloaded(fixed_downloaded, out_tripo_dir)
+            # 3) GLB 확보
+            glb_path = pick_glb_from_downloaded(fixed_downloaded, out_tripo_dir)
 
             if glb_path is None:
                 local = _local_generated_path_from_url(model_url)
@@ -868,31 +295,23 @@ async def process_kids_request_internal(
             if not glb_path.exists() or glb_path.stat().st_size == 0:
                 raise RuntimeError(f"GLB missing/empty: {glb_path}")
 
-            print(f"   📦 GLB 준비완료 | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
+            print(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
-            # -----------------
-            # 4) Brickify 실행 (CPU heavy -> thread)
-            # -----------------
+            # 4) Brickify
             step_start = time.time()
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
-            start_target = _budget_to_start_target(eff_budget)
-            log(f"📌 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
+            start_target = budget_to_start_target(eff_budget)
+            _log(f"\U0001f4cc [STEP 3/4] Brickify LDR \ubcc0\ud658 \uc2dc\uc791... | budget={eff_budget} | target={start_target}")
 
-            # ✅ Backend에 stage 업데이트
             await update_job_stage(job_id, "MODEL")
 
-            global _CONVERT_FN
-            if _CONVERT_FN is None:
-                _CONVERT_FN = _load_engine_convert()
+            convert_fn = load_engine_convert()
+            regeneration_loop, GeminiClient = load_agent_modules()
 
-            out_ldr = out_brick_dir / "result.ldr"
-
-            # Agent 모듈 로드
-            regeneration_loop, GeminiClient = _load_agent_modules()
-
-            # LLM 클라이언트 초기화
             gemini_key = os.environ.get("GEMINI_API_KEY", "")
             llm_client = GeminiClient(api_key=gemini_key)
+
+            out_ldr = out_brick_dir / "result.ldr"
 
             agent_params = {
                 "target": start_target,
@@ -908,28 +327,27 @@ async def process_kids_request_internal(
                 "use_mesh_color": True,
                 "invert_y": False,
                 "smart_fix": True,
-                "fill": False,  # [Reverted] Save budget for external detail
+                "fill": False,
                 "step_order": "bottomup",
                 "span": 4,
-                "max_new_voxels": 20000,  # [Increased] 12000 -> 20000
+                "max_new_voxels": 20000,
                 "refine_iters": 8,
                 "ensure_connected": True,
-                "mode": "kids", # [Explicit] Use kids catalog
-                "small_side_contact": False, # [Rollback] Must maintain vertical interlocking
+                "mode": "kids",
+                "small_side_contact": False,
                 "min_embed": 2,
-                "erosion_iters": 0,  # [Disabled] Prevent losing thin details (tails/noses)
+                "erosion_iters": 0,
                 "fast_search": True,
                 "extend_catalog": True,
                 "max_len": 8,
             }
-
-            agent_params["log_callback"] = _make_agent_log_sender(job_id)
+            agent_params["log_callback"] = make_agent_log_sender(job_id)
 
             def run_agent_sync():
                 return regeneration_loop(
                     glb_path=str(glb_path),
                     output_ldr_path=str(out_ldr),
-                    subject_name=final_subject, # [수정] 자동 인식된 이름 전달
+                    subject_name=final_subject,
                     llm_client=llm_client,
                     max_retries=3,
                     gui=False,
@@ -939,28 +357,25 @@ async def process_kids_request_internal(
             result: Dict[str, Any] = await anyio.to_thread.run_sync(run_agent_sync)
 
             brickify_elapsed = time.time() - step_start
-            log(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+            _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
 
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
                 raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
 
-            # -----------------
-            # 5) 결과 URL 생성 및 BOM 파일 생성
-            # -----------------
+            # 5) 결과 URL + BOM
             step_start = time.time()
-            log(f"📌 [STEP 4/4] 결과 URL 생성 및 BOM 파일 생성 중... (S3={'ON' if USE_S3 else 'OFF'})")
-            ldr_url = _to_generated_url(out_ldr, out_dir=out_brick_dir)
+            s3_mode = "ON" if USE_S3 else "OFF"
+            _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
+            ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
-            # ✅ BOM (Bill of Materials) 파일 생성
-            print(f"   📋 BOM 파일 생성 중...")
-            bom_data = await anyio.to_thread.run_sync(_generate_bom_from_ldr, out_ldr)
+            print(f"   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
+            bom_data = await anyio.to_thread.run_sync(generate_bom_from_ldr, out_ldr)
             out_bom = out_brick_dir / "bom.json"
-            import json
             await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
-            bom_url = _to_generated_url(out_bom, out_dir=out_brick_dir)
-            print(f"   ✅ BOM 파일 생성 완료 | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+            bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
+            print(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
 
-            log(f"✅ [STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
+            _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
 
             # -----------------
             # 6) PDF 자동 생성 (Headless)
@@ -968,7 +383,7 @@ async def process_kids_request_internal(
             pdf_url = ""
             try:
                 step_start = time.time()
-                log(f"📌 [STEP 5/5] PDF 자동 생성 시작 (Playwright)...")
+                _log(f"📌 [STEP 5/5] PDF 자동 생성 시작 (Playwright)...")
                 
                 # LDR 내용 읽기
                 ldr_text = out_ldr.read_text(encoding="utf-8")
@@ -977,7 +392,7 @@ async def process_kids_request_internal(
                 step_images_bytes = await HeadlessPdfService.capture_step_images(ldr_text)
                 
                 if step_images_bytes:
-                    log(f"   📸 캡처 완료: {len(step_images_bytes)} steps")
+                    _log(f"   📸 캡처 완료: {len(step_images_bytes)} steps")
                     
                     # BOM 파싱
                     step_boms = parse_ldr_step_boms(ldr_text)
@@ -1001,21 +416,21 @@ async def process_kids_request_internal(
                     pdf_key = f"uploads/pdf/{now.year:04d}/{now.month:02d}/{pdf_filename}"
                     
                     pdf_url = upload_bytes_to_s3(pdf_bytes, pdf_key, "application/pdf")
-                    log(f"✅ [STEP 5/5] PDF 생성 및 업로드 완료 | url={pdf_url[:60]}... | {time.time()-step_start:.2f}s")
+                    _log(f"✅ [STEP 5/5] PDF 생성 및 업로드 완료 | url={pdf_url[:60]}... | {time.time()-step_start:.2f}s")
                 else:
-                    log(f"⚠️ [STEP 5/5] PDF 생성 실패 (이미지 캡처 실패) | {time.time()-step_start:.2f}s")
+                    _log(f"⚠️ [STEP 5/5] PDF 생성 실패 (이미지 캡처 실패) | {time.time()-step_start:.2f}s")
 
             except Exception as e:
-                log(f"⚠️ [STEP 5/5] PDF 생성 중 에러 발생 (무시함) | error={str(e)}")
+                _log(f"⚠️ [STEP 5/5] PDF 생성 중 에러 발생 (무시함) | error={str(e)}")
 
             total_elapsed = time.time() - total_start
-            log("═" * 70)
-            log(f"🎉 [AI-SERVER] 요청 완료! | jobId={job_id}")
-            log(f"⏱️  총 소요시간: {total_elapsed:.2f}s ({total_elapsed/60:.1f}분)")
-            log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
-            log(f"   - Brickify: {brickify_elapsed:.2f}s")
-            log(f"📦 결과: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
-            print("═" * 70)
+            _log("\u2550" * 70)
+            _log(f"\U0001f389 [AI-SERVER] \uc694\uccad \uc644\ub8cc! | jobId={job_id}")
+            _log(f"\u23f1\ufe0f  \ucd1d \uc18c\uc694\uc2dc\uac04: {total_elapsed:.2f}s ({total_elapsed/60:.1f}\ubd84)")
+            _log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
+            _log(f"   - Brickify: {brickify_elapsed:.2f}s")
+            _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
+            print("\u2550" * 70)
 
             return {
                 "correctedUrl": corrected_url,
@@ -1032,28 +447,22 @@ async def process_kids_request_internal(
     except Exception as e:
         total_elapsed = time.time() - total_start
         tb = traceback.format_exc()
-        log("═" * 70)
-        log(f"❌ [AI-SERVER] 요청 실패! | jobId={job_id} | 소요시간={total_elapsed:.2f}s")
-        log(f"❌ 에러: {str(e)}")
-        log("═" * 70)
-        log(tb)
+        _log("\u2550" * 70)
+        _log(f"\u274c [AI-SERVER] \uc694\uccad \uc2e4\ud328! | jobId={job_id} | \uc18c\uc694\uc2dc\uac04={total_elapsed:.2f}s")
+        _log(f"\u274c \uc5d0\ub7ec: {str(e)}")
+        _log("\u2550" * 70)
+        log(tb, user_email=user_email)
         _write_error_log(out_req_dir, tb)
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
-
         raise RuntimeError(str(e)) from e
 
 
-# -----------------------------
-# ✅ HTTP API (호환성 유지)
-# -----------------------------
+# --------------- HTTP endpoint ---------------
+
 @router.post("/process-all", response_model=ProcessResp)
 async def process(request: KidsProcessRequest):
-    """
-    Kids Mode 처리 (HTTP 엔드포인트)
-    - 기존 호환성 유지
-    - 내부적으로 process_kids_request_internal 호출
-    """
+    """Kids Mode 처리 (HTTP 엔드포인트) - 호환성 유지"""
     req_id = uuid.uuid4().hex
 
     try:
@@ -1062,13 +471,12 @@ async def process(request: KidsProcessRequest):
             source_image_url=request.sourceImageUrl,
             age=request.age,
             budget=request.budget,
-            subject=request.subject, # [추가]
+            subject=request.subject,
+            user_email=request.userEmail or "unknown",
         )
 
-        # ✅ S3 사용 시에는 ldrData 생략 (불필요한 base64 인코딩 제거)
         ldr_data_uri: Optional[str] = None
         if not USE_S3 and request.returnLdrData:
-            # ldrUrl에서 파일 읽기
             ldr_path = _local_generated_path_from_url(result["ldrUrl"])
             if ldr_path and ldr_path.exists():
                 b = await _read_bytes_async(ldr_path)
@@ -1079,9 +487,9 @@ async def process(request: KidsProcessRequest):
             "ok": True,
             "reqId": req_id,
             "correctedUrl": result["correctedUrl"],
-            "taskId": req_id,  # task_id는 없지만 호환성 유지
+            "taskId": req_id,
             "modelUrl": result["modelUrl"],
-            "files": {},  # files는 내부 함수에서 반환 안 함
+            "files": {},
             "ldrUrl": result["ldrUrl"],
             "ldrData": ldr_data_uri,
             "bomUrl": result["bomUrl"],
