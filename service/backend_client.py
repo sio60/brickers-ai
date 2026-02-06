@@ -64,3 +64,22 @@ def make_agent_log_sender(job_id: str):
             print(f"  [AgentLog] \u274c failed: {e} | url={url}")
 
     return send_log
+
+
+async def send_agent_log(job_id: str, step: str, message: str) -> None:
+    """CoScientist 에이전트 로그 전송 (async context용 - kids_render.py 파이프라인)"""
+    url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs"
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                url,
+                json={"step": step, "message": message[:2000]},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                print(f"  [AgentLog] \u2705 sent: [{step}] {message[:50]}...")
+            else:
+                print(f"  [AgentLog] \u26a0\ufe0f HTTP {resp.status_code} | url={url} | body={resp.text[:100]}")
+    except Exception as e:
+        print(f"  [AgentLog] \u274c failed: {e} | url={url}")

@@ -69,8 +69,10 @@ def _single_conversion(
         return 0, []
         
     print(f"      [Step] Voxel count: {len(indices)}")
-    if len(indices) > 50000:
-        print(f"      [Warning] Too many voxels ({len(indices)}), this might be slow.")
+    voxel_threshold = kwargs.get("voxel_threshold", 80000)
+    if len(indices) > voxel_threshold:
+        print(f"      [Warning] Too many voxels ({len(indices)} > {voxel_threshold}), skipping iteration.")
+        return -1, []
 
     # Color sampling
     print(f"      [Step] Color Sampling...")
@@ -209,19 +211,22 @@ def convert_glb_to_ldr(
             **kwargs
         )
         
-        final_optimized = optimized
-        print(f"[Engine] Iter {i+1} Result: {parts_count} bricks (Budget: {budget})")
-        
-        if parts_count <= budget:
-            print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
-            _log("brickify", f"딱 맞게 {parts_count}개로 쌓았어요!")
-            break
+        if parts_count < 0:
+            print(f"[Engine] Iter {i+1} Result: VOXEL_THRESHOLD EXCEEDED (Skipping optimization)")
+        else:
+            final_optimized = optimized
+            print(f"[Engine] Iter {i+1} Result: {parts_count} bricks (Budget: {budget})")
+            
+            if parts_count <= budget:
+                print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
+                _log("brickify", f"딱 맞게 {parts_count}개로 쌓았어요!")
+                break
         
         if i < search_iters - 1:
             curr_target *= shrink
             if curr_target < 5: # Don't go below 5 studs
                 curr_target = 5
-            print(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
+            print(f"[Engine] Budget EXCEEDED or Threshold Hit. Shrinking target to {curr_target:.1f}")
             _log("brickify", "브릭이 좀 많네요, 다시 고민해볼게요...")
         else:
             print(f"[Engine] WARNING: Failed to meet budget after {search_iters} iters.")
