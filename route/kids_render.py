@@ -77,37 +77,25 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
         print(f"   ⚠️ [Suggested Tags] 저장 실패 (무시) | tags={tags} | error={str(e)}")
 
 def _make_agent_log_sender(job_id: str):
-    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용 - async httpx 사용)"""
-    import asyncio
+    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용 - requests 사용)"""
+    import requests  # anyio와 무관한 순수 sync HTTP 클라이언트
 
-    async def _send_log_async(step: str, message: str):
+    def send_log(step: str, message: str):
         url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs"
         token = os.environ.get("INTERNAL_API_TOKEN", "")
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(
-                    url,
-                    json={"step": step, "message": message[:2000]},
-                    headers={"X-Internal-Token": token},
-                )
+            resp = requests.post(
+                url,
+                json={"step": step, "message": message[:2000]},
+                headers={"X-Internal-Token": token},
+                timeout=5.0
+            )
             if resp.status_code == 200:
                 print(f"  [AgentLog] ✅ sent: [{step}] {message[:50]}...")
             else:
-                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url} | token={'SET' if token else 'EMPTY'}")
+                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url} | body={resp.text[:100]}")
         except Exception as e:
             print(f"  [AgentLog] ❌ failed: {e} | url={url}")
-
-    def send_log(step: str, message: str):
-        """sync 컨텍스트에서 async httpx 호출을 위해 새 이벤트 루프 생성"""
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(_send_log_async(step, message))
-            finally:
-                loop.close()
-        except Exception as e:
-            print(f"  [AgentLog] ❌ loop error: {e}")
 
     return send_log
 
