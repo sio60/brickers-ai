@@ -74,5 +74,4 @@ boto3
 langchain-openai
 langgraph
 reportlab
-playwright
 fpdf2
