@@ -80,13 +80,14 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
         print(f"   ⚠️ [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
 
 def _make_agent_log_sender(job_id: str):
-    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용)"""
+    """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용 - requests 사용)"""
+    import requests  # anyio와 무관한 순수 sync HTTP 클라이언트
+
     def send_log(step: str, message: str):
         url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs"
         token = os.environ.get("INTERNAL_API_TOKEN", "")
         try:
-            # Sync context 이므로 httpx.post(sync) 사용
-            resp = httpx.post(
+            resp = requests.post(
                 url,
                 json={"step": step, "message": message[:2000]},
                 headers={"X-Internal-Token": token},
@@ -95,9 +96,10 @@ def _make_agent_log_sender(job_id: str):
             if resp.status_code == 200:
                 print(f"  [AgentLog] ✅ sent: [{step}] {message[:50]}...")
             else:
-                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url}")
+                print(f"  [AgentLog] ⚠️ HTTP {resp.status_code} | url={url} | body={resp.text[:100]}")
         except Exception as e:
-            print(f"  [AgentLog] ❌ failed: {e}")
+            print(f"  [AgentLog] ❌ failed: {e} | url={url}")
+
     return send_log
 
 # -----------------------------
