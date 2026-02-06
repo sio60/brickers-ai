@@ -336,6 +336,7 @@ async def process_kids_request_internal(
                 "fast_search": True,
                 "extend_catalog": True,
                 "max_len": 8,
+                "log_callback": make_agent_log_sender(job_id),
             }
 
             def run_convert_sync():

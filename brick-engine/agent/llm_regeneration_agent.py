@@ -387,7 +387,7 @@ class RegenerationGraph:
     def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
         """[신규] 가설 생성 노드: RAG 검색 및 구체적 가설 수립"""
         print("\n[Hypothesize] 가설 수립 및 RAG 검색 중...")
-        self._log("HYPOTHESIZE", "유사 사례를 검색하고 가설을 수립하고 있습니다...")
+        self._log("HYPOTHESIZE", "비슷한 브릭 모델을 참고하고 있어요...")
         
         # 1. RAG 검색
         current_observation = ""
@@ -449,7 +449,7 @@ class RegenerationGraph:
 
     def node_strategy(self, state: AgentState) -> Dict[str, Any]:
         """[신규] 전략 결정 노드: 난이도에 따른 LLM 모델 선택"""
-        self._log("STRATEGY", "최적의 전략을 결정하고 있습니다...")
+        self._log("STRATEGY", "어떻게 만들지 고민하고 있어요...")
         hypothesis = state.get("current_hypothesis", {})
         difficulty = hypothesis.get("difficulty", "Medium")
         
@@ -476,7 +476,7 @@ class RegenerationGraph:
         from glb_to_ldr_embedded import convert_glb_to_ldr
         
         print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
-        self._log("GENERATE", f"브릭 모델을 생성하고 있습니다... (시도 {state['attempts'] + 1}/{state['max_retries']})")
+        self._log("GENERATE", f"브릭을 하나씩 쌓고 있어요... ({state['attempts'] + 1}/{state['max_retries']})")
         print(f"  Params: target={state['params'].get('target')}, budget={state['params'].get('budget')}")
         
         try:
@@ -509,7 +509,7 @@ class RegenerationGraph:
         from physical_verification.verifier import PhysicalVerifier
 
         print("\n[Verifier] 물리 검증 수행 중...")
-        self._log("VERIFY", "물리 안정성을 검증하고 있습니다...")
+        self._log("VERIFY", "튼튼하게 만들어졌는지 확인 중이에요...")
 
         if not os.path.exists(state['ldr_path']):
             return {"messages": [HumanMessage(content="LDR 파일이 생성되지 않았습니다.")], "next_action": "model"}
@@ -665,7 +665,7 @@ class RegenerationGraph:
         time.sleep(2) 
         
         print("\n[Co-Scientist] 상황 분석 중...")
-        self._log("ANALYZE", "AI가 구조를 분석하고 개선 방안을 찾고 있습니다...")
+        self._log("ANALYZE", "더 멋지게 만들 수 있는지 살펴보고 있어요...")
         
         # 사용 가능한 도구 정의
         tools = [TuneParameters]
@@ -904,7 +904,7 @@ class RegenerationGraph:
         이제 Verify 후에 호출되므로 실제 결과를 알 수 있습니다.
         """
         print("\n[Reflect] 실제 결과 분석 중...")
-        self._log("REFLECT", "결과를 분석하고 학습하고 있습니다...")
+        self._log("REFLECT", "마무리 점검 중이에요...")
         
         # Memory 초기화 (없으면)
         memory = state.get('memory', {
@@ -1144,7 +1144,7 @@ def regeneration_loop(
             except Exception:
                 pass  # fire-and-forget
 
-    _log("ANALYZE", "모델 구조를 분석하고 있습니다...")
+    _log("ANALYZE", "이미지를 분석하고 있어요...")
 
     graph_builder = RegenerationGraph(llm_client, log_callback=log_callback)
     app = graph_builder.build()
@@ -1204,10 +1204,10 @@ def regeneration_loop(
     )
     
     # 실행
-    _log("GENERATE", f"CoScientist 에이전트가 브릭 배치를 최적화하고 있습니다... (GLB: {Path(glb_path).stem})")
+    _log("GENERATE", "브릭 배치를 다듬고 있어요...")
     final_state = app.invoke(initial_state)
 
-    _log("VERIFY", "물리 안정성을 검증하고 있습니다...")
+    _log("VERIFY", "튼튼하게 만들어졌는지 확인 중이에요...")
 
     # ============================================================
     # Post-processing: Evolver Agent (형태 개선)
@@ -1216,7 +1216,7 @@ def regeneration_loop(
         file_size = Path(output_ldr_path).stat().st_size
         print(f"[DEBUG] LDR File exists before Evolver: {output_ldr_path} (Size: {file_size} bytes)")
         
-        _log("EVOLVE", "형태 개선 에이전트가 모델을 분석하고 있습니다...")
+        _log("EVOLVE", "모양을 더 예쁘게 다듬고 있어요...")
         print("\n[Evolver] 형태 개선 에이전트 실행 중...")
         evolver_result = _run_evolver_subprocess(output_ldr_path, glb_path)
         if evolver_result.get("success"):
@@ -1228,7 +1228,7 @@ def regeneration_loop(
         print(f"[DEBUG] ❌ LDR File MISSING before Evolver: {output_ldr_path}")
 
 
-    _log("REFLECT", "모델 검증을 완료했습니다. 최종 모델을 준비하고 있습니다...")
+    _log("REFLECT", "거의 다 됐어요! 마지막으로 정리하고 있어요...")
 
     print("\n" + "=" * 60)
     print("📋 최종 결과 리포트")
@@ -1277,7 +1277,7 @@ def regeneration_loop(
         except Exception as e:
             print(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
 
-    _log("COMPLETE", "모델 생성이 완료되었습니다!")
+    _log("COMPLETE", "완성! 브릭 모델이 준비됐어요!")
 
     return final_state
 
