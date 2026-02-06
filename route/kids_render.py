@@ -67,14 +67,17 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
         return
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.patch(
+            resp = await client.patch(
                 f"{BACKEND_URL}/api/kids/jobs/{job_id}/suggested-tags",
                 json={"suggestedTags": tags},
                 headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
             )
-        print(f"   ✅ [Suggested Tags] {tags}")
+            if resp.status_code >= 400:
+                 print(f"   ⚠️ [Suggested Tags] Backend 응답 에러: Status={resp.status_code} | Body={resp.text}")
+            else:
+                 print(f"   ✅ [Suggested Tags] 저장 성공: Status={resp.status_code} | Tags={tags}")
     except Exception as e:
-        print(f"   ⚠️ [Suggested Tags] 저장 실패 (무시) | tags={tags} | error={str(e)}")
+        print(f"   ⚠️ [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
 
 def _make_agent_log_sender(job_id: str):
     """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용)"""
@@ -510,6 +513,10 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
         # 2. 메타데이터 (텍스트) 추출
         if hasattr(part, "text") and part.text:
             meta_text += part.text
+            
+    # [Log] Gemini 응답 원본 확인
+    log(f"   🤖 [Gemini Raw Response] {meta_text.replace(chr(10), ' ')[:200]}...")
+
             
     # 에러 방지: 이미지가 없으면 텍스트에서라도 이미지를 찾거나(Base64) 재시도 로직 고려 가능
     if out_bytes is None:

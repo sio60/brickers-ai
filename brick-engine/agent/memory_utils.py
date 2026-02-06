@@ -15,6 +15,7 @@ from queue import Queue
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+import numpy as np
 
 # LangSmith Tracing (Optional)
 try:
