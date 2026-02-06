@@ -135,15 +135,26 @@ class InstructionsPDF(FPDF):
         self.model_name = model_name
         self.set_auto_page_break(auto=True, margin=15)
         
-        # 한글 폰트 (Windows)
+        # 한글 폰트 (Windows/Linux)
         font_path = "C:/Windows/Fonts/malgun.ttf"
         font_bold_path = "C:/Windows/Fonts/malgunbd.ttf"
-        if os.path.exists(font_path):
-            self.add_font("Malgun", "", font_path)
+        
+        # Linux (Docker) path for NanumGothic
+        linux_font_path = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
+        linux_font_bold_path = "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"
+
+        if os.path.exists(linux_font_path):
+            self.add_font("Malgun", "", linux_font_path, uni=True)
+            if os.path.exists(linux_font_bold_path):
+                self.add_font("Malgun", "B", linux_font_bold_path, uni=True)
+            self.korean_font = "Malgun"
+        elif os.path.exists(font_path):
+            self.add_font("Malgun", "", font_path, uni=True)
             if os.path.exists(font_bold_path):
-                self.add_font("Malgun", "B", font_bold_path)
+                self.add_font("Malgun", "B", font_bold_path, uni=True)
             self.korean_font = "Malgun"
         else:
+            print("[PDF] Warning: No Korean font found. Using Helvetica.")
             self.korean_font = "Helvetica"
     
     def header(self):
