@@ -1220,6 +1220,9 @@ def regeneration_loop(
     # Post-processing: Evolver Agent (형태 개선)
     # ============================================================
     if Path(output_ldr_path).exists():
+        file_size = Path(output_ldr_path).stat().st_size
+        print(f"[DEBUG] LDR File exists before Evolver: {output_ldr_path} (Size: {file_size} bytes)")
+        
         _log("EVOLVE", "형태 개선 에이전트가 모델을 분석하고 있습니다...")
         print("\n[Evolver] 형태 개선 에이전트 실행 중...")
         evolver_result = _run_evolver_subprocess(output_ldr_path, glb_path)
@@ -1228,6 +1231,9 @@ def regeneration_loop(
         else:
             reason = evolver_result.get("reason", "unknown")
             print(f"[Evolver] ⚠️ 형태 개선 스킵: {reason}")
+    else:
+        print(f"[DEBUG] ❌ LDR File MISSING before Evolver: {output_ldr_path}")
+
 
     _log("REFLECT", "모델 검증을 완료했습니다. 최종 모델을 준비하고 있습니다...")
 

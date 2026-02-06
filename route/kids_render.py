@@ -44,7 +44,7 @@ router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 # -----------------------------
 # Backend 연동 (Stage 업데이트)
 # -----------------------------
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").rstrip("/")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8080").rstrip("/")
 
 async def update_job_stage(job_id: str, stage: str) -> None:
     """
@@ -71,14 +71,17 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
         return
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.patch(
+            resp = await client.patch(
                 f"{BACKEND_URL}/api/kids/jobs/{job_id}/suggested-tags",
                 json={"suggestedTags": tags},
                 headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
             )
-        print(f"   ✅ [Suggested Tags] {tags}")
+            if resp.status_code >= 400:
+                 print(f"   ⚠️ [Suggested Tags] Backend 응답 에러: Status={resp.status_code} | Body={resp.text}")
+            else:
+                 print(f"   ✅ [Suggested Tags] 저장 성공: Status={resp.status_code} | Tags={tags}")
     except Exception as e:
-        print(f"   ⚠️ [Suggested Tags] 저장 실패 (무시) | tags={tags} | error={str(e)}")
+        print(f"   ⚠️ [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
 
 def _make_agent_log_sender(job_id: str):
     """CoScientist 에이전트 로그 전송 콜백 생성 (sync context용 - requests 사용)"""
@@ -524,6 +527,10 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
         if hasattr(part, "text") and part.text:
             meta_text += part.text
             
+    # [Log] Gemini 응답 원본 확인
+    log(f"   🤖 [Gemini Raw Response] {meta_text.replace(chr(10), ' ')[:200]}...")
+
+            
     # 에러 방지: 이미지가 없으면 텍스트에서라도 이미지를 찾거나(Base64) 재시도 로직 고려 가능
     if out_bytes is None:
         # 텍스트 내에 Base64 이미지가 섞여 있을 가능성 체크
@@ -935,7 +942,7 @@ async def process_kids_request_internal(
             log(f"✅ [STEP 3/4] Brickify 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
 
             if not out_ldr.exists() or out_ldr.stat().st_size == 0:
-                raise RuntimeError("LDR output missing/empty")
+                raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
 
             # -----------------
             # 5) 결과 URL 생성 및 BOM 파일 생성
