@@ -38,6 +38,8 @@ def _single_conversion(
     Internal helper: run one voxelization + optimization pass at a given target scale.
     Returns (brick_count, optimized_bricks).
     """
+    import time
+    start_t = time.time()
     mesh = combined.copy()
     
     # Scale to target studs
@@ -54,15 +56,25 @@ def _single_conversion(
     mesh.vertices[:, 1] *= (20.0 / 24.0)
 
     # Voxelize
+    print(f"      [Step] Voxelizing (Target: {target})...")
+    v_start = time.time()
     vg = mesh.voxelized(pitch=1.0)
     if kwargs.get("solid", True):
         vg = vg.fill()
+    v_end = time.time()
+    print(f"      [Step] Voxelization Done: {v_end - v_start:.2f}s")
     
     indices = vg.sparse_indices
     if indices is None or len(indices) == 0:
         return 0, []
         
+    print(f"      [Step] Voxel count: {len(indices)}")
+    if len(indices) > 50000:
+        print(f"      [Warning] Too many voxels ({len(indices)}), this might be slow.")
+
     # Color sampling
+    print(f"      [Step] Color Sampling...")
+    c_start = time.time()
     centers = vg.points
     if use_mesh_color:
         if hasattr(mesh.visual, 'to_color'):
@@ -75,6 +87,8 @@ def _single_conversion(
             colors_raw = mesh.visual.face_colors[face_indices][:, :3]
     else:
         colors_raw = np.tile([200, 200, 200], (len(centers), 1))
+    c_end = time.time()
+    print(f"      [Step] Color Sampling Done: {c_end - c_start:.2f}s")
 
     # Build points list for optimizer
     bricks_data = []
@@ -99,6 +113,8 @@ def _single_conversion(
         })
 
     # Optimize (Greedy Packing)
+    print(f"      [Step] Optimization (Greedy Packing) starting...")
+    o_start = time.time()
     optimized = optimize_bricks(
         bricks_data,
         kind=kind,
@@ -106,6 +122,8 @@ def _single_conversion(
         interlock=interlock,
         max_area=max_area
     )
+    o_end = time.time()
+    print(f"      [Step] Optimization Done: {o_end - o_start:.2f}s")
     
     return len(optimized), optimized
 
