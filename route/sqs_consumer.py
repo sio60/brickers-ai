@@ -13,10 +13,11 @@ from route.kids_render import process_kids_request_internal
 from route.sqs_producer import send_result_message
 
 
-def log(msg: str) -> None:
-    """타임스탬프 포함 로그 출력"""
+def log(msg: str, user_email: str = "System") -> None:
+    """타임스탬프 및 사용자 정보 포함 로그 출력"""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] {msg}")
+    user_tag = f"[{user_email}]" if user_email else "[System]"
+    print(f"[{ts}] {user_tag} {msg}")
 
 
 def _is_truthy(v: str) -> bool:
@@ -28,9 +29,13 @@ AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-2").strip()
 SQS_REQUEST_QUEUE_URL = os.environ.get("AWS_SQS_REQUEST_QUEUE_URL", "").strip()  # Backend → AI (REQUEST 수신)
 SQS_ENABLED = _is_truthy(os.environ.get("AWS_SQS_ENABLED", "false"))
 SQS_POLL_INTERVAL = int(os.environ.get("SQS_POLL_INTERVAL", "5"))  # 초
-SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "1"))  # AI는 CPU intensive → 순차 처리
+SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "5"))  # [수정] 한 번에 여러 개 가져옴
 SQS_WAIT_TIME = int(os.environ.get("SQS_WAIT_TIME", "10"))  # Long polling
-SQS_VISIBILITY_TIMEOUT = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "1800"))  # 30분 (AI 처리 최대 시간)
+SQS_VISIBILITY_TIMEOUT = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "1800"))  # 30분
+MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "3")) # [추가] 병렬 처리 제한 (CPU/RAM 고려)
+
+# 병렬 처리 제어용 세마포어
+_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 
 # boto3 lazy import
 try:
@@ -98,16 +103,10 @@ async def poll_and_process():
 
         if messages:
             log(f"📥 [SQS Consumer] 메시지 수신! | count={len(messages)} | poll #{_POLL_COUNT}")
-            for msg in messages:
-                log(f"   - MessageId: {msg.get('MessageId', 'N/A')}")
-                try:
-                    body_preview = msg.get("Body", "")[:200]
-                    log(f"   - Body preview: {body_preview}...")
-                except:
-                    pass
-
-        for message in messages:
-            await process_message(message)
+            
+            # 메시지 병렬 처리 시작
+            tasks = [process_message(m) for m in messages]
+            await asyncio.gather(*tasks)
 
     except Exception as e:
         log(f"❌ [SQS Consumer] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")
@@ -128,14 +127,14 @@ async def process_message(message: Dict[str, Any]):
 
     try:
         body = json.loads(message["Body"])
-        log(f"   - type: {body.get('type')}")
-        log(f"   - jobId: {body.get('jobId')}")
-        log(f"   - sourceImageUrl: {body.get('sourceImageUrl', '')[:80]}...")
-        log(f"   - age: {body.get('age')}, budget: {body.get('budget')}")
+        user_email = body.get("userEmail", "unknown") # [추가]
+
+        log(f"📨 [SQS Consumer] 처리 시작 | jobId={body.get('jobId')}", user_email=user_email)
+        log(f"   - type: {body.get('type')}", user_email=user_email)
 
         # REQUEST 타입만 처리
         if body.get("type") != "REQUEST":
-            log(f"⚠️ [SQS Consumer] RESULT 타입 메시지 무시 | messageId={message_id} | type={body.get('type')}")
+            log(f"⚠️ [SQS Consumer] RESULT 타입 무시", user_email=user_email)
             delete_message(receipt_handle)
             return
 
@@ -144,22 +143,24 @@ async def process_message(message: Dict[str, Any]):
         age = body.get("age", "6-7")
         budget = body.get("budget")
 
-        log(f"📌 [SQS Consumer] REQUEST 메시지 처리 시작 | jobId={job_id}")
-        log(f"🚀 [SQS Consumer] AI 렌더링 시작...")
+        # ✅ 세마포어를 통한 병렬 실행 제한
+        async with _semaphore:
+            log(f"🚀 AI 렌더링 시작...", user_email=user_email)
+            
+            # Kids 렌더링 실행
+            result = await process_kids_request_internal(
+                job_id=job_id,
+                source_image_url=source_image_url,
+                age=age,
+                budget=budget,
+                user_email=user_email, # [추가]
+            )
 
-        # ✅ Kids 렌더링 실행
-        result = await process_kids_request_internal(
-            job_id=job_id,
-            source_image_url=source_image_url,
-            age=age,
-            budget=budget,
-        )
-
-        log(f"✅ [SQS Consumer] AI 렌더링 완료!")
+        log(f"✅ AI 렌더링 완료!", user_email=user_email)
         log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
         log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
         log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
-        log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}")
+        log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
 
         # ✅ RESULT 메시지 전송 (성공)
         log(f"📤 [SQS Consumer] RESULT 메시지 전송 중...")
@@ -178,8 +179,8 @@ async def process_message(message: Dict[str, Any]):
         # ✅ 메시지 삭제 (처리 완료)
         delete_message(receipt_handle)
 
-        log(f"✅ [SQS Consumer] REQUEST 메시지 처리 완료 | jobId={job_id}")
-        log("=" * 60)
+        log(f"✅ [SQS Consumer] 처리 완료 | jobId={job_id}", user_email=user_email)
+        log("=" * 60, user_email=user_email)
 
     except json.JSONDecodeError as e:
         log(f"❌ [SQS Consumer] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
@@ -187,7 +188,7 @@ async def process_message(message: Dict[str, Any]):
         delete_message(receipt_handle)
 
     except Exception as e:
-        log(f"❌ [SQS Consumer] 메시지 처리 실패 | messageId={message_id} | error={str(e)}")
+        log(f"❌ [SQS Consumer] 처리 실패 | error={str(e)}", user_email=user_email)
 
         # ✅ RESULT 메시지 전송 (실패)
         try:
@@ -198,7 +199,7 @@ async def process_message(message: Dict[str, Any]):
                 error_message=str(e),
             )
         except Exception as send_error:
-            log(f"❌ [SQS Consumer] 실패 메시지 전송 실패 | error={str(send_error)}")
+            log(f"❌ [SQS Consumer] 결과 전송 실패 | error={str(send_error)}", user_email=user_email)
 
         # AI 처리 실패 메시지는 삭제 (재처리 X, RESULT로 실패 전달함)
         delete_message(receipt_handle)
