@@ -43,6 +43,7 @@ try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from .agent_tools import TuneParameters
     from .memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+    from .hypothesis_maker.core import HypothesisMaker
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from agent_tools import TuneParameters
@@ -305,6 +306,7 @@ class RegenerationGraph:
         # 기본 클라이언트는 Gemini (비용 효율성)
         self.gemini_client = GeminiClient()
         self.default_client = llm_client if llm_client else self.gemini_client
+        self.hypothesis_maker = HypothesisMaker(memory_manager, self.gemini_client)
         
         # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
         self.gpt_client = None
@@ -384,66 +386,32 @@ class RegenerationGraph:
             print(f"  ⚠️ Re-ranking 실패 (Fallback to raw vector rank): {e}")
             return cases[:3]  # 실패 시 그냥 벡터 상위 3개 반환
 
-    def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
-        """[신규] 가설 생성 노드: RAG 검색 및 구체적 가설 수립"""
-        print("\n[Hypothesize] 가설 수립 및 RAG 검색 중...")
-        self._log("HYPOTHESIZE", "비슷한 브릭 모델을 참고하고 있어요...")
+    async def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
+        """[신규] 가설 생성 노드: RAG 검색 및 Dual-Model 협업 가설 수립"""
+        print("\n[Hypothesize] 가설 수립 및 RAG 검색 중 (Dual-Model)...")
+        self._log("HYPOTHESIZE", "비슷한 브릭 모델을 참고하고 전문가(Gemini+GPT)와 상의하고 있어요...")
         
-        # 1. RAG 검색
-        current_observation = ""
-        last_msg = state['messages'][-1]
-        if isinstance(last_msg, HumanMessage):
-            current_observation = str(last_msg.content)[:500]
-            
-        similar_cases = []
-        if memory_manager:
-            # 1. 넓은 범위 검색 (Top 10) - 메트릭 정보 포함하여 검색 정확도 향상
-            verification_metrics = state.get("verification_result")
-            raw_cases = memory_manager.search_similar_cases(
-                current_observation, 
-                limit=10, 
-                min_score=0.5,
-                verification_metrics=verification_metrics
-            )
-            # 2. LLM Re-ranking (Top 3 선별)
-            similar_cases = self._rerank_and_filter_cases(current_observation, raw_cases)
-            print(f"  📚 유사 실패 사례 {len(similar_cases)}건 선정 (Re-ranked)")
-            
-        # 2. 가설 생성 (Gemini Fast 사용)
-        rag_context = ""
-        for case in similar_cases:
-            rag_context += f"- {case.get('model_id')}: {case['experiment'].get('tool')} 사용 -> {case['verification'].get('numerical_analysis')}\n"
-            
-        prompt = f"""
-현재 상황:
-{current_observation}
-
-유사 과거 사례:
-{rag_context}
-
-위 상황을 분석하여 다음 JSON 형식으로 가설을 수립하세요:
-{{
-    "observation": "현재 문제 상황 요약 (1문장)",
-    "hypothesis": "구체적인 해결 가설 (어떤 도구가 왜 효과적일지)",
-    "reasoning": "가설의 근거 (과거 사례 또는 논리적 추론)",
-    "difficulty": "Easy|Medium|Hard" (문제 난이도 평가)
-}}
-"""
+        # Dual-Model RAG 실행 (HypothesisMaker에게 위임)
+        # state에는 'observation', 'verification_result' 등이 포함되어 있어야 함
         try:
-            # 가설 생성은 빠른 Gemini 사용
-            response = self.gemini_client.generate_json(prompt)
-            print(f"  💭 가설: {response.get('hypothesis')}")
-            print(f"  📊 난이도: {response.get('difficulty')}")
+            hypothesis_result = await self.hypothesis_maker.make_hypothesis(state)
+            
+            print(f"  💭 최종 가설: {hypothesis_result.get('hypothesis')}")
+            print(f"  📝 근거: {hypothesis_result.get('reasoning')}")
             
             return {
-                "current_hypothesis": response,
-                "next_action": "strategy"
+                "current_hypothesis": hypothesis_result,
+                # 다음 단계는 strategy (구체적 도구 선택)
+                "next_action": "strategy" 
             }
         except Exception as e:
             print(f"  ⚠️ 가설 생성 실패: {e}")
-            # 실패 시 기본 가설로 진행
             return {
-                "current_hypothesis": {"observation": "분석 실패", "difficulty": "Medium"},
+                "current_hypothesis": {
+                    "hypothesis": "기본 물리 법칙에 따른 안정화 시도", 
+                    "reasoning": "AI 분석 실패로 인한 기본 전략 사용",
+                    "difficulty": "Medium"
+                },
                 "next_action": "strategy"
             }
 
@@ -980,10 +948,10 @@ class RegenerationGraph:
                     iteration=state['attempts'],
                     hypothesis=build_hypothesis(
                         observation=observation,
-                        hypothesis=hyp_text,
-                        reasoning=f"Based on memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}",
-                        prediction=f"floating: {prev_floating}→{curr_floating}, ratio: {prev_small_ratio:.2f}→?"
-                    ) if build_hypothesis else {"observation": observation},
+                        hypothesis=current_hypothesis.get('hypothesis', hyp_text),
+                        reasoning=current_hypothesis.get('reasoning', f"Based on memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}"),
+                        prediction=current_hypothesis.get('prediction', f"floating: {prev_floating}→{curr_floating}, ratio: {prev_small_ratio:.2f}→?")
+                    ) if build_hypothesis else {"observation": observation, "reasoning": current_hypothesis.get('reasoning')},
                     experiment=build_experiment(
                         tool=last_tool,
                         parameters=state.get('params', {}),

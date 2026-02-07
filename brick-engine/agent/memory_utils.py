@@ -371,6 +371,39 @@ class MemoryUtils:
             return False
 
     @traceable(name="MemoryUtils.log_experiment")
+    def search_success_and_failure(
+        self, 
+        observation: str, 
+        limit: int = 5, 
+        min_score: float = 0.5, 
+        verification_metrics: Dict[str, Any] = None,
+        shape_metrics: Dict[str, Any] = None
+    ) -> Dict[str, List[Dict]]:
+        """
+        [Advanced RAG] 성공/실패 사례를 구분하여 검색
+        - Tag/Size/Shape 유사도 반영 (구현 예정)
+        - Shape Metrics가 있으면 이를 활용해 검색 품질 향상
+        """
+        results = {"success": [], "failure": []}
+        
+        # 1. 기본 검색 (Observations & Metrics)
+        candidates = self.search_similar_cases(observation, limit=limit*3, min_score=min_score, verification_metrics=verification_metrics)
+        
+        # 2. 성공/실패 분류
+        for case in candidates:
+            # Shape Matching (Optional): 부피/비율 등이 너무 다르면 제외하거나 점수 깎기
+            # 현재는 단순 분류만 수행
+            if case.get("result_success", False):
+                results["success"].append(case)
+            else:
+                results["failure"].append(case)
+                
+        # 3. Limit 적용
+        results["success"] = results["success"][:limit]
+        results["failure"] = results["failure"][:limit]
+        
+        return results
+
     def log_experiment(
         self,
         session_id: str,
@@ -381,9 +414,9 @@ class MemoryUtils:
         experiment: Dict[str, Any],
         verification: Dict[str, Any],
         improvement: Dict[str, Any],
-        async_save: bool = True,  # 비동기 저장 옵션
+        async_save: bool = True,
     ) -> str:
-        """단일 실험 결과를 구조화하여 저장 (비동기 가능)"""
+        """단일 실험 결과를 구조화하여 저장 (상세 상태 포함)"""
         if self.collection_exps is None:
             logger.warning("DB connection not available. Skipping log.")
             return ""
@@ -391,6 +424,14 @@ class MemoryUtils:
         exp_id = str(uuid.uuid4())
         timestamp = datetime.utcnow().isoformat()
         
+        # State Diff Calculation
+        metrics_before = verification.get("metrics_before", {})
+        metrics_after = verification.get("metrics_after", {})
+        state_diff = {}
+        for k, v in metrics_after.items():
+            if k in metrics_before and isinstance(v, (int, float)) and isinstance(metrics_before[k], (int, float)):
+                state_diff[k] = v - metrics_before[k]
+
         # Document 구조 생성
         doc = {
             "_id": exp_id,
@@ -400,50 +441,45 @@ class MemoryUtils:
             "iteration": iteration,
             "timestamp": timestamp,
             "hypothesis": hypothesis,
-            "experiment": experiment,
+            "experiment": experiment, # tool, parameters 포함
             "verification": verification,
             "improvement": improvement,
-            "result_success": verification.get("passed", False)
+            "result_success": verification.get("passed", False),
+            # [NEW] Detailed Analysis Fields
+            "algorithm": experiment.get("tool", "unknown"), # 사용된 알고리즘(노드)
+            "state_before": metrics_before,
+            "state_after": metrics_after,
+            "state_diff": state_diff,
+            "shape_metrics": experiment.get("shape_metrics", {}), # 형상 정보 (부피 등)
         }
         
         # RAG 검색용 텍스트 (Observation + 상세 메트릭 임베딩)
-        # "상황 유사도" 정확도 향상을 위해 구조화된 포맷 사용
         search_text = self._format_context_for_embedding(hypothesis.get('observation', ''), verification)
         
-        # LLM에게 보여줄 전체 요약 (상세 분석용)
-        # 물리적 결함의 구체적 원인( floating_ids 등)이 포함됨
+        # 요약 텍스트
         summary_text = (
             f"Observation: {hypothesis.get('observation', '')} "
-            f"Detailed Status: {search_text} " # 상세 문맥 포함
-            f"Hypothesis: {hypothesis.get('hypothesis', '')} "
-            f"Action: {experiment.get('tool', '')} "
-            f"Result: {verification.get('numerical_analysis', '')} "
+            f"Algorithm: {experiment.get('tool', '')} "
+            f"Params: {experiment.get('parameters', {})} "
+            f"Result: {'Success' if doc['result_success'] else 'Failure'} "
+            f"Metrics Diff: {state_diff} "
             f"Lesson: {improvement.get('lesson_learned', '')}"
         )
         
         def _do_save():
-            """실제 저장 작업 (임베딩 포함)"""
             nonlocal doc
             try:
-                # Vector Embedding (Dual Strategy)
                 if self.use_vector:
-                    # 1. Main Embedding (Full Context): 나중에 분석용
                     doc["embedding"] = self._get_embedding(summary_text)
-                    
-                    # 2. Scoring Embedding (Observation Only): 검색/점수산정용
-                    # "상황이 얼마나 비슷한가?"를 판단하기 위해 사용
                     doc["observation_embedding"] = self._get_embedding(search_text)
-                    
                     doc["summary_text"] = summary_text
                     doc["search_text"] = search_text 
                     
-                # DB Insert
                 self.collection_exps.insert_one(doc)
                 logger.info(f"✅ Experiment logged: {exp_id}")
             except Exception as e:
                 logger.error(f"Failed to log experiment: {e}")
         
-        # 비동기 또는 동기 저장
         if async_save:
             _bg_saver.enqueue(_do_save)
         else:
