@@ -104,9 +104,9 @@ async def poll_and_process():
         if messages:
             log(f"📥 [SQS Consumer] 메시지 수신! | count={len(messages)} | poll #{_POLL_COUNT}")
             
-            # 메시지 병렬 처리 시작
-            tasks = [process_message(m) for m in messages]
-            await asyncio.gather(*tasks)
+            # 메시지 비동기 처리 시작 (디커플링: 폴링 루프를 블로킹하지 않음)
+            for m in messages:
+                asyncio.create_task(process_message(m))
 
     except Exception as e:
         log(f"❌ [SQS Consumer] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")

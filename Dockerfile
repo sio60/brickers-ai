@@ -11,6 +11,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libatlas-base-dev \
     libgfortran5 \
+    fonts-nanum \
     && rm -rf /var/lib/apt/lists/*
 
 # 로컬 wheels 복사 (미리 빌드된 패키지)
@@ -24,9 +25,6 @@ RUN pip install --no-cache-dir \
     --find-links=/tmp/wheels \
     -r requirements.txt \
     && rm -rf /tmp/wheels
-
-# Playwright 브라우저 설치 (Headless Chrome)
-RUN playwright install --with-deps chromium
 
 # 소스코드 복사
 COPY . .

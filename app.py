@@ -16,17 +16,12 @@ import config
 from route import kids_render
 from route.sqs_consumer import start_consumer
 from route import color_variant
+from route import instructions_pdf  # [NEW] PDF Generation
 
 from chat.router import router as chat_router
 from chat.memory import InMemoryConversationStore
 from chat.service import ChatService
 
-
-
-
-# app.include_router(chat_router)
-
-# app = FastAPI(title="Brickers AI API - Kids Mode", version="0.2.0")
 
 # ============================================================================
 # 앱 인스턴스 생성 (단 한 번만!)
@@ -63,6 +58,7 @@ app.mount(
 # ============================================================================
 app.include_router(kids_render.router)      # Kids Mode
 app.include_router(color_variant.router)    # Color Variant
+app.include_router(instructions_pdf.router) # [NEW] PDF Generation
 app.include_router(chat_router)             # ✅ 챗봇 (/api/v1/chat)
 
 
