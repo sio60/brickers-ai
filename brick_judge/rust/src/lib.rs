@@ -5,6 +5,7 @@ use serde_json;
 
 mod types;
 mod judge;
+mod stability;
 
 use types::{Brick, Issue};
 
@@ -16,8 +17,10 @@ fn parse_bricks(json: &str) -> PyResult<Vec<Brick>> {
 
 /// Issue 배열을 JSON 문자열로 변환
 fn issues_to_json(issues: &[Issue]) -> PyResult<String> {
-    serde_json::to_string(issues)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("JSON 직렬화 실패: {}", e)))
+    let json = serde_json::to_string(issues)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("JSON 직렬화 실패: {}", e)))?;
+    println!("Rust Debug: Final JSON Output: {}", json);
+    Ok(json)
 }
 
 /// 물리 검증 (JSON 인터페이스)

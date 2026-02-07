@@ -67,6 +67,7 @@ pub enum IssueType {
     Floating,    // 공중에 떠있음
     Isolated,    // 연결 없음
     TopOnly,     // 위쪽으로만 연결 (조립 어려움)
+    UnstableBase, // 무게중심이 지지면 밖 (전복 위험)
 }
 
 impl IssueType {
@@ -75,6 +76,7 @@ impl IssueType {
             IssueType::Floating => "floating",
             IssueType::Isolated => "isolated",
             IssueType::TopOnly => "top_only",
+            IssueType::UnstableBase => "unstable_base",
         }
     }
 }
@@ -85,6 +87,7 @@ pub struct Issue {
     pub brick_id: Option<i32>,
     pub issue_type: String,
     pub severity: String,
+    pub data: Option<serde_json::Value>,
 }
 
 impl Issue {
@@ -93,6 +96,12 @@ impl Issue {
             brick_id,
             issue_type: issue_type.as_str().to_string(),
             severity: severity.as_str().to_string(),
+            data: None,
         }
+    }
+
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        self.data = Some(data);
+        self
     }
 }
