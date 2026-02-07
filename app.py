@@ -61,6 +61,18 @@ app.include_router(color_variant.router)    # Color Variant
 app.include_router(instructions_pdf.router) # [NEW] PDF Generation
 app.include_router(chat_router)             # ✅ 챗봇 (/api/v1/chat)
 
+# --- [Integrate] Brick Judge (Rust Viewer) ---
+import brick_judge.server as bj_server
+
+# 1. 뷰어 페이지 (HTML)
+app.add_api_route("/brick-judge/viewer", bj_server.viewer, methods=["GET"], include_in_schema=False)
+# 2. 뷰어용 API (HTML에서 호출하는 절대 경로 /api/verify 대응)
+app.add_api_route("/api/verify", bj_server.verify_ldr, methods=["POST"], tags=["viewer"])
+# 3. LLM용 Judge API
+app.add_api_route("/api/judge", bj_server.judge_ldr, methods=["POST"], tags=["judge"])
+# 4. 정보 API
+app.add_api_route("/api/info", bj_server.info, methods=["GET"], tags=["info"])
+
 
 # ============================================================================
 # Startup 이벤트
