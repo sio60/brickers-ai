@@ -18,6 +18,7 @@ class IssueType(Enum):
     floating = "floating"
     isolated = "isolated"
     top_only = "top_only"
+    unstable_base = "unstable_base"
 
 
 class Severity(Enum):
@@ -31,6 +32,7 @@ class Issue:
     issue_type: IssueType
     severity: Severity
     message: str = ""
+    data: dict = None
 
 
 def _bricks_to_json(bricks: List["Brick"]) -> str:
@@ -55,11 +57,19 @@ def _parse_rust_issues(json_str: str, bricks: List["Brick"] = None) -> List[Issu
         issue_type = IssueType(item["issue_type"])
         severity = Severity(item["severity"])
         brick_id = item.get("brick_id")
-        if brick_id is not None and brick_id in brick_map:
-            msg = f"브릭 #{brick_id} ({brick_map[brick_id].name}) - {issue_type.value}"
+        if brick_id is not None and str(brick_id) in brick_map:
+            msg = f"브릭 #{brick_id} ({brick_map[str(brick_id)].name}) - {issue_type.value}"
         else:
-            msg = f"브릭 #{brick_id} - {issue_type.value}"
-        issues.append(Issue(brick_id=brick_id, issue_type=issue_type, severity=severity, message=msg))
+            msg = item.get("message", "")
+        
+        issues.append(Issue(
+            brick_id=brick_id,
+            issue_type=issue_type,
+            severity=severity,
+            message=msg,
+            data=item.get("data")
+        ))
+
     return issues
 
 

@@ -85,6 +85,7 @@ class BrickIssue(BaseModel):
     severity: str = Field(..., description="심각도: critical, high, medium, low", example="critical")
     message: str = Field(..., description="이슈 설명", example="브릭 #5 바닥과 연결 안됨")
     color: str = Field(..., description="시각화용 색상 (hex)", example="#FF0000")
+    data: Optional[Dict] = Field(None, description="추가 데이터 (전복 벡터 등)")
 
 
 class JudgeResponse(BaseModel):
@@ -332,7 +333,8 @@ async def judge_ldr(req: LdrRequest):
                 type=i.issue_type.value,
                 severity=i.severity.value,
                 message=i.message,
-                color=ISSUE_COLORS.get(i.issue_type.value, "#888888")
+                color=ISSUE_COLORS.get(i.issue_type.value, "#888888"),
+                data=i.data
             )
             for i in issues
         ],
@@ -352,6 +354,12 @@ async def test_all(req: LdrRequest):
 
     start = time.perf_counter()
     issues = full_judge(model)
+    
+    # 디버그: unstable_base 이슈의 data 확인
+    for i in issues:
+        if i.issue_type.value == "unstable_base":
+            print(f"Python Debug: unstable_base issue data = {i.data}")
+    
     score = calc_score_from_issues(issues)
     elapsed = (time.perf_counter() - start) * 1000
 
@@ -371,7 +379,8 @@ async def test_all(req: LdrRequest):
                 "type": i.issue_type.value,
                 "severity": i.severity.value,
                 "message": i.message,
-                "color": ISSUE_COLORS.get(i.issue_type.value, "#888888")
+                "color": ISSUE_COLORS.get(i.issue_type.value, "#888888"),
+                "data": i.data
             }
             for i in issues
         ],
