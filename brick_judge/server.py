@@ -230,7 +230,7 @@ async def verify_ldr(file: UploadFile = File(..., description="LDR 파일 (.ldr,
 
     start = time.perf_counter()
     issues = full_judge(model)
-    score = calc_score_from_issues(issues)
+    score = calc_score_from_issues(issues, len(model.bricks))
     elapsed = (time.perf_counter() - start) * 1000
 
     brick_colors = {}
@@ -242,7 +242,7 @@ async def verify_ldr(file: UploadFile = File(..., description="LDR 파일 (.ldr,
         "model_name": model.model_name,
         "brick_count": len(model.bricks),
         "score": score,
-        "stable": score >= 50 and not any(i.severity.value == "critical" for i in issues),
+        "stable": not any(i.issue_type.value in ("unstable_base", "floating", "isolated") for i in issues),
         "issues": [
             {
                 "brick_id": i.brick_id,
@@ -314,7 +314,7 @@ async def judge_ldr(req: LdrRequest):
 
     start = time.perf_counter()
     issues = full_judge(model)
-    score = calc_score_from_issues(issues)
+    score = calc_score_from_issues(issues, len(model.bricks))
     elapsed = (time.perf_counter() - start) * 1000
 
     brick_colors = {}
@@ -326,7 +326,7 @@ async def judge_ldr(req: LdrRequest):
         model_name=model.model_name,
         brick_count=len(model.bricks),
         score=score,
-        stable=score >= 50 and not any(i.severity.value == "critical" for i in issues),
+        stable=not any(i.issue_type.value in ("unstable_base", "floating", "isolated") for i in issues),
         issues=[
             BrickIssue(
                 brick_id=i.brick_id,
@@ -360,7 +360,7 @@ async def test_all(req: LdrRequest):
         if i.issue_type.value == "unstable_base":
             print(f"Python Debug: unstable_base issue data = {i.data}")
     
-    score = calc_score_from_issues(issues)
+    score = calc_score_from_issues(issues, len(model.bricks))
     elapsed = (time.perf_counter() - start) * 1000
 
     brick_colors = {}
@@ -372,7 +372,7 @@ async def test_all(req: LdrRequest):
         "model_name": model.model_name,
         "brick_count": len(model.bricks),
         "score": score,
-        "stable": score >= 50 and not any(i.severity.value == "critical" for i in issues),
+        "stable": not any(i.issue_type.value in ("unstable_base", "floating", "isolated") for i in issues),
         "issues": [
             {
                 "brick_id": i.brick_id,

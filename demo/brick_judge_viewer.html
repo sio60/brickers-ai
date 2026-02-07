@@ -342,8 +342,11 @@
                     ⚡ 전체 불량 깜빡임
                 </button>
 
-                <button class="btn" id="physicsBtn" style="background: #9c27b0; margin-top: 20px;">
-                    🎮 물리 시뮬레이션
+                <button class="btn" id="comSimBtn" style="background: #9c27b0; margin-top: 20px;">
+                    ⚖️ 무게중심 시뮬레이션
+                </button>
+                <button class="btn" id="physicsBtn" style="background: #ff9800; margin-top: 5px;">
+                    💥 물리 시뮬레이션 (붕괴)
                 </button>
                 <button class="btn" id="resetBtn" style="background: #0f4c75; margin-top: 5px;">
                     🔄 리셋
@@ -877,12 +880,26 @@
                 }
             }
 
-            let score = 100;
-            for (const issue of issues) {
-                if (issue.severity === 'critical') score -= 30;
-                else if (issue.severity === 'high') score -= 15;
-                else if (issue.severity === 'medium') score -= 5;
-                else score -= 2;
+            // 점수 계산: 문제 브릭 비율 기반
+            // - unstable_base/off_balance → 0점
+            // - 그 외: 100 - (문제 브릭 수 / 전체 브릭 수 * 100)
+            let score;
+            const hasUnstableBase = issues.some(i =>
+                i.type === 'unstable_base' || i.type === 'off_balance'
+            );
+
+            if (hasUnstableBase) {
+                score = 0;
+            } else {
+                // top_only는 점수에서 제외
+                const problemBrickIds = new Set(
+                    issues
+                        .filter(i => i.type !== 'top_only')
+                        .map(i => i.brick_id)
+                        .filter(id => id !== null)
+                );
+                const problemRatio = bricks.length > 0 ? problemBrickIds.size / bricks.length : 0;
+                score = Math.round(100 * (1 - problemRatio));
             }
             score = Math.max(0, Math.min(100, score));
 
@@ -890,7 +907,7 @@
                 totalBricks: bricks.length,
                 issues,
                 score,
-                stable: !issues.some(i => i.severity === 'critical') && score >= 50
+                stable: !issues.some(i => i.type === 'unstable_base' || i.type === 'floating' || i.type === 'isolated')
             };
         }
 
@@ -1346,7 +1363,8 @@
         let originalPositions = new Map();
         let lastAnalysisResult = null;
 
-        function startPhysicsSimulation() {
+        // 무게중심 시뮬레이션 (전체 모델 전복)
+        function startCOMSimulation() {
             if (!model || !lastAnalysisResult) {
                 alert('먼저 분석을 실행하세요');
                 return;
@@ -1362,38 +1380,27 @@
                 originalPositions.set(id, mesh.position.clone());
             });
 
-            // 1. 전역 불안정(전복) 체크
+            // 전역 불안정(전복) 체크
             const globalIssue = lastAnalysisResult.issues.find(i =>
                 i.type === 'unstable_base' || i.type === 'off_balance' ||
                 (i.severity === 'critical' && i.brick_id === null)
             );
 
             if (globalIssue) {
-                console.log("⚠️ 전역 불안정 감지: 덩어리 전복 시뮬레이션");
+                console.log("⚠️ 무게중심 시뮬레이션: 전복 시작");
                 console.log("globalIssue:", JSON.stringify(globalIssue, null, 2));
 
-                let axis = new THREE.Vector3(1, 0, 0); // Default X-axis
+                let axis = new THREE.Vector3(1, 0, 0);
                 let dir = 1;
 
-                // 데이터에 전복 벡터가 있으면 사용
                 if (globalIssue.data && globalIssue.data.tipping) {
                     const tx = globalIssue.data.tipping.x;
                     const tz = globalIssue.data.tipping.z;
-                    console.log(`Tiiping Vector: x=${tx}, z=${tz}`);
-
-                    // 전복 방향(T)의 수직 벡터가 회전축(A)
-                    // Y축(0,1,0) 기준 외적: T x Y = A
-                    // (tx, 0, tz) x (0, 1, 0) = (-tz, 0, tx)
-                    // LDraw 좌표계 고려:
-                    // Viewer는 model.rotation.x = Math.PI로 뒤집혀있음.
-                    // 즉 로컬 Y가 -WorldY.
-                    // 복잡하므로 단순화: Tipping Vector는 XZ평면(바닥) 기준.
-                    // 전복 방향으로 넘어지려면 그 수직 축으로 회전해야 함.
-
+                    console.log(`Tipping Vector: x=${tx}, z=${tz}`);
                     axis.set(-tz, 0, tx).normalize();
-                    dir = 1; // 축 기준 정방향 회전
+                    dir = 1;
                 } else {
-                    // 데이터 없으면 랜덤 (JS 폴백 등)
+                    console.log("전복 데이터 없음 - 랜덤 방향(JS 폴백)");
                     axis.set(Math.random() > 0.5 ? 1 : 0, 0, Math.random() > 0.5 ? 1 : 0).normalize();
                     if (axis.length() === 0) axis.set(1, 0, 0);
                     dir = Math.random() > 0.5 ? 1 : -1;
@@ -1405,36 +1412,64 @@
                     velocity: 0,
                     angle: 0
                 };
+
+                animatePhysics();
             } else {
-                // 2. 개별 브릭 문제 (기존 로직: 낱알 붕괴)
-                const problemBrickIds = new Set(
-                    lastAnalysisResult.issues
-                        .filter(i => i.type === 'floating' || i.type === 'weak' || i.type === 'isolated')
-                        .map(i => i.brick_id)
-                        .filter(id => id !== null)
-                );
-
-                problemBrickIds.forEach(id => {
-                    const mesh = brickMeshes.get(id);
-                    if (mesh) {
-                        fallingBricks.push({
-                            mesh,
-                            velocity: 0,
-                            rotation: (Math.random() - 0.5) * 0.1,
-                            rotationAxis: Math.random() > 0.5 ? 'x' : 'z'
-                        });
-                    }
-                });
+                alert('무게중심이 안정적입니다! (전복 위험 없음)');
+                physicsRunning = false;
             }
+        }
 
-            if (!globalTipping && fallingBricks.length === 0) {
-                alert('떨어질 브릭이 없습니다! (안정적인 구조)');
+        // 물리 시뮬레이션 (개별 브릭 붕괴)
+        function startCrumbleSimulation() {
+            if (!model || !lastAnalysisResult) {
+                alert('먼저 분석을 실행하세요');
+                return;
+            }
+            if (physicsRunning) return;
+
+            physicsRunning = true;
+            fallingBricks = [];
+            globalTipping = null;
+
+            // 원래 위치 저장
+            brickMeshes.forEach((mesh, id) => {
+                originalPositions.set(id, mesh.position.clone());
+            });
+
+            // 문제 브릭만 수집 (floating, weak, isolated)
+            const problemBrickIds = new Set(
+                lastAnalysisResult.issues
+                    .filter(i => i.type === 'floating' || i.type === 'weak' || i.type === 'isolated')
+                    .map(i => i.brick_id)
+                    .filter(id => id !== null)
+            );
+
+            problemBrickIds.forEach(id => {
+                const mesh = brickMeshes.get(id);
+                if (mesh) {
+                    fallingBricks.push({
+                        mesh,
+                        velocity: 0,
+                        rotation: (Math.random() - 0.5) * 0.1,
+                        rotationAxis: Math.random() > 0.5 ? 'x' : 'z'
+                    });
+                }
+            });
+
+            if (fallingBricks.length === 0) {
+                alert('떨어질 브릭이 없습니다! (모든 브릭이 안정적)');
                 physicsRunning = false;
                 return;
             }
 
-            // 물리 애니메이션 시작
+            console.log(`💥 물리 시뮬레이션: ${fallingBricks.length}개 브릭 붕괴`);
             animatePhysics();
+        }
+
+        // 기존 호환을 위한 래퍼 (레거시)
+        function startPhysicsSimulation() {
+            startCrumbleSimulation();
         }
 
         function animatePhysics() {
@@ -1550,21 +1585,17 @@
                 data: i.data     // 추가 데이터 (전복 벡터 등)
             }));
 
-            // 이슈 기반 점수 계산 (원래 JS 로직과 동일)
-            let score = 100;
-            for (const issue of issues) {
-                if (issue.severity === 'critical') score -= 30;
-                else if (issue.severity === 'high') score -= 15;
-                else if (issue.severity === 'medium') score -= 5;
-                else score -= 2;
-            }
-            score = Math.max(0, Math.min(100, score));
+            // 서버에서 계산된 점수 사용 (새 로직: 문제 브릭 비율 기반)
+            const score = data.score;
+            const hasUnstableBase = issues.some(i =>
+                i.type === 'unstable_base' || i.type === 'off_balance'
+            );
 
             return {
                 totalBricks: data.brick_count,
                 issues: issues,
                 score: score,
-                stable: !issues.some(i => i.severity === 'critical') && score >= 50,
+                stable: data.stable,  // 서버에서 계산된 안정성 사용
                 backend: data.backend,
                 elapsed_ms: data.elapsed_ms,
                 brick_colors: data.brick_colors || {},  // brick_id → hex color
@@ -1653,9 +1684,14 @@
             blinkAllBadBricks();
         });
 
-        // 물리 시뮬레이션 버튼
+        // 무게중심 시뮬레이션 버튼
+        document.getElementById('comSimBtn').addEventListener('click', () => {
+            startCOMSimulation();
+        });
+
+        // 물리 시뮬레이션 버튼 (붕괴)
         document.getElementById('physicsBtn').addEventListener('click', () => {
-            startPhysicsSimulation();
+            startCrumbleSimulation();
         });
 
         document.getElementById('resetBtn').addEventListener('click', () => {
