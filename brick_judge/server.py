@@ -85,6 +85,7 @@ class BrickIssue(BaseModel):
     severity: str = Field(..., description="심각도: critical, high, medium, low", example="critical")
     message: str = Field(..., description="이슈 설명", example="브릭 #5 바닥과 연결 안됨")
     color: str = Field(..., description="시각화용 색상 (hex)", example="#FF0000")
+    data: Optional[Dict] = Field(None, description="추가 데이터 (전복 벡터 등)")
 
 
 class JudgeResponse(BaseModel):
@@ -229,7 +230,7 @@ async def verify_ldr(file: UploadFile = File(..., description="LDR 파일 (.ldr,
 
     start = time.perf_counter()
     issues = full_judge(model)
-    score = calc_score_from_issues(issues)
+    score = calc_score_from_issues(issues, len(model.bricks))
     elapsed = (time.perf_counter() - start) * 1000
 
     brick_colors = {}
@@ -241,7 +242,7 @@ async def verify_ldr(file: UploadFile = File(..., description="LDR 파일 (.ldr,
         "model_name": model.model_name,
         "brick_count": len(model.bricks),
         "score": score,
-        "stable": score >= 50 and not any(i.severity.value == "critical" for i in issues),
+        "stable": not any(i.issue_type.value in ("unstable_base", "floating", "isolated") for i in issues),
         "issues": [
             {
                 "brick_id": i.brick_id,
@@ -313,7 +314,7 @@ async def judge_ldr(req: LdrRequest):
 
     start = time.perf_counter()
     issues = full_judge(model)
-    score = calc_score_from_issues(issues)
+    score = calc_score_from_issues(issues, len(model.bricks))
     elapsed = (time.perf_counter() - start) * 1000
 
     brick_colors = {}
@@ -325,14 +326,15 @@ async def judge_ldr(req: LdrRequest):
         model_name=model.model_name,
         brick_count=len(model.bricks),
         score=score,
-        stable=score >= 50 and not any(i.severity.value == "critical" for i in issues),
+        stable=not any(i.issue_type.value in ("unstable_base", "floating", "isolated") for i in issues),
         issues=[
             BrickIssue(
                 brick_id=i.brick_id,
                 type=i.issue_type.value,
                 severity=i.severity.value,
                 message=i.message,
-                color=ISSUE_COLORS.get(i.issue_type.value, "#888888")
+                color=ISSUE_COLORS.get(i.issue_type.value, "#888888"),
+                data=i.data
             )
             for i in issues
         ],
@@ -352,7 +354,13 @@ async def test_all(req: LdrRequest):
 
     start = time.perf_counter()
     issues = full_judge(model)
-    score = calc_score_from_issues(issues)
+    
+    # 디버그: unstable_base 이슈의 data 확인
+    for i in issues:
+        if i.issue_type.value == "unstable_base":
+            print(f"Python Debug: unstable_base issue data = {i.data}")
+    
+    score = calc_score_from_issues(issues, len(model.bricks))
     elapsed = (time.perf_counter() - start) * 1000
 
     brick_colors = {}
@@ -364,14 +372,15 @@ async def test_all(req: LdrRequest):
         "model_name": model.model_name,
         "brick_count": len(model.bricks),
         "score": score,
-        "stable": score >= 50 and not any(i.severity.value == "critical" for i in issues),
+        "stable": not any(i.issue_type.value in ("unstable_base", "floating", "isolated") for i in issues),
         "issues": [
             {
                 "brick_id": i.brick_id,
                 "type": i.issue_type.value,
                 "severity": i.severity.value,
                 "message": i.message,
-                "color": ISSUE_COLORS.get(i.issue_type.value, "#888888")
+                "color": ISSUE_COLORS.get(i.issue_type.value, "#888888"),
+                "data": i.data
             }
             for i in issues
         ],
