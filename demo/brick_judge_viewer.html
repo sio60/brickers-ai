@@ -351,6 +351,19 @@
                 <button class="btn" id="resetBtn" style="background: #0f4c75; margin-top: 5px;">
                     🔄 리셋
                 </button>
+                <button class="btn" id="explodeFloatingBtn" style="background: #FF5722; margin-top: 20px;">
+                    💥 Floating 브릭 분해
+                </button>
+                <button class="btn" id="mergeFloatingBtn" style="background: #2196F3; margin-top: 5px;">
+                    🔗 불안정 브릭 병합
+                </button>
+                <button class="btn" id="autoRepairBtn" style="background: #4CAF50; margin-top: 5px;">
+                    🔧 자동 수리 (분해→병합 반복)
+                </button>
+                <div id="mergeResult"
+                    style="margin-top: 10px; padding: 10px; background: #0f3460; border-radius: 6px; display: none;">
+                    <span id="mergeResultText"></span>
+                </div>
             </div>
         </div>
     </div>
@@ -1702,6 +1715,590 @@
             if (content) {
                 analyze(content);
             }
+        });
+
+        // ============================================
+        // 불안정 브릭 병합 기능
+        // ============================================
+
+        // 브릭 파싱 유틸리티
+        function parseLdrBricks(ldrContent) {
+            const lines = ldrContent.split('\n');
+            const bricks = [];
+            let brickId = 0;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line || !line.startsWith('1 ')) continue;
+
+                const parts = line.split(/\s+/);
+                if (parts.length >= 15) {
+                    const color = parseInt(parts[1]);
+                    const x = parseFloat(parts[2]);
+                    const y = parseFloat(parts[3]);
+                    const z = parseFloat(parts[4]);
+                    // 회전 행렬
+                    const rotA = parseFloat(parts[5]);
+                    const rotC = parseFloat(parts[7]);
+                    const isRotated = Math.abs(rotA) < 0.5 && Math.abs(rotC) > 0.5;
+                    const part = parts[14];
+
+                    bricks.push({
+                        id: brickId,
+                        lineIndex: i,
+                        color, x, y, z, part, isRotated,
+                        originalLine: lines[i]
+                    });
+                    brickId++;
+                }
+            }
+            return { bricks, lines };
+        }
+
+        // 브릭 크기 정보 (LDU 단위)
+        const MERGE_PART_SIZE = {
+            '3005.dat': { w: 20, d: 20, studsW: 1, studsD: 1 },  // 1x1
+            '3004.dat': { w: 40, d: 20, studsW: 2, studsD: 1 },  // 1x2
+            '3622.dat': { w: 60, d: 20, studsW: 3, studsD: 1 },  // 1x3
+            '3010.dat': { w: 80, d: 20, studsW: 4, studsD: 1 },  // 1x4
+            '3009.dat': { w: 120, d: 20, studsW: 6, studsD: 1 }, // 1x6
+            '3008.dat': { w: 160, d: 20, studsW: 8, studsD: 1 }, // 1x8
+            '3003.dat': { w: 40, d: 40, studsW: 2, studsD: 2 },  // 2x2
+            '3002.dat': { w: 60, d: 40, studsW: 3, studsD: 2 },  // 2x3
+            '3001.dat': { w: 80, d: 40, studsW: 4, studsD: 2 },  // 2x4
+            '3006.dat': { w: 120, d: 40, studsW: 6, studsD: 2 }, // 2x6
+            '3007.dat': { w: 160, d: 40, studsW: 8, studsD: 2 }, // 2x8
+        };
+
+        // 스터드 크기로 파트 이름 찾기
+        const STUDS_TO_PART = {
+            // 기본 방향 (DxW)
+            '1x1': '3005.dat', '1x2': '3004.dat', '1x3': '3622.dat', '1x4': '3010.dat',
+            '1x6': '3009.dat', '1x8': '3008.dat',
+            '2x2': '3003.dat', '2x3': '3002.dat', '2x4': '3001.dat',
+            '2x6': '3006.dat', '2x8': '3007.dat',
+            // 회전 방향 (같은 파트, 다른 키)
+            '2x1': '3004.dat',  // 1x2와 동일
+            '3x1': '3622.dat',  // 1x3과 동일
+            '4x1': '3010.dat',  // 1x4와 동일
+            '6x1': '3009.dat',  // 1x6과 동일
+            '8x1': '3008.dat',  // 1x8과 동일
+            '3x2': '3002.dat',  // 2x3과 동일
+            '4x2': '3001.dat',  // 2x4와 동일
+            '6x2': '3006.dat',  // 2x6과 동일
+            '8x2': '3007.dat',  // 2x8과 동일
+        };
+
+        function getPartSize(part, isRotated) {
+            const size = MERGE_PART_SIZE[part] || { w: 20, d: 20, studsW: 1, studsD: 1 };
+            if (isRotated) {
+                return { w: size.d, d: size.w, studsW: size.studsD, studsD: size.studsW };
+            }
+            return size;
+        }
+
+        // 인접 브릭 찾기 (같은 Y, X 또는 Z축으로 붙어있음)
+        // floatingIds: 불안정한 브릭 ID - 이런 브릭과는 병합하지 않음!
+        // preferredAxis: 'x', 'z', 또는 null (둘 다 가능)
+        function findAdjacentBrick(targetBrick, bricks, excludeIds, floatingIds, preferredAxis = null) {
+            const targetSize = getPartSize(targetBrick.part, targetBrick.isRotated);
+
+            for (const other of bricks) {
+                if (other.id === targetBrick.id) continue;
+                if (excludeIds.has(other.id)) continue;
+
+                // 핵심: 인접 브릭이 불안정하면(floating이면) 스킵!
+                if (floatingIds && floatingIds.has(other.id)) continue;
+
+                const otherSize = getPartSize(other.part, other.isRotated);
+
+                // 같은 Y (같은 층)
+                if (Math.abs(other.y - targetBrick.y) > 1) continue;
+
+                // X축으로 인접 체크: Z 중심이 정렬되어 있어야 함
+                const zDiff = Math.abs(other.z - targetBrick.z);
+                const minHalfD = Math.min(targetSize.d, otherSize.d) / 2;
+                const zAligned = zDiff <= minHalfD + 1;
+
+                // Z축으로 인접 체크: X 중심이 정렬되어 있어야 함
+                const xDiff = Math.abs(other.x - targetBrick.x);
+                const minHalfW = Math.min(targetSize.w, otherSize.w) / 2;
+                const xAligned = xDiff <= minHalfW + 1;
+
+                // X축으로 인접 (Z 중심이 정렬) - preferredAxis가 null이거나 'x'일 때만
+                if ((!preferredAxis || preferredAxis === 'x') && zAligned) {
+                    const gap = xDiff;
+                    const expectedGap = (targetSize.w + otherSize.w) / 2;
+                    if (Math.abs(gap - expectedGap) < 5) {
+                        return { brick: other, axis: 'x' };
+                    }
+                }
+
+                // Z축으로 인접 (X 중심이 정렬) - preferredAxis가 null이거나 'z'일 때만
+                if ((!preferredAxis || preferredAxis === 'z') && xAligned) {
+                    const gap = zDiff;
+                    const expectedGap = (targetSize.d + otherSize.d) / 2;
+                    if (Math.abs(gap - expectedGap) < 5) {
+                        return { brick: other, axis: 'z' };
+                    }
+                }
+            }
+            return null;
+        }
+
+        // 두 브릭 병합 (floatingBrick, stableBrick, axis, 충돌 검사용 bricks 배열)
+        // stable 브릭 위치를 기준으로 확장
+        function mergeTwoBricks(floatingBrick, stableBrick, axis, allBricks, linesToRemove) {
+            const floatSize = getPartSize(floatingBrick.part, floatingBrick.isRotated);
+            const stableSize = getPartSize(stableBrick.part, stableBrick.isRotated);
+
+            // 새 브릭 크기 계산
+            let newStudsW, newStudsD;
+            if (axis === 'x') {
+                newStudsW = floatSize.studsW + stableSize.studsW;
+                newStudsD = Math.max(floatSize.studsD, stableSize.studsD);
+            } else {
+                newStudsW = Math.max(floatSize.studsW, stableSize.studsW);
+                newStudsD = floatSize.studsD + stableSize.studsD;
+            }
+
+            // 새 파트 찾기
+            const key = `${newStudsD}x${newStudsW}`;
+            const newPart = STUDS_TO_PART[key];
+            if (!newPart) {
+                console.log(`병합 불가: ${key} 크기의 브릭이 없음`);
+                return null;
+            }
+
+            const newPartSize = MERGE_PART_SIZE[newPart];
+            if (!newPartSize) return null;
+
+            // 안정적인 브릭 위치에서 floating 방향으로 확장
+            let newX = stableBrick.x;
+            let newZ = stableBrick.z;
+
+            if (axis === 'x') {
+                const direction = floatingBrick.x > stableBrick.x ? 1 : -1;
+                const addedWidth = floatSize.studsW * 20;
+                newX = stableBrick.x + (addedWidth / 2) * direction;
+            } else {
+                const direction = floatingBrick.z > stableBrick.z ? 1 : -1;
+                const addedDepth = floatSize.studsD * 20;
+                newZ = stableBrick.z + (addedDepth / 2) * direction;
+            }
+
+            const newY = stableBrick.y;
+
+            // 📌 충돌 검사: 새 브릭이 다른 브릭과 겹치는지 확인
+            const newHalfW = newPartSize.w / 2;
+            const newHalfD = newPartSize.d / 2;
+
+            for (const other of allBricks) {
+                // 자기 자신(병합 대상 2개)은 제외
+                if (other.id === floatingBrick.id || other.id === stableBrick.id) continue;
+                // 이미 제거될 브릭은 제외
+                if (linesToRemove && linesToRemove.has(other.lineIndex)) continue;
+
+                const otherSize = getPartSize(other.part, other.isRotated);
+                const otherHalfW = otherSize.w / 2;
+                const otherHalfD = otherSize.d / 2;
+
+                // Y(층)가 같은지 확인
+                if (Math.abs(other.y - newY) > 1) continue;
+
+                // AABB 충돌 검사
+                const xOverlap = Math.abs(newX - other.x) < (newHalfW + otherHalfW - 1);
+                const zOverlap = Math.abs(newZ - other.z) < (newHalfD + otherHalfD - 1);
+
+                if (xOverlap && zOverlap) {
+                    console.log(`충돌! 새 브릭(${newX}, ${newZ})이 브릭 #${other.id}(${other.x}, ${other.z})와 겹침`);
+                    return null;  // 충돌 시 병합 취소
+                }
+            }
+
+            const newColor = stableBrick.color;
+            const newLine = `1 ${newColor} ${newX.toFixed(2)} ${newY.toFixed(2)} ${newZ.toFixed(2)} 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 ${newPart}`;
+
+            return {
+                newLine,
+                removedIds: [floatingBrick.id, stableBrick.id],
+                removedLineIndices: [floatingBrick.lineIndex, stableBrick.lineIndex]
+            };
+        }
+
+        // Floating 브릭 병합 실행
+        function mergeFloatingBricks() {
+            if (!lastAnalysisResult) {
+                alert('먼저 LDR을 분석하세요');
+                return;
+            }
+
+            const ldrContent = document.getElementById('ldrText').value;
+            const { bricks, lines } = parseLdrBricks(ldrContent);
+
+            // Floating 브릭 ID만 추출 (top_only 제외 - 파란색은 병합 불필요)
+            const floatingIds = new Set(
+                lastAnalysisResult.issues
+                    .filter(i => i.type === 'floating')  // floating만!
+                    .map(i => i.brick_id)
+                    .filter(id => id !== null)
+            );
+
+            if (floatingIds.size === 0) {
+                showMergeResult('✅ 병합할 Floating 브릭이 없습니다', 'success');
+                return;
+            }
+
+            console.log(`병합 대상 (Floating): ${floatingIds.size}개 브릭`);
+
+            let mergeCount = 0;
+            const mergedIds = new Set();
+            const linesToRemove = new Set();
+            const newLines = [];
+
+            // 각 Floating 브릭에 대해 병합 시도
+            for (const floatingId of floatingIds) {
+                if (mergedIds.has(floatingId)) continue;
+
+                const floatingBrick = bricks.find(b => b.id === floatingId);
+                if (!floatingBrick) continue;
+
+                // 인접 브릭 찾기 (안정적인 브릭만!)
+                const adjacent = findAdjacentBrick(floatingBrick, bricks, mergedIds, floatingIds);
+                if (!adjacent) {
+                    console.log(`브릭 #${floatingId}: 안정적인 인접 브릭 없음`);
+                    continue;
+                }
+
+                // 병합 시도 (충돌 검사 포함)
+                const mergeResult = mergeTwoBricks(floatingBrick, adjacent.brick, adjacent.axis, bricks, linesToRemove);
+                if (!mergeResult) continue;
+
+                console.log(`병합: #${floatingBrick.id} + #${adjacent.brick.id} → 새 브릭`);
+
+                mergedIds.add(floatingBrick.id);
+                mergedIds.add(adjacent.brick.id);
+                mergeResult.removedLineIndices.forEach(i => linesToRemove.add(i));
+                newLines.push(mergeResult.newLine);
+                mergeCount++;
+            }
+
+            if (mergeCount === 0) {
+                showMergeResult('⚠️ 병합 가능한 인접 브릭이 없습니다', 'warning');
+                return;
+            }
+
+            // 새 LDR 생성
+            const newLdrLines = [];
+            for (let i = 0; i < lines.length; i++) {
+                if (!linesToRemove.has(i)) {
+                    newLdrLines.push(lines[i]);
+                }
+            }
+            // 새 병합 브릭 추가
+            newLines.forEach(line => newLdrLines.push(line));
+
+            const newLdr = newLdrLines.join('\n');
+            document.getElementById('ldrText').value = newLdr;
+
+            showMergeResult(`✅ ${mergeCount}쌍 병합 완료! 다시 분석합니다...`, 'success');
+
+            // 자동 재분석
+            setTimeout(() => analyze(newLdr), 500);
+        }
+
+        function showMergeResult(text, type) {
+            const resultDiv = document.getElementById('mergeResult');
+            const resultText = document.getElementById('mergeResultText');
+            resultDiv.style.display = 'block';
+            resultText.innerHTML = text;
+            resultDiv.style.borderLeft = type === 'success' ? '3px solid #4caf50' : '3px solid #ff9800';
+        }
+
+        // ============================================
+        // Floating 브릭 분해 기능 (1x1로 쪼개기)
+        // ============================================
+
+        function explodeFloatingBricks() {
+            if (!lastAnalysisResult) {
+                alert('먼저 LDR을 분석하세요');
+                return;
+            }
+
+            const ldrContent = document.getElementById('ldrText').value;
+            const { bricks, lines } = parseLdrBricks(ldrContent);
+
+            // Floating 브릭 ID만 추출
+            const floatingIds = new Set(
+                lastAnalysisResult.issues
+                    .filter(i => i.type === 'floating')
+                    .map(i => i.brick_id)
+                    .filter(id => id !== null)
+            );
+
+            if (floatingIds.size === 0) {
+                showMergeResult('✅ 분해할 Floating 브릭이 없습니다', 'success');
+                return;
+            }
+
+            console.log(`분해 대상: ${floatingIds.size}개 브릭`);
+
+            let explodeCount = 0;
+            const linesToRemove = new Set();
+            const newLines = [];
+
+            for (const floatingId of floatingIds) {
+                const brick = bricks.find(b => b.id === floatingId);
+                if (!brick) continue;
+
+                const size = getPartSize(brick.part, brick.isRotated);
+
+                // 이미 1x1이면 스킵
+                if (size.studsW === 1 && size.studsD === 1) continue;
+
+                // 브릭을 1x1들로 분해
+                const halfW = size.w / 2;
+                const halfD = size.d / 2;
+
+                for (let sx = 0; sx < size.studsW; sx++) {
+                    for (let sz = 0; sz < size.studsD; sz++) {
+                        // 각 1x1의 위치 계산
+                        const newX = brick.x - halfW + 10 + (sx * 20);
+                        const newZ = brick.z - halfD + 10 + (sz * 20);
+                        const newY = brick.y;
+
+                        // 1x1 브릭 (3005.dat) 생성
+                        const newLine = `1 ${brick.color} ${newX.toFixed(2)} ${newY.toFixed(2)} ${newZ.toFixed(2)} 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat`;
+                        newLines.push(newLine);
+                    }
+                }
+
+                linesToRemove.add(brick.lineIndex);
+                explodeCount++;
+                console.log(`분해: #${brick.id} (${size.studsW}x${size.studsD}) → ${size.studsW * size.studsD}개 1x1`);
+            }
+
+            if (explodeCount === 0) {
+                showMergeResult('⚠️ 분해할 브릭이 없습니다 (이미 1x1)', 'warning');
+                return;
+            }
+
+            // 새 LDR 생성
+            const newLdrLines = [];
+            for (let i = 0; i < lines.length; i++) {
+                if (!linesToRemove.has(i)) {
+                    newLdrLines.push(lines[i]);
+                }
+            }
+            newLines.forEach(line => newLdrLines.push(line));
+
+            const newLdr = newLdrLines.join('\n');
+            document.getElementById('ldrText').value = newLdr;
+
+            showMergeResult(`💥 ${explodeCount}개 브릭 분해 완료! 다시 분석합니다...`, 'success');
+
+            // 자동 재분석
+            setTimeout(() => analyze(newLdr), 500);
+        }
+
+        // 분해 버튼 이벤트
+        document.getElementById('explodeFloatingBtn').addEventListener('click', () => {
+            explodeFloatingBricks();
+        });
+
+        // 병합 버튼 이벤트
+        document.getElementById('mergeFloatingBtn').addEventListener('click', () => {
+            mergeFloatingBricks();
+        });
+
+        // ============================================
+        // 자동 수리 기능 (분해 → X축 병합 → Z축 병합 반복)
+        // ============================================
+
+        async function autoRepair() {
+            showMergeResult('🔧 자동 수리 시작...', 'success');
+
+            let totalMerged = 0;
+            let iteration = 0;
+            const maxIterations = 10;  // 무한루프 방지
+
+            while (iteration < maxIterations) {
+                iteration++;
+                console.log(`=== 자동 수리 반복 ${iteration} ===`);
+
+                // 현재 Floating 수 확인
+                if (!lastAnalysisResult) break;
+                const floatingCount = lastAnalysisResult.issues.filter(i => i.type === 'floating').length;
+                if (floatingCount === 0) {
+                    console.log('Floating 브릭 없음, 종료');
+                    break;
+                }
+
+                // 1단계: 분해
+                const beforeExplode = document.getElementById('ldrText').value;
+                explodeFloatingBricksInternal();
+                await sleep(300);
+
+                // 2단계: X축 병합
+                let xMerged = mergeFloatingBricksWithAxis('x');
+                await sleep(300);
+
+                // 3단계: Z축 병합
+                let zMerged = mergeFloatingBricksWithAxis('z');
+                await sleep(300);
+
+                totalMerged += xMerged + zMerged;
+
+                // 변화가 없으면 종료
+                if (xMerged === 0 && zMerged === 0) {
+                    console.log('더 이상 병합 불가, 종료');
+                    break;
+                }
+            }
+
+            showMergeResult(`🔧 자동 수리 완료! ${iteration}회 반복, ${totalMerged}쌍 병합`, 'success');
+
+            // 최종 분석
+            const finalLdr = document.getElementById('ldrText').value;
+            await analyze(finalLdr);
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // 내부용 분해 함수 (UI 업데이트 없이)
+        function explodeFloatingBricksInternal() {
+            if (!lastAnalysisResult) return;
+
+            const ldrContent = document.getElementById('ldrText').value;
+            const { bricks, lines } = parseLdrBricks(ldrContent);
+
+            const floatingIds = new Set(
+                lastAnalysisResult.issues
+                    .filter(i => i.type === 'floating')
+                    .map(i => i.brick_id)
+                    .filter(id => id !== null)
+            );
+
+            if (floatingIds.size === 0) return;
+
+            const linesToRemove = new Set();
+            const newLines = [];
+
+            for (const floatingId of floatingIds) {
+                const brick = bricks.find(b => b.id === floatingId);
+                if (!brick) continue;
+
+                const size = getPartSize(brick.part, brick.isRotated);
+                if (size.studsW === 1 && size.studsD === 1) continue;
+
+                const halfW = size.w / 2;
+                const halfD = size.d / 2;
+
+                for (let sx = 0; sx < size.studsW; sx++) {
+                    for (let sz = 0; sz < size.studsD; sz++) {
+                        const newX = brick.x - halfW + 10 + (sx * 20);
+                        const newZ = brick.z - halfD + 10 + (sz * 20);
+                        const newLine = `1 ${brick.color} ${newX.toFixed(2)} ${brick.y.toFixed(2)} ${newZ.toFixed(2)} 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000 3005.dat`;
+                        newLines.push(newLine);
+                    }
+                }
+                linesToRemove.add(brick.lineIndex);
+            }
+
+            if (linesToRemove.size === 0) return;
+
+            const newLdrLines = [];
+            for (let i = 0; i < lines.length; i++) {
+                if (!linesToRemove.has(i)) newLdrLines.push(lines[i]);
+            }
+            newLines.forEach(line => newLdrLines.push(line));
+
+            const newLdr = newLdrLines.join('\n');
+            document.getElementById('ldrText').value = newLdr;
+
+            // 재분석 (동기적)
+            loadLDR(newLdr).then(() => {
+                analyzeWithRust(newLdr).then(result => {
+                    lastAnalysisResult = result;
+                    highlightIssues(result.issues, result.brick_colors || {});
+                    updateUI(result);
+                }).catch(() => {
+                    lastAnalysisResult = judgeBricks(newLdr);
+                });
+            });
+        }
+
+        // 특정 축으로만 병합
+        function mergeFloatingBricksWithAxis(preferredAxis) {
+            if (!lastAnalysisResult) return 0;
+
+            const ldrContent = document.getElementById('ldrText').value;
+            const { bricks, lines } = parseLdrBricks(ldrContent);
+
+            const floatingIds = new Set(
+                lastAnalysisResult.issues
+                    .filter(i => i.type === 'floating')
+                    .map(i => i.brick_id)
+                    .filter(id => id !== null)
+            );
+
+            if (floatingIds.size === 0) return 0;
+
+            let mergeCount = 0;
+            const mergedIds = new Set();
+            const linesToRemove = new Set();
+            const newLines = [];
+
+            for (const floatingId of floatingIds) {
+                if (mergedIds.has(floatingId)) continue;
+
+                const floatingBrick = bricks.find(b => b.id === floatingId);
+                if (!floatingBrick) continue;
+
+                // preferredAxis로만 인접 브릭 찾기
+                const adjacent = findAdjacentBrick(floatingBrick, bricks, mergedIds, floatingIds, preferredAxis);
+                if (!adjacent) continue;
+
+                const mergeResult = mergeTwoBricks(floatingBrick, adjacent.brick, adjacent.axis, bricks, linesToRemove);
+                if (!mergeResult) continue;
+
+                mergedIds.add(floatingBrick.id);
+                mergedIds.add(adjacent.brick.id);
+                mergeResult.removedLineIndices.forEach(i => linesToRemove.add(i));
+                newLines.push(mergeResult.newLine);
+                mergeCount++;
+            }
+
+            if (mergeCount === 0) return 0;
+
+            const newLdrLines = [];
+            for (let i = 0; i < lines.length; i++) {
+                if (!linesToRemove.has(i)) newLdrLines.push(lines[i]);
+            }
+            newLines.forEach(line => newLdrLines.push(line));
+
+            const newLdr = newLdrLines.join('\n');
+            document.getElementById('ldrText').value = newLdr;
+
+            // 재분석
+            loadLDR(newLdr).then(() => {
+                analyzeWithRust(newLdr).then(result => {
+                    lastAnalysisResult = result;
+                    highlightIssues(result.issues, result.brick_colors || {});
+                    updateUI(result);
+                }).catch(() => {
+                    lastAnalysisResult = judgeBricks(newLdr);
+                });
+            });
+
+            return mergeCount;
+        }
+
+        // 자동 수리 버튼 이벤트
+        document.getElementById('autoRepairBtn').addEventListener('click', () => {
+            autoRepair();
         });
 
         // 초기화
