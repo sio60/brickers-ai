@@ -332,6 +332,8 @@ async def process_kids_request_internal(
 
             # Brickify 실행 (CPU-heavy -> thread로 실행)
             def run_brickify():
+                # PRO 모드(1000개 이상) 등 대규모 작업 시 복셀 제한 상향 (해상도 유지)
+                v_limit = 20000 if eff_budget >= 1000 else 6000
                 return _CONVERT_FN(
                     str(glb_path),
                     str(out_ldr),
@@ -349,7 +351,7 @@ async def process_kids_request_internal(
                     invert_y=False,
                     smart_fix=True,
                     span=4,
-                    max_new_voxels=6000, # 12000 -> 6000 (속도 최적화)
+                    max_new_voxels=v_limit,
                     refine_iters=4,        # 8→4 (속도 개선)
                     ensure_connected=True,
                     min_embed=2,
