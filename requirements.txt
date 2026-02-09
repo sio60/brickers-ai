@@ -76,3 +76,4 @@ langgraph
 reportlab
 fpdf2
 maturin
+docker>=7.0.0
