@@ -1,34 +1,13 @@
 # Ruff configuration for brickers-ai
 # https://docs.astral.sh/ruff/configuration/
 
-[lint]
-# Enable rules
-select = ["E", "F", "W"]
+# Allow lines up to 120 characters (top-level setting)
+line-length = 120
 
-# Ignore specific rules that are too noisy for this project
-ignore = [
-    # Unused imports - many are for type hints or lazy imports
-    "F401",
-    # f-string without placeholders - used for consistency
-    "F541",
-    # Unused variables - some are intentional (logging, future use)
-    "F841",
-    # Module level import not at top - intentional lazy imports
-    "E402",
-    # Multiple statements on one line - compact code style
-    "E701",
-    "E702",
-    # Ambiguous variable name (l, I, O) - acceptable in math/graphics context
-    "E741",
-    # Bare except - will fix gradually
-    "E722",
-    # Redefinition of unused variable
-    "F811",
-    # Dictionary key repeated
-    "F601",
-]
+# Python target version (top-level setting)
+target-version = "py311"
 
-# Exclude generated/vendored files
+# Exclude generated/vendored files (top-level setting)
 exclude = [
     ".git",
     ".venv",
@@ -40,8 +19,20 @@ exclude = [
     "dist",
 ]
 
-# Allow lines up to 120 characters
-line-length = 120
+[lint]
+# Enable rules
+select = ["E", "F", "W"]
 
-# Python target version
-target-version = "py311"
+# Ignore specific rules that are too noisy for this project
+ignore = [
+    "F401",  # Unused imports
+    "F541",  # f-string without placeholders
+    "F841",  # Unused variables
+    "E402",  # Module import not at top
+    "E701",  # Multiple statements on one line (colon)
+    "E702",  # Multiple statements on one line (semicolon)
+    "E741",  # Ambiguous variable name
+    "E722",  # Bare except
+    "F811",  # Redefinition of unused variable
+    "F601",  # Dictionary key repeated
+]
