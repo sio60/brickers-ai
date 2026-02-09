@@ -181,6 +181,7 @@ async def process_message(message: Dict[str, Any], request_num: int):
             pdf_url=result.get("pdfUrl", ""),
             parts=result["parts"],
             final_target=result["finalTarget"],
+            tags=result.get("tags", []),
         )
 
         # ✅ 메시지 삭제 (처리 완료)
