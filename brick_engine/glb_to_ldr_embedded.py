@@ -64,9 +64,12 @@ LDRAW_COLORS: Dict[int, Tuple[int, int, int, str]] = {
     78: (254, 186, 189, "Light Pink"),
     84: (170, 125, 85, "Medium Dark Flesh"),
     85: (89, 39, 115, "Dark Purple"),
+    110: (255, 187, 0, "Bright Light Orange"),
+    226: (242, 206, 46, "Bright Light Yellow"),
     320: (120, 27, 33, "Dark Red"),
     378: (163, 193, 173, "Sand Green"),
     484: (179, 62, 0, "Dark Orange"),
+    46: (242, 115, 0, "Flame Yellowish Orange"),
 }
 
 _COLOR_IDS = list(LDRAW_COLORS.keys())
@@ -293,11 +296,16 @@ def _single_conversion(
         _, v_indices = v_tree.query(centers)
         colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
         
-        # 밝기 보정 (Exposure boost) - AI 생성 모델의 어두운 텍스처 보정
-        # 흰색이 회색으로 매칭되는 것을 방지하기 위해 전체적으로 밝기를 높임
-        brightness = kwargs.get("color_brightness", 1.25)
+        # 밝기 및 채도 보정 (AI 생성 모델의 어두운/탁한 텍스처 보정)
+        brightness = kwargs.get("color_brightness", 1.4)
+        saturation = kwargs.get("color_saturation", 1.5)
+        
         if brightness != 1.0:
             colors_raw = np.clip(colors_raw * brightness, 0, 255)
+            
+        if saturation != 1.0:
+            avg = np.mean(colors_raw, axis=-1, keepdims=True)
+            colors_raw = np.clip(avg + (colors_raw - avg) * saturation, 0, 255)
     else:
         colors_raw = np.tile([200, 200, 200], (len(centers), 1))
     c_end = time.time()
