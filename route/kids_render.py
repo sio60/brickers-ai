@@ -16,6 +16,7 @@ import anyio
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import asyncio # Added for Semaphore
 
 from tripo3d import TripoClient
 from tripo3d.models import TaskStatus
@@ -26,6 +27,7 @@ from service.kids_config import (
     KIDS_TOTAL_TIMEOUT_SEC,
     TRIPO_WAIT_TIMEOUT_SEC,
     DOWNLOAD_TIMEOUT_SEC,
+    MAX_CONCURRENT_TASKS, # Added import
     AGE_TO_BUDGET,
     budget_to_start_target,
     DEBUG,
@@ -53,6 +55,10 @@ from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images
 __all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
 
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
+
+# --- Concurrency Control ---
+_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+_active_tasks = 0
 
 def log(msg: str, user_email: str = "System") -> None:
     """타임스탬프 및 사용자 정보 포함 로그 출력"""
@@ -308,55 +314,61 @@ async def process_kids_request_internal(
 
             print(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
-            # 4) Brickify
+            # 4) Brickify (CPU Intensive - Semaphore applied)
             step_start = time.time()
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
             start_target = budget_to_start_target(eff_budget)
-            _log(f"\U0001f4cc [STEP 3/4] Brickify LDR \ubcc0\ud658 \uc2dc\uc791... | budget={eff_budget} | target={start_target}")
+            
+            global _active_tasks
+            async with _semaphore:
+                _active_tasks += 1
+                try:
+                    _log(f"🚀 [STEP 3/4] Brickify LDR \ubcc0\ud658 \uc2dc\uc791... (Active: {_active_tasks}/{MAX_CONCURRENT_TASKS}) | budget={eff_budget} | target={start_target}")
+                    await update_job_stage(job_id, "MODEL")
 
-            await update_job_stage(job_id, "MODEL")
+                    convert_fn = load_engine_convert()
+                    out_ldr = out_brick_dir / "result.ldr"
 
-            convert_fn = load_engine_convert()
-            out_ldr = out_brick_dir / "result.ldr"
+                    agent_params = {
+                        "target": start_target,
+                        "budget": eff_budget,
+                        "min_target": 5,
+                        "shrink": 0.8,
+                        "search_iters": 6,
+                        "kind": "brick",
+                        "plates_per_voxel": 3,
+                        "interlock": True,
+                        "max_area": 20,
+                        "solid_color": 4,
+                        "use_mesh_color": True,
+                        "invert_y": False,
+                        "smart_fix": True,
+                        "fill": False,
+                        "step_order": "bottomup",
+                        "span": 4,
+                        "max_new_voxels": 100000,
+                        "refine_iters": 4,
+                        "ensure_connected": True,
+                        "mode": "kids",
+                        "small_side_contact": False,
+                        "min_embed": 2,
+                        "erosion_iters": 0,
+                        "fast_search": True,
+                        "extend_catalog": True,
+                        "max_len": 8,
+                        "log_callback": _sse_sender,
+                    }
 
-            agent_params = {
-                "target": start_target,
-                "budget": eff_budget,
-                "min_target": 5,
-                "shrink": 0.8,
-                "search_iters": 6,
-                "kind": "brick",
-                "plates_per_voxel": 3,
-                "interlock": True,
-                "max_area": 20,
-                "solid_color": 4,
-                "use_mesh_color": True,
-                "invert_y": False,
-                "smart_fix": True,
-                "fill": False,
-                "step_order": "bottomup",
-                "span": 4,
-                "max_new_voxels": 100000,
-                "refine_iters": 4,
-                "ensure_connected": True,
-                "mode": "kids",
-                "small_side_contact": False,
-                "min_embed": 2,
-                "erosion_iters": 0,
-                "fast_search": True,
-                "extend_catalog": True,
-                "max_len": 8,
-                "log_callback": _sse_sender,
-            }
+                    def run_convert_sync():
+                        return convert_fn(
+                            str(glb_path),
+                            str(out_ldr),
+                            **agent_params
+                        )
 
-            def run_convert_sync():
-                return convert_fn(
-                    str(glb_path),
-                    str(out_ldr),
-                    **agent_params
-                )
-
-            result: Dict[str, Any] = await anyio.to_thread.run_sync(run_convert_sync)
+                    result: Dict[str, Any] = await anyio.to_thread.run_sync(run_convert_sync)
+                finally:
+                    _active_tasks -= 1
 
             brickify_elapsed = time.time() - step_start
             _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
