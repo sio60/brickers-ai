@@ -1,7 +1,6 @@
-# ============================================
 # Stage 1: Rust Builder
 # ============================================
-FROM rust:1.75-slim-bookworm AS rust-builder
+FROM rust:1.80-slim-bookworm AS rust-builder
 
 WORKDIR /build/rust
 # Rust 빌드 도중 maturin이 전역 파이썬을 사용할 수 있어야 함
