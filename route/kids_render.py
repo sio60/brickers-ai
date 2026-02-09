@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import json
-import re
 import uuid
 import base64
 import time
@@ -54,7 +53,6 @@ from service.brickify_loader import (
 
 # PDF Generation
 from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom
-from service.render_client import render_ldr_steps, RENDER_ENABLED
 
 # Re-export for app.py / sqs_consumer.py
 __all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
@@ -514,59 +512,9 @@ async def process_kids_request_internal(
 
             _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
 
-            # 5-2) PDF 생성 (렌더링 서비스 사용)
+            # 📌 PDF 생성 로직 제거됨 (Frontend Capture 방식 전환)
             pdf_url = None
-            if RENDER_ENABLED:
-                try:
-                    step_start_pdf = time.time()
-                    _log(f"📌 [STEP 5/5] PDF 생성 시작 (LDView 로컬 렌더링)")
-                    await _sse("pdf", "조립 설명서를 만들고 있어요...")
-
-                    # LDR 텍스트 읽기
-                    ldr_text = await anyio.to_thread.run_sync(
-                        lambda: out_ldr.read_text(encoding="utf-8")
-                    )
-
-                    # 렌더링 서비스에서 스텝별 이미지 받기
-                    step_images = await render_ldr_steps(ldr_text)
-                    _log(f"   ✅ 렌더링 완료: {len(step_images)} steps")
-
-                    # LDR에서 Step별 BOM 파싱
-                    step_boms = parse_ldr_step_boms(ldr_text)
-
-                    # 커버 이미지 (마지막 스텝 첫 번째 뷰)
-                    cover_img = None
-                    if step_images and step_images[-1] and step_images[-1][0]:
-                        cover_img = step_images[-1][0]
-
-                    # PDF 생성
-                    pdf_bytes = generate_pdf_with_images_and_bom(
-                        model_name=final_subject or "Brickers Model",
-                        step_images=step_images,
-                        step_boms=step_boms,
-                        cover_image=cover_img,
-                    )
-                    _log(f"   ✅ PDF 생성: {len(pdf_bytes)} bytes")
-
-                    # S3 업로드
-                    if USE_S3 and S3_BUCKET:
-                        now = datetime.now()
-                        safe_name = re.sub(r'[\\/:*?"<>|]+', "_", final_subject or "instructions")
-                        s3_key = f"uploads/pdf/{now.year:04d}/{now.month:02d}/{uuid.uuid4().hex[:8]}_{safe_name}.pdf"
-                        pdf_url = upload_bytes_to_s3(pdf_bytes, s3_key, "application/pdf")
-                        _log(f"   ✅ PDF S3 업로드: {pdf_url}")
-                    else:
-                        # 로컬 저장
-                        pdf_path = out_brick_dir / "instructions.pdf"
-                        await _write_bytes_async(pdf_path, pdf_bytes)
-                        pdf_url = to_generated_url(pdf_path, out_dir=out_brick_dir)
-
-                    _log(f"✅ [STEP 5/5] PDF 생성 완료 | {time.time()-step_start_pdf:.2f}s")
-                except Exception as pdf_err:
-                    _log(f"⚠️ [STEP 5/5] PDF 생성 실패 (파이프라인 계속): {pdf_err}")
-                    pdf_url = None
-            else:
-                _log(f"📌 [INFO] LDView 미설치 - PDF 생성 스킵")
+            _log(f"📌 [INFO] PDF 생성은 프론트엔드 캡처 후 /api/instructions/pdf-with-bom 호출을 사용하세요.")
 
             await _sse("complete", "완성! 브릭 모델이 준비됐어요!")
 
