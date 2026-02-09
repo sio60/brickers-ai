@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # LDView AppImage → extract (Docker에서 FUSE 불가하므로 풀어서 사용)
 RUN wget -q https://github.com/tcobbs/ldview/releases/download/v4.5/LDView-39cc01ab-x86_64.AppImage \
-        -O /tmp/LDView.AppImage \
+    -O /tmp/LDView.AppImage \
     && chmod +x /tmp/LDView.AppImage \
     && cd /opt && /tmp/LDView.AppImage --appimage-extract \
     && ln -s /opt/squashfs-root/AppRun /usr/local/bin/LDView \
@@ -81,10 +81,8 @@ COPY requirements.txt .
 # 모든 wheel 설치 (pip가 종속성 해결을 위해 /tmp/wheels를 먼저 보게 함)
 RUN pip install --no-cache-dir \
     --find-links=/tmp/wheels \
-    -r requirements.txt
-
-# brick_judge_rs 별도 설치 (requirements.txt에 없으므로)
-RUN pip install --no-cache-dir /tmp/wheels/brick_judge_rs*.whl \
+    -r requirements.txt \
+    && pip install --no-cache-dir /tmp/wheels/brick_judge_rs*.whl \
     && rm -rf /tmp/wheels
 
 # 소스코드 복사
