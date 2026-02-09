@@ -43,17 +43,15 @@ DOWNLOAD_TIMEOUT_SEC = float(os.environ.get("KIDS_DOWNLOAD_TIMEOUT_SEC", "180.0"
 # Concurrency
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "5"))
 
-# Age → budget mapping
-AGE_TO_BUDGET = {"4-5": 400, "6-7": 450, "8-10": 500, "PRO": 2000}
+# Age → budget mapping (전 버전 안정 수치로 롤백: 150/200/250)
+AGE_TO_BUDGET = {"4-5": 150, "6-7": 200, "8-10": 250}
 
 
 def budget_to_start_target(eff_budget: int) -> int:
-    if eff_budget <= 400:
-        return 35 # 45 -> 35
-    if eff_budget <= 450:
-        return 40 # 50 -> 40
-    if eff_budget <= 500:
-        return 45 # 55 -> 45
-    if eff_budget <= 2000:
-        return 120 # Pro target (Safe starting point)
-    return 130
+    if eff_budget <= 150:
+        return 40
+    if eff_budget <= 200:
+        return 50
+    if eff_budget <= 250:
+        return 60
+    return 60
