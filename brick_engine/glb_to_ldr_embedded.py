@@ -261,8 +261,8 @@ def _single_conversion(
     
     # Voxel threshold check (메모리 보호용)
     # Kids 모드에서 t3.small 서버 기준 6,000개가 넘으면 최적화가 너무 느려짐
-    voxel_threshold = kwargs.pop("max_new_voxels", 6000) 
-    max_pitch = kwargs.pop("max_pitch", 3.0)
+    voxel_threshold = kwargs.get("max_new_voxels", 6000) 
+    max_pitch = kwargs.get("max_pitch", 3.0)
     
     if len(indices) > voxel_threshold:
         if pitch < max_pitch:
