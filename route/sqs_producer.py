@@ -67,6 +67,7 @@ async def send_result_message(
     pdf_url: str = "",
     parts: int = 0,
     final_target: int = 0,
+    tags: list[str] = None,
     error_message: Optional[str] = None,
 ) -> None:
     """
@@ -82,6 +83,7 @@ async def send_result_message(
         pdf_url: PDF 파일 URL
         parts: 파츠 수
         final_target: 최종 타겟
+        tags: AI가 추출한 태그 목록
         error_message: 실패 시 에러 메시지
     """
     if not SQS_ENABLED:
@@ -109,6 +111,7 @@ async def send_result_message(
                 "pdfUrl": pdf_url,
                 "parts": parts,
                 "finalTarget": final_target,
+                "tags": tags or [],
             })
             log(f"   - success=True")
             log(f"   - ldrUrl: {ldr_url[:60]}..." if ldr_url else "   - ldrUrl: (empty)")

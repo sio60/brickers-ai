@@ -11,6 +11,19 @@ import os
 import logging
 import time
 from pathlib import Path
+from dotenv import load_dotenv
+
+# .env 로드 (프로젝트 최상위)
+# 현재 파일: .../brick-engine/agent/llm_clients.py
+# .env 위치: .../.env
+_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(dotenv_path=_ENV_PATH)
+    logger = logging.getLogger(__name__) # Re-declare logger to avoid issues if needed, but likely fine global
+    logger.info(f".env 파일 로드됨: {_ENV_PATH}")
+else:
+    logger = logging.getLogger(__name__)
+    logger.warning(f".env 파일을 찾을 수 없음: {_ENV_PATH}")
 
 # 재시도 로직용 tenacity (없으면 폴백)
 try:
@@ -340,15 +353,59 @@ class GeminiClient(BaseLLMClient):
 
 class OpenAIClient(BaseLLMClient):
     """
-    OpenAI API 클라이언트 (미구현 - 필요시 구현)
+    OpenAI GPT 모델 클라이언트
     """
-    
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        raise NotImplementedError("OpenAI 클라이언트는 아직 구현되지 않았습니다. Groq을 사용하세요.")
-    
+    def __init__(self, model_name: str = None, api_key: str = None):
+        try:
+            from openai import OpenAI
+            self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+            if not self.api_key:
+                logger.warning("OPENAI_API_KEY is not set.")
+                
+            self.client = OpenAI(api_key=self.api_key)
+            # Use environment variable as default if model_name is not provided
+            default_model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+            self.model_name = model_name or default_model
+        except ImportError:
+            logger.error("OpenAI library not installed. Please install 'openai'.")
+            self.client = None
+
+    def _call_api(self, messages: List[Dict[str, str]], json_mode: bool = False) -> str:
+        if not self.client:
+            return "" if not json_mode else "{}"
+            
+        try:
+            params = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": 0.7,
+            }
+            if json_mode:
+                params["response_format"] = {"type": "json_object"}
+                
+            response = self.client.chat.completions.create(**params)
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"OpenAI API Call Failed: {e}")
+            raise e
+
     def generate(self, prompt: str, system_prompt: str = "") -> str:
-        raise NotImplementedError()
-    
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        return self._call_api(messages, json_mode=False)
+
     def generate_json(self, prompt: str, system_prompt: str = "") -> Dict[str, Any]:
-        raise NotImplementedError()
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        content = self._call_api(messages, json_mode=True)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse JSON from OpenAI: {content}")
+            return {}

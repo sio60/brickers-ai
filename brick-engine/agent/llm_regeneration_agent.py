@@ -43,11 +43,14 @@ try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from .agent_tools import TuneParameters, RemoveBricks
     from .memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+    from .hypothesis_maker.core import HypothesisMaker
+    from .hypothesis_maker import build_hypothesis_graph
     from . import ldr_modifier  # LDR 수정 모듈 (Remove, Merge)
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
     from agent_tools import TuneParameters, RemoveBricks
     from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+    from hypothesis_maker import build_hypothesis_graph
     import ldr_modifier  # LDR 수정 모듈 (Remove, Merge)
 
 # DB 연결
@@ -122,25 +125,7 @@ DEFAULT_PARAMS = {
 # 데이터 구조 및 헬퍼 함수
 # ============================================================================
 
-@dataclass
-class VerificationFeedback:
-    """PyBullet 검증 결과를 LLM에게 전달하기 위한 구조화된 피드백"""
-    stable: bool = True
-    total_bricks: int = 0
-    fallen_bricks: int = 0
-    floating_bricks: int = 0
-    floating_brick_ids: List[str] = field(default_factory=list)  # 공중부양 브릭 ID 목록
-    fallen_brick_ids: List[str] = field(default_factory=list)    # 떨어진 브릭 ID 목록
-    failure_ratio: float = 0.0
-    first_failure_brick: Optional[str] = None
-    max_drift: float = 0.0
-    collision_count: int = 0
-    # 안정성 등급 (3단계)
-    stability_grade: str = "STABLE"       # "STABLE" | "MEDIUM" | "UNSTABLE"
-    stability_score: int = 100            # 0~100
-    # 1x1 브릭 비율 정보
-    small_brick_count: int = 0      # 1x1 브릭 개수
-    small_brick_ratio: float = 0.0  # 1x1 브릭 비율 (0.0 ~ 1.0)
+from .llm_state import VerificationFeedback, AgentState
 
 def extract_verification_feedback(result, total_bricks: int) -> VerificationFeedback:
     """PyBullet VerificationResult를 LLM 피드백 형식으로 변환"""
@@ -223,54 +208,10 @@ def _format_feedback(feedback: VerificationFeedback) -> str:
 # LangGraph State 정의
 # ============================================================================
 
-class AgentState(TypedDict):
-    # 입력 및 설정
-    glb_path: str
-    ldr_path: str
-    subject_name: str          # [추가] 사물의 정체성 (예: "강아지", "자동차")
-    params: Dict[str, Any]
-    max_retries: int
-    acceptable_failure_ratio: float
-    verification_duration: float
-    gui: bool
-    
-    # 실행 상태
-    attempts: int
-    session_id: str # 오케스트레이션용 세션 ID
-    messages: Annotated[List[BaseMessage], add_messages] # 대화 기록 (History)
-    
-    # 검증 결과 캐시 (Tool 실행 시 참조용)
-    verification_raw_result: Any 
-    floating_bricks_ids: List[str] # 공중부양 브릭 ID 목록 캐시
-    verification_errors: int  # 검증 에러 재시도 카운터
+# AgentState is imported from .llm_state at the top of the file
 
-    # 무한 루프 방지용 도구 사용 추적
-    tool_usage_count: Dict[str, int]  # {"TuneParameters": 2, ...}
-    last_tool_used: Optional[str]     # 마지막 사용 도구
-    consecutive_same_tool: int        # 같은 도구 연속 사용 횟수
-    
-    # 도구 효과 측정용 상태 저장
-    previous_metrics: Dict[str, Any]  # 도구 실행 전 메트릭
-    current_metrics: Dict[str, Any]   # 검증 후 현재 메트릭 (Reflect에서 비교용)
-    
-    # 최종 결과 리포트
-    final_report: Dict[str, Any]  # 최종 결과 요약
-    
-    # Co-Scientist Memory (학습 메모리)
-    memory: Dict[str, Any]  # {
-    #     "failed_approaches": ["TuneParameters with target=80 failed"],
-    #     "successful_patterns": ["interlock=True with fill=True"],
-    #     "lessons": ["support_ratio 0.5 이상에서 안정성 향상"],
-    #     "consecutive_failures": 0
-    # }
 
-    # [v2] Co-Scientist 아키텍처 추가 필드
-    current_hypothesis: Optional[Dict[str, Any]]  # node_hypothesize 결과
-    strategy_plan: Optional[Dict[str, Any]]       # node_strategy 결과
-    llm_config: Optional[Dict[str, str]]          # {"model": "gpt-4o"}
 
-    # 다음 노드 제어
-    next_action: Literal["generate", "verify", "model", "tool", "reflect", "hypothesize", "strategy", "end"]
 
 
 # ============================================================================
@@ -316,6 +257,7 @@ class RegenerationGraph:
         # 기본 클라이언트는 Gemini (비용 효율성)
         self.gemini_client = GeminiClient()
         self.default_client = llm_client if llm_client else self.gemini_client
+        self.hypothesis_maker = HypothesisMaker(memory_manager, self.gemini_client)
         
         # [Rollback] GPT Client는 현재 사용하지 않음 (User Request)
         self.gpt_client = None
@@ -395,10 +337,10 @@ class RegenerationGraph:
             print(f"  ⚠️ Re-ranking 실패 (Fallback to raw vector rank): {e}")
             return cases[:3]  # 실패 시 그냥 벡터 상위 3개 반환
 
-    def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
-        """[신규] 가설 생성 노드: RAG 검색 및 구체적 가설 수립"""
-        print("\n[Hypothesize] 가설 수립 및 RAG 검색 중...")
-        self._log("HYPOTHESIZE", "비슷한 브릭 모델을 참고하고 있어요...")
+    async def node_hypothesize(self, state: AgentState) -> Dict[str, Any]:
+        """[신규] 가설 생성 노드: RAG 검색 및 Dual-Model 협업 가설 수립"""
+        print("\n[Hypothesize] 가설 수립 및 RAG 검색 중 (Dual-Model)...")
+        self._log("HYPOTHESIZE", "비슷한 브릭 모델을 참고하고 전문가(Gemini+GPT)와 상의하고 있어요...")
         
         # 1. RAG 검색
         current_observation = ""
@@ -445,20 +387,24 @@ class RegenerationGraph:
 }}
 """
         try:
-            # 가설 생성은 빠른 Gemini 사용
-            response = self.gemini_client.generate_json(prompt)
-            print(f"  💭 가설: {response.get('hypothesis')}")
-            print(f"  📊 난이도: {response.get('difficulty')}")
+            hypothesis_result = await self.hypothesis_maker.make_hypothesis(state)
+            
+            print(f"  💭 최종 가설: {hypothesis_result.get('hypothesis')}")
+            print(f"  📝 근거: {hypothesis_result.get('reasoning')}")
             
             return {
-                "current_hypothesis": response,
-                "next_action": "strategy"
+                "current_hypothesis": hypothesis_result,
+                # 다음 단계는 strategy (구체적 도구 선택)
+                "next_action": "strategy" 
             }
         except Exception as e:
             print(f"  ⚠️ 가설 생성 실패: {e}")
-            # 실패 시 기본 가설로 진행
             return {
-                "current_hypothesis": {"observation": "분석 실패", "difficulty": "Medium"},
+                "current_hypothesis": {
+                    "hypothesis": "기본 물리 법칙에 따른 안정화 시도", 
+                    "reasoning": "AI 분석 실패로 인한 기본 전략 사용",
+                    "difficulty": "Medium"
+                },
                 "next_action": "strategy"
             }
 
@@ -1040,7 +986,6 @@ class RegenerationGraph:
                 memory["failed_approaches"] = memory["failed_approaches"][-5:]
                 memory["successful_patterns"] = memory["successful_patterns"][-5:]
 
-                # DB & Vector Store 저장 (표준화된 헬퍼 함수 사용)
                 memory_manager.log_experiment(
                     session_id=state.get('session_id', 'unknown_session'),
                     model_id=Path(state['glb_path'] or state['ldr_path']).name,
@@ -1048,10 +993,10 @@ class RegenerationGraph:
                     iteration=state['attempts'],
                     hypothesis=build_hypothesis(
                         observation=observation,
-                        hypothesis=hyp_text,
-                        reasoning=f"Based on memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}",
-                        prediction=f"floating: {prev_floating}→{curr_floating}, ratio: {prev_small_ratio:.2f}→?"
-                    ) if build_hypothesis else {"observation": observation},
+                        hypothesis=current_hypothesis.get('hypothesis', hyp_text),
+                        reasoning=current_hypothesis.get('reasoning', f"Based on memory lessons: {memory.get('lessons', [])[-1] if memory.get('lessons') else 'None'}"),
+                        prediction=current_hypothesis.get('prediction', f"floating: {prev_floating}→{curr_floating}, ratio: {prev_small_ratio:.2f}→?")
+                    ) if build_hypothesis else {"observation": observation, "reasoning": current_hypothesis.get('reasoning')},
                     experiment=build_experiment(
                         tool=last_tool,
                         parameters=state.get('params', {}),
@@ -1070,10 +1015,16 @@ class RegenerationGraph:
                 )
             except Exception as e:
                 print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
+
+        # [티키타카 로그]
+        print("\n" + "🎓" * 20)
+        print(" [Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
+        print("🎓" * 20)
         
         return {
             "memory": memory, 
-            "previous_metrics": current_metrics, # 다음 턴을 위해 현재 메트릭 승격
+            "observation": f"실패율={curr_failure:.2f}, 공중부양={curr_floating}개, 작은브릭={curr_small_ratio:.2f}", 
+            "previous_metrics": current_metrics, 
             "next_action": "hypothesize"
         }
 
@@ -1089,8 +1040,11 @@ class RegenerationGraph:
         workflow.add_node("model", self.node_model)
         workflow.add_node("tool_executor", self.node_tool_executor)
         workflow.add_node("reflect", self.node_reflect)      # 회고 (학습)
-        workflow.add_node("hypothesize", self.node_hypothesize)  # [v2] 가설 생성
-        workflow.add_node("strategy", self.node_strategy)        # [v2] 전략 결정
+        workflow.add_node("strategy", self.node_strategy)    # 전략 결정
+
+        # 가설 수립 서브그래프 생성 및 등록
+        hyp_graph = build_hypothesis_graph()
+        workflow.add_node("hypothesize", hyp_graph)
         
         # 라우팅 로직
         def route_next(state: AgentState):
@@ -1108,16 +1062,15 @@ class RegenerationGraph:
             "reflect": "reflect"    # 검증 완료 후 회고로 이동
         })
         
-        # 3. Reflect -> Hypothesize (v2 핵심: 회고 후 바로 모델이 아니라 가설 수립으로)
-        # 단, 첫 실행이라 비교할 게 없으면 바로 Strategy나 Model로 갈 수도 있음
+        # 3. Reflect -> Hypothesizer (Sub-graph)
         workflow.add_conditional_edges("reflect", route_next, {
-            "model": "model",             # 바로 모델로 가는 경우 (Legacy)
-            "hypothesize": "hypothesize"  # 보통 가설 생성으로 이동
+            "model": "model",
+            "hypothesize": "hypothesize"
         })
         
         # 4. Hypothesize -> Strategy
         workflow.add_conditional_edges("hypothesize", route_next, {"strategy": "strategy"})
-        
+
         # 5. Strategy -> Model (모델 설정 후 도구 선택)
         workflow.add_conditional_edges("strategy", route_next, {"model": "model"})
         
@@ -1268,6 +1221,11 @@ def regeneration_loop(
         final_report={},          # 최종 결과 리포트
         # Co-Scientist Memory 초기화 (DB 로드 반영)
         memory=initial_memory,
+        hypothesis_maker=graph_builder.hypothesis_maker, # 인스턴스 주입
+        # [티키타카 초기화]
+        round_count=0,
+        internal_score=0,
+        debate_history=[],
         next_action="generate" 
     )
     
