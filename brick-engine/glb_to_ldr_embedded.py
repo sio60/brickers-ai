@@ -55,10 +55,11 @@ def _single_conversion(
     # Brick height correction (20 LDU width / 24 LDU height ratio)
     mesh.vertices[:, 1] *= (20.0 / 24.0)
 
-    # Voxelize
-    print(f"      [Step] Voxelizing (Target: {target})...")
+    # Voxelize with adaptive pitch
+    pitch = kwargs.get("pitch", 1.0)
+    print(f"      [Step] Voxelizing (Target: {target}, Pitch: {pitch})...")
     v_start = time.time()
-    vg = mesh.voxelized(pitch=1.0)
+    vg = mesh.voxelized(pitch=pitch)
     if kwargs.get("solid", True):
         vg = vg.fill()
     v_end = time.time()
@@ -70,9 +71,22 @@ def _single_conversion(
         
     print(f"      [Step] Voxel count: {len(indices)}")
     voxel_threshold = kwargs.get("voxel_threshold", 80000)
+    max_pitch = kwargs.get("max_pitch", 2.5)
+    
     if len(indices) > voxel_threshold:
-        print(f"      [Warning] Too many voxels ({len(indices)} > {voxel_threshold}), skipping iteration.")
-        return -1, []
+        if pitch < max_pitch:
+            new_pitch = pitch + 0.5
+            print(f"      [Warning] Voxels ({len(indices)}) > threshold ({voxel_threshold})")
+            print(f"      [Retry] Lowering resolution: pitch {pitch} -> {new_pitch}")
+            # Recursive retry with higher pitch (lower resolution)
+            return _single_conversion(
+                combined, out_ldr_path, target, kind, plates_per_voxel,
+                interlock, max_area, solid_color, use_mesh_color, step_order, glb_path,
+                pitch=new_pitch, **kwargs
+            )
+        else:
+            print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
+            return -1, []
 
     # Color sampling
     print(f"      [Step] Color Sampling...")
