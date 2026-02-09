@@ -1,60 +1,16 @@
 #!/bin/bash
 # ============================================
 # AI Server 빌드 스크립트
-# wheels 폴더에 패키지 없으면 빌드, 있으면 스킵
+# Docker 멀티스테이지 빌드 + BuildKit 캐시
 # ============================================
 
 set -e
 
-WHEELS_DIR="./wheels"
-REQUIREMENTS="requirements.txt"
+# BuildKit 활성화 (캐시 마운트 사용)
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
 
-# 필수 패키지 목록 (빌드 오래 걸리는 것들)
-REQUIRED_PACKAGES=(
-    "torch"
-    "scipy"
-    "numpy"
-    "tokenizers"
-    "sentencepiece"
-)
-
-echo "🔍 Checking wheels directory..."
-
-# wheels 폴더 생성
-mkdir -p "$WHEELS_DIR"
-
-# 필수 패키지 체크
-MISSING_PACKAGES=()
-for pkg in "${REQUIRED_PACKAGES[@]}"; do
-    if ! ls "$WHEELS_DIR"/${pkg}*.whl 1>/dev/null 2>&1; then
-        echo "  ❌ $pkg not found in wheels"
-        MISSING_PACKAGES+=("$pkg")
-    else
-        echo "  ✅ $pkg found"
-    fi
-done
-
-# 없는 패키지가 있으면 빌드
-if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-    echo ""
-    echo "📦 Building missing packages: ${MISSING_PACKAGES[*]}"
-    echo "⏳ This may take a while..."
-    echo ""
-
-    pip3 wheel ${MISSING_PACKAGES[*]} \
-        --wheel-dir "$WHEELS_DIR" \
-        --find-links "$WHEELS_DIR" \
-        --no-cache-dir
-
-    echo ""
-    echo "✅ Wheel build complete!"
-else
-    echo ""
-    echo "✅ All required packages found in wheels"
-fi
-
-echo ""
-echo "🐳 Building Docker image..."
+echo "🐳 Building Docker image (BuildKit cache enabled)..."
 docker compose build
 
 echo ""
