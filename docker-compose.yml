@@ -14,7 +14,7 @@ services:
       # ✅ 소스코드 마운트
       - ./route:/app/route
       - ./service:/app/service
-      - ./brick-engine:/app/brick-engine
+      - ./brick_engine:/app/brick_engine
       - ./chat:/app/chat
       - ./app.py:/app/app.py
       - ./config.py:/app/config.py
