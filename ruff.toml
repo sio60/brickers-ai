@@ -1,0 +1,47 @@
+# Ruff configuration for brickers-ai
+# https://docs.astral.sh/ruff/configuration/
+
+[lint]
+# Enable rules
+select = ["E", "F", "W"]
+
+# Ignore specific rules that are too noisy for this project
+ignore = [
+    # Unused imports - many are for type hints or lazy imports
+    "F401",
+    # f-string without placeholders - used for consistency
+    "F541",
+    # Unused variables - some are intentional (logging, future use)
+    "F841",
+    # Module level import not at top - intentional lazy imports
+    "E402",
+    # Multiple statements on one line - compact code style
+    "E701",
+    "E702",
+    # Ambiguous variable name (l, I, O) - acceptable in math/graphics context
+    "E741",
+    # Bare except - will fix gradually
+    "E722",
+    # Redefinition of unused variable
+    "F811",
+    # Dictionary key repeated
+    "F601",
+]
+
+# Exclude generated/vendored files
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    "*.egg-info",
+    "build",
+    "dist",
+]
+
+# Allow lines up to 120 characters
+line-length = 120
+
+# Python target version
+target-version = "py311"
