@@ -11,16 +11,16 @@ export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
 echo "🐳 Building Docker image (BuildKit cache enabled)..."
-docker compose build
+docker-compose build
 
 echo ""
 echo "🛑 Stopping existing container..."
-docker compose down
+docker-compose down
 
 echo ""
 echo "🚀 Starting container..."
-docker compose up -d
+docker-compose up -d
 
 echo ""
 echo "✅ Done! Container is running."
-echo "📋 Logs: docker compose logs -f"
+echo "📋 Logs: docker-compose logs -f"
