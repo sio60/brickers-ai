@@ -84,88 +84,8 @@ def match_ldraw_color(rgb: Tuple[float, float, float]) -> int:
 
 
 # =============================================================================
-# 대칭성 감지 및 적용
+# 부유 브릭 심지 박기 (구조 보정)
 # =============================================================================
-def detect_symmetry(indices: np.ndarray) -> Optional[Literal["x", "z"]]:
-    """복셀 인덱스에서 대칭축 자동 감지 (x축 또는 z축)"""
-    if len(indices) < 10:
-        return None
-    
-    xs = indices[:, 0]
-    zs = indices[:, 2]
-    
-    x_min, x_max = xs.min(), xs.max()
-    z_min, z_max = zs.min(), zs.max()
-    
-    x_center = (x_min + x_max) / 2
-    z_center = (z_min + z_max) / 2
-    
-    # X축 대칭 점수 계산
-    x_score = 0
-    for idx in indices:
-        mirror_x = int(round(2 * x_center - idx[0]))
-        mirror_pos = [mirror_x, idx[1], idx[2]]
-        for other in indices:
-            if np.allclose(other, mirror_pos, atol=0.5):
-                x_score += 1
-                break
-    
-    # Z축 대칭 점수 계산
-    z_score = 0
-    for idx in indices:
-        mirror_z = int(round(2 * z_center - idx[2]))
-        mirror_pos = [idx[0], idx[1], mirror_z]
-        for other in indices:
-            if np.allclose(other, mirror_pos, atol=0.5):
-                z_score += 1
-                break
-    
-    total = len(indices)
-    x_ratio = x_score / total
-    z_ratio = z_score / total
-    
-    # 70% 이상 대칭이면 대칭축으로 판단
-    if x_ratio > 0.7 and x_ratio >= z_ratio:
-        return "x"
-    elif z_ratio > 0.7:
-        return "z"
-    return None
-
-
-def enforce_symmetry(vox: List[Dict[str, Any]], axis: Literal["x", "z"]) -> List[Dict[str, Any]]:
-    """대칭축에 맞게 복셀을 대칭 복제"""
-    if not vox:
-        return vox
-    
-    # 기존 위치 집합
-    existing = {(v["x"], v["y"], v["z"]) for v in vox}
-    
-    # 중심 계산
-    xs = [v["x"] for v in vox]
-    zs = [v["z"] for v in vox]
-    x_center = (min(xs) + max(xs)) / 2
-    z_center = (min(zs) + max(zs)) / 2
-    
-    new_vox = list(vox)
-    
-    for v in vox:
-        if axis == "x":
-            mirror_x = int(round(2 * x_center - v["x"]))
-            mirror_pos = (mirror_x, v["y"], v["z"])
-        else:
-            mirror_z = int(round(2 * z_center - v["z"]))
-            mirror_pos = (v["x"], v["y"], mirror_z)
-        
-        if mirror_pos not in existing:
-            new_vox.append({
-                "x": mirror_pos[0],
-                "y": mirror_pos[1],
-                "z": mirror_pos[2],
-                "color": v["color"]
-            })
-            existing.add(mirror_pos)
-    
-    return new_vox
 
 
 # =============================================================================
@@ -298,7 +218,6 @@ def _single_conversion(
     step_order: str,
     glb_path: str,
     smart_fix: bool = True,
-    symmetry: str = "auto",
     color_smooth: int = 1,
     **kwargs: Any
 ) -> Tuple[int, List[Dict]]:
@@ -353,7 +272,7 @@ def _single_conversion(
             return _single_conversion(
                 combined, out_ldr_path, target, kind, plates_per_voxel,
                 interlock, max_area, solid_color, use_mesh_color, step_order, glb_path,
-                smart_fix=smart_fix, symmetry=symmetry, color_smooth=color_smooth,
+                smart_fix=smart_fix, color_smooth=color_smooth,
                 pitch=new_pitch, **kwargs
             )
         else:
@@ -391,16 +310,6 @@ def _single_conversion(
             "color": c_id
         })
 
-    # 대칭성 감지 및 적용
-    if symmetry == "auto":
-        axis = detect_symmetry(np.array(indices))
-        if axis:
-            print(f"      [Step] Symmetry detected: {axis}-axis, enforcing...")
-            bricks_data = enforce_symmetry(bricks_data, axis)
-    elif symmetry in ("x", "z"):
-        print(f"      [Step] Enforcing {symmetry}-axis symmetry...")
-        bricks_data = enforce_symmetry(bricks_data, symmetry)
-    
     # 색상 스무딩
     if color_smooth > 0:
         print(f"      [Step] Smoothing colors ({color_smooth} passes)...")
@@ -447,7 +356,6 @@ def convert_glb_to_ldr(
     invert_y: bool = False,
     smart_fix: bool = True,
     step_order: str = "bottomup",
-    symmetry: str = "auto",
     color_smooth: int = 1,
     **kwargs: Any
 ) -> Dict[str, Any]:
@@ -514,7 +422,6 @@ def convert_glb_to_ldr(
             step_order=step_order,
             glb_path=glb_path,
             smart_fix=smart_fix,
-            symmetry=symmetry,
             color_smooth=color_smooth,
             **kwargs
         )
@@ -578,7 +485,6 @@ if __name__ == "__main__":
     parser.add_argument("--out", default="output.ldr")
     parser.add_argument("--target", type=int, default=60)
     parser.add_argument("--budget", type=int, default=100)
-    parser.add_argument("--symmetry", choices=["off", "auto", "x", "z"], default="auto")
     parser.add_argument("--smart-fix", action="store_true", default=True)
     parser.add_argument("--color-smooth", type=int, default=1)
     args = parser.parse_args()
@@ -587,7 +493,6 @@ if __name__ == "__main__":
         args.glb, args.out, 
         target=args.target, 
         budget=args.budget,
-        symmetry=args.symmetry,
         smart_fix=args.smart_fix,
         color_smooth=args.color_smooth
     )
