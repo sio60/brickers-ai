@@ -324,7 +324,8 @@ def _single_conversion(
     mesh.vertices[:, 1] *= (20.0 / 24.0)
 
     # Voxelize
-    pitch = kwargs.get("pitch", 1.0)
+    kwargs = kwargs.copy()
+    pitch = kwargs.pop("pitch", 1.0)
     print(f"      [Step] Voxelizing (Target: {target}, Pitch: {pitch})...")
     v_start = time.time()
     vg = mesh.voxelized(pitch=pitch)
@@ -340,8 +341,8 @@ def _single_conversion(
     print(f"      [Step] Voxel count: {len(indices)}")
     
     # Voxel threshold check (메모리 보호용)
-    voxel_threshold = kwargs.get("max_new_voxels", 15000) # 100000 -> 15000
-    max_pitch = kwargs.get("max_pitch", 3.0) # 2.5 -> 3.0 (더 유연하게 해상도 낮춤)
+    voxel_threshold = kwargs.pop("max_new_voxels", 15000)
+    max_pitch = kwargs.pop("max_pitch", 3.0)
     
     if len(indices) > voxel_threshold:
         if pitch < max_pitch:
