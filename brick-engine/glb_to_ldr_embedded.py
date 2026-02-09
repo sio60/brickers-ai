@@ -284,16 +284,20 @@ def _single_conversion(
     c_start = time.time()
     centers = vg.points
     if use_mesh_color:
-        face_centers = mesh.triangles_center
-        face_tree = KDTree(face_centers)
-        _, face_indices = face_tree.query(centers)
-        
+        # Texture/Visual을 Color로 변환 (한 번만 수행)
         if hasattr(mesh.visual, 'to_color'):
-            temp_mesh = mesh.copy()
-            temp_mesh.visual = temp_mesh.visual.to_color()
-            colors_raw = temp_mesh.visual.face_colors[face_indices][:, :3]
-        else:
-            colors_raw = mesh.visual.face_colors[face_indices][:, :3]
+            mesh.visual = mesh.visual.to_color()
+        
+        # Triangle center 대신 Vertex 기반으로 샘플링 (외곽면 색상을 더 잘 잡음)
+        v_tree = KDTree(mesh.vertices)
+        _, v_indices = v_tree.query(centers)
+        colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
+        
+        # 밝기 보정 (Exposure boost) - AI 생성 모델의 어두운 텍스처 보정
+        # 흰색이 회색으로 매칭되는 것을 방지하기 위해 전체적으로 밝기를 높임
+        brightness = kwargs.get("color_brightness", 1.25)
+        if brightness != 1.0:
+            colors_raw = np.clip(colors_raw * brightness, 0, 255)
     else:
         colors_raw = np.tile([200, 200, 200], (len(centers), 1))
     c_end = time.time()
