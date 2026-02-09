@@ -1,17 +1,13 @@
 import os
 import sys
-import json
 import boto3
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, List
-import numpy as np
 
 # 프로젝트 루트 추가
 sys.path.append(str(Path(__file__).parent.parent))
 
-from agent.memory_utils import memory_manager, build_hypothesis, build_verification
-from agent.yang_db import get_vector_db
+from agent.memory_utils import memory_manager
 from physical_verification.ldr_loader import LdrLoader
 from physical_verification.pybullet_verifier import PyBulletVerifier
 
@@ -51,7 +47,7 @@ def process_s3_ldr(bucket: str, key: str, session_id: str = "batch_import"):
             metrics = analysis["phys_metrics"]
             
             # DB 저장 (RAG 사례로 등록)
-            print(f"💾 Logging to RAG DB...")
+            print("💾 Logging to RAG DB...")
             memory_manager.log_experiment(
                 session_id=session_id,
                 model_id=Path(key).name,

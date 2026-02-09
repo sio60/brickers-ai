@@ -62,7 +62,7 @@ app.include_router(instructions_pdf.router) # [NEW] PDF Generation
 app.include_router(chat_router)             # ✅ 챗봇 (/api/v1/chat)
 
 # --- [Integrate] Brick Judge (Rust Viewer) ---
-import brick_judge.server as bj_server
+import brick_judge.server as bj_server  # noqa: E402
 
 # 1. 뷰어 페이지 (HTML)
 app.add_api_route("/brick-judge/viewer", bj_server.viewer, methods=["GET"], include_in_schema=False)
