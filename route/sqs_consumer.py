@@ -12,6 +12,7 @@ from typing import Dict, Any
 
 from route.kids_render import process_kids_request_internal
 from route.sqs_producer import send_result_message
+from service.backend_client import check_job_canceled
 
 
 def log(msg: str, user_email: str = "System") -> None:
@@ -153,6 +154,12 @@ async def process_message(message: Dict[str, Any], request_num: int):
         source_image_url = body.get("sourceImageUrl")
         age = body.get("age", "6-7")
         budget = body.get("budget")
+
+        # ✅ 취소 여부 확인 (AI 처리 시작 전)
+        if await check_job_canceled(job_id):
+            log(f"🚫 [SQS Consumer] 취소된 작업 스킵 | jobId={job_id}", user_email=user_email)
+            delete_message(receipt_handle)
+            return
 
         # Kids 렌더링 실행
         result = await process_kids_request_internal(
