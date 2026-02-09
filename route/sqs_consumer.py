@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import json
 import asyncio
+import anyio
 from datetime import datetime
 from typing import Dict, Any
 
@@ -92,12 +93,17 @@ async def poll_and_process():
         if _POLL_COUNT % 10 == 1:
             log(f"🔄 [SQS Consumer] 폴링 중... (poll #{_POLL_COUNT})")
 
-        response = sqs.receive_message(
-            QueueUrl=SQS_REQUEST_QUEUE_URL,
-            MaxNumberOfMessages=SQS_MAX_MESSAGES,
-            WaitTimeSeconds=SQS_WAIT_TIME,
-            VisibilityTimeout=SQS_VISIBILITY_TIMEOUT,
-        )
+        # boto3 (sqs.receive_message)는 동기(blocking) 함수이므로 별도 스레드에서 실행
+        # 이렇게 하지 않으면 10초 동안 전체 이벤트 루프가 멈춤
+        def _receive():
+            return sqs.receive_message(
+                QueueUrl=SQS_REQUEST_QUEUE_URL,
+                MaxNumberOfMessages=SQS_MAX_MESSAGES,
+                WaitTimeSeconds=SQS_WAIT_TIME,
+                VisibilityTimeout=SQS_VISIBILITY_TIMEOUT,
+            )
+
+        response = await anyio.to_thread.run_sync(_receive)
 
         messages = response.get("Messages", [])
 

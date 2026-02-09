@@ -1,4 +1,3 @@
-import json
 from typing import Dict, Any
 from .state import HypothesisState
 

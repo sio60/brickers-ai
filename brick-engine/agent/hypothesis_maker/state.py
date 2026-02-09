@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any
 from langchain_core.messages import BaseMessage
 
 class HypothesisState(TypedDict):
