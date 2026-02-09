@@ -25,9 +25,10 @@ def _find_project_root(start: Path) -> Path:
 
 PROJECT_ROOT = _find_project_root(Path(__file__))
 
-# brick-engine 경로 추가
+# brick_engine 경로 추가
 import sys
-BRICK_ENGINE_PATH = PROJECT_ROOT / "brick-engine"
+BRICK_ENGINE_PATH = PROJECT_ROOT / "brick_engine"
+engine_loader_path = (PROJECT_ROOT / "brick_engine" / "glb_to_ldr_embedded.py").resolve()
 EXPORTER_PATH = BRICK_ENGINE_PATH / "exporter"
 
 for p in [str(BRICK_ENGINE_PATH), str(EXPORTER_PATH)]:

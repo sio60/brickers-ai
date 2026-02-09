@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 # ✅ 전역 Import 경로 등록 (memory_utils 등을 어디서든 import 가능)
-AGENT_DIR = BASE_DIR / "brick-engine" / "agent"
+AGENT_DIR = BASE_DIR / "brick_engine" / "agent"
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
