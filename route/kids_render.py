@@ -13,9 +13,6 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 from datetime import datetime
 import asyncio
-import concurrent.futures
-import multiprocessing
-import queue
 
 import anyio
 import httpx
@@ -61,21 +58,8 @@ __all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
 
 router = APIRouter(prefix="/api/v1/kids", tags=["kids"])
 
-# --- Concurrency Control ---
-# CPU-bound 작업(Brickify)을 위한 풀 (Process pool to bypass GIL)
-# Windows의 'spawn' 방식과 호환성을 위해 if __name__ == '__main__': 과 유사한 보호가 필요할 수 있으나,
-# uvicorn 실행 시점에는 이미 모듈이 로드되므로, 전역 변수로 Executor를 생성하는 것은 
-# 메인 프로세스에서만 1회 실행되도록 보장해야 안전함.
-# 다만, 여기서는 코드가 import 될 때 Executor가 생성되므로, 작업자 프로세스에서도 생성될 우려가 있음.
-# 이를 방지하기 위해 사용 시점에 생성하거나, multiprocessing.current_process().name == 'MainProcess' 체크 등을 할 수 있음.
-# 간단하게는 모듈 레벨에서 생성하되, spawn된 자식 프로세스는 이 모듈을 다시 import 할 때 
-# Executor를 다시 생성하지 않도록 주의해야 함. (보통 자식은 __main__이 아니므로 괜찮음)
-
-_process_executor = concurrent.futures.ProcessPoolExecutor(max_workers=MAX_CONCURRENT_TASKS)
-
-# Asyncio Semaphore는 여전히 전체 동시 요청 수를 제한하는 용도로 사용
-_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-_active_tasks = 0
+# --- Engine cache ---
+_CONVERT_FN = None
 
 def log(msg: str, user_email: str = "System") -> None:
     """타임스탬프 및 사용자 정보 포함 로그 출력"""
@@ -147,66 +131,7 @@ def _local_generated_path_from_url(u: str) -> Optional[Path]:
         return (GENERATED_DIR / rel).resolve()
     return None
 
-# --------------- Worker Function (Top-level for pickling) ---------------
 
-def _run_brickify_worker(
-    glb_path_str: str,
-    out_ldr_path_str: str,
-    params: Dict[str, Any],
-    log_queue: multiprocessing.Queue
-) -> Dict[str, Any]:
-    """
-    Worker process function for Brickify conversion.
-    Receives arguments and a queue for logging back to the main process.
-    """
-    pid = os.getpid()
-    start_time = time.time()
-    
-    try:
-        # Debug Log: Process Start
-        if log_queue:
-            log_queue.put(("debug", f"[Worker-{pid}] 🏁 Starting conversion process for {Path(glb_path_str).name}"))
-        
-        # 1. 로깅 콜백 설정 (Queue로 전송)
-        def worker_log_callback(step: str, message: str):
-            if log_queue:
-                log_queue.put(("log", step, message))
-
-        # params에 콜백 주입
-        params["log_callback"] = worker_log_callback
-
-        # 2. 엔진 로드 (각 프로세스에서 별도로 로드해야 안전함)
-        if log_queue:
-             log_queue.put(("debug", f"[Worker-{pid}] Loading engine..."))
-             
-        convert_fn = load_engine_convert()
-
-        # 3. 변환 실행
-        if log_queue:
-             log_queue.put(("debug", f"[Worker-{pid}] Engine loaded. Running conversion..."))
-             
-        result = convert_fn(
-            glb_path_str,
-            out_ldr_path_str,
-            **params
-        )
-        
-        elapsed = time.time() - start_time
-        brick_count = result.get('parts', 0)
-        
-        # Debug Log: Process End
-        if log_queue:
-            log_queue.put(("debug", f"[Worker-{pid}] ✅ Finished conversion in {elapsed:.2f}s. Parts: {brick_count}"))
-
-        return result
-
-    except Exception as e:
-        # 에러 발생 시 큐에 에러 정보 전송 (선택 사항) 또는 그냥 raise
-        # 큐를 통해 로그를 남길 수도 있음
-        elapsed = time.time() - start_time
-        if log_queue:
-            log_queue.put(("error", "brickify_worker", f"[Worker-{pid}] ❌ Error after {elapsed:.2f}s: {str(e)}"))
-        raise
 
 # --------------- Request / Response ---------------
 
@@ -394,103 +319,48 @@ async def process_kids_request_internal(
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
             start_target = budget_to_start_target(eff_budget)
             
-            global _active_tasks
-            async with _semaphore:
-                _active_tasks += 1
-                try:
-                    _log(f"\U0001f680 [STEP 3/4] Brickify LDR \ubcc0\ud658 \uc2dc\uc791... (Active: {_active_tasks}/{MAX_CONCURRENT_TASKS}) | budget={eff_budget} | target={start_target}")
-                    await update_job_stage(job_id, "MODEL")
+            _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
+            await update_job_stage(job_id, "MODEL")
+            await _sse("brickify", "레고 블록으로 변환하고 있어요...")
 
-                    out_ldr = out_brick_dir / "result.ldr"
+            out_ldr = out_brick_dir / "result.ldr"
 
-                    # Agent parameters
-                    agent_params = {
-                        "target": start_target,
-                        "budget": eff_budget,
-                        "min_target": 5,
-                        "shrink": 0.8,
-                        "search_iters": 6,
-                        "kind": "brick",
-                        "plates_per_voxel": 3,
-                        "interlock": True,
-                        "max_area": 20,
-                        "solid_color": 4,
-                        "use_mesh_color": True,
-                        "invert_y": False,
-                        "smart_fix": True,
-                        "fill": False,
-                        "step_order": "bottomup",
-                        "span": 4,
-                        "max_new_voxels": 100000,
-                        "refine_iters": 4,
-                        "ensure_connected": True,
-                        "mode": "kids",
-                        "small_side_contact": False,
-                        "min_embed": 2,
-                        "erosion_iters": 0,
-                        "fast_search": True,
-                        "extend_catalog": True,
-                        "max_len": 8,
-                        # "log_callback": will be injected in worker
-                    }
+            # Engine 로드 (캐시됨)
+            global _CONVERT_FN
+            if _CONVERT_FN is None:
+                _CONVERT_FN = load_engine_convert()
 
-                    # --- Multiprocessing with Logging Bridge ---
-                    # Manager.Queue를 사용하여 프로세스 간 로그 전달
-                    with multiprocessing.Manager() as manager:
-                        log_queue = manager.Queue()
-                        
-                        # ProcessPool에 작업 제출
-                        # future 생성 (executor.submit은 blocking 하지 않음)
-                        future = _process_executor.submit(
-                            _run_brickify_worker,
-                            str(glb_path),
-                            str(out_ldr),
-                            agent_params,
-                            log_queue
-                        )
+            # Brickify 실행 (CPU-heavy -> thread로 실행)
+            def run_brickify():
+                return _CONVERT_FN(
+                    str(glb_path),
+                    str(out_ldr),
+                    target=start_target,
+                    budget=eff_budget,
+                    min_target=5,
+                    shrink=0.85,
+                    search_iters=6,
+                    kind="brick",
+                    plates_per_voxel=3,
+                    interlock=True,
+                    max_area=20,
+                    solid_color=4,
+                    use_mesh_color=True,
+                    invert_y=False,
+                    smart_fix=True,
+                    span=4,
+                    max_new_voxels=12000,
+                    refine_iters=8,
+                    ensure_connected=True,
+                    min_embed=2,
+                    erosion_iters=1,
+                    fast_search=True,
+                    step_order="bottomup",
+                    extend_catalog=True,
+                    max_len=8,
+                )
 
-                        _log(f"   \u2935\ufe0f Sent task to ProcessPoolExecutor...")
-
-                        # 작업이 완료될 때까지 Queue 모니터링
-                        # (asyncio.sleep으로 양보하며 주기적으로 확인)
-                        while not future.done():
-                            try:
-                                while not log_queue.empty():
-                                    try:
-                                        msg = log_queue.get_nowait()
-                                        if msg[0] == "log":
-                                            _, step, text = msg
-                                            await _sse(step, text)
-                                        elif msg[0] == "debug":
-                                            _, text = msg
-                                            _log(f"🐛 {text}")
-                                        elif msg[0] == "error":
-                                            pass 
-                                    except queue.Empty:
-                                        break
-                            except Exception:
-                                pass
-                            
-                            await asyncio.sleep(0.5)
-
-                        # 남은 로그 처리
-                        try:
-                            while not log_queue.empty():
-                                msg = log_queue.get_nowait()
-                                if msg[0] == "log":
-                                    _, step, text = msg
-                                    await _sse(step, text)
-                                elif msg[0] == "debug":
-                                    _, text = msg
-                                    _log(f"🐛 {text}")
-                        except Exception:
-                            pass
-
-                        # 결과 가져오기 (예외 발생 시 여기서 raise됨)
-                        result = future.result()
-
-                finally:
-                    _active_tasks -= 1
+            result = await anyio.to_thread.run_sync(run_brickify)
 
             brickify_elapsed = time.time() - step_start
             _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
