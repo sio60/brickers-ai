@@ -317,6 +317,8 @@ async def process_kids_request_internal(
             # 4) Brickify (CPU Intensive - Process Pool for True Parallelism)
             step_start = time.time()
             eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
+            # PRO 모드(5000개 수준) 시 복셀 제한 상향 (해상도 유지)
+            v_limit = 50000 if eff_budget >= 4000 else (20000 if eff_budget >= 1000 else 6000)
             start_target = budget_to_start_target(eff_budget)
             
             _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
@@ -332,8 +334,6 @@ async def process_kids_request_internal(
 
             # Brickify 실행 (CPU-heavy -> thread로 실행)
             def run_brickify():
-                # PRO 모드(1000개 이상) 등 대규모 작업 시 복셀 제한 상향 (해상도 유지)
-                v_limit = 20000 if eff_budget >= 1000 else 6000
                 return _CONVERT_FN(
                     str(glb_path),
                     str(out_ldr),
