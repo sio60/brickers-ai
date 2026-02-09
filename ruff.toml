@@ -25,14 +25,23 @@ select = ["E", "F", "W"]
 
 # Ignore specific rules that are too noisy for this project
 ignore = [
+    # === F: Pyflakes ===
     "F401",  # Unused imports
     "F541",  # f-string without placeholders
     "F841",  # Unused variables
-    "E402",  # Module import not at top
-    "E701",  # Multiple statements on one line (colon)
-    "E702",  # Multiple statements on one line (semicolon)
-    "E741",  # Ambiguous variable name
-    "E722",  # Bare except
     "F811",  # Redefinition of unused variable
     "F601",  # Dictionary key repeated
+    
+    # === E: pycodestyle errors ===
+    "E402",  # Module import not at top
+    "E501",  # Line too long (handled by formatter)
+    "E701",  # Multiple statements on one line (colon)
+    "E702",  # Multiple statements on one line (semicolon)
+    "E722",  # Bare except
+    "E741",  # Ambiguous variable name
+    
+    # === W: pycodestyle warnings ===
+    "W291",  # Trailing whitespace
+    "W292",  # No newline at end of file
+    "W293",  # Blank line contains whitespace
 ]
