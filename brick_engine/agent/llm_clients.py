@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # .env 로드 (프로젝트 최상위)
-# 현재 파일: .../brick-engine/agent/llm_clients.py
+# 현재 파일: .../brick_engine/agent/llm_clients.py
 # .env 위치: .../.env
 _ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 if _ENV_PATH.exists():
@@ -53,7 +53,7 @@ try:
     
     # 프로젝트 루트의 .env 파일 찾기
     _THIS_DIR = Path(__file__).resolve().parent
-    _PROJECT_ROOT = _THIS_DIR.parent.parent  # brick-engine/agent -> brick-engine -> brickers-ai
+    _PROJECT_ROOT = _THIS_DIR.parent.parent  # brick_engine/agent -> brick_engine -> brickers-ai
     _ENV_PATH = _PROJECT_ROOT / ".env"
     
     if _ENV_PATH.exists():
