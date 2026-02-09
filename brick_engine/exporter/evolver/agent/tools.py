@@ -22,7 +22,7 @@ from .config import get_config, init_config, AgentConfig
 # ============================================================================
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]  # brickers-ai
 _PHYS_PATH = _PROJECT_ROOT / "physical_verification"
-_AGENT_PATH = _PROJECT_ROOT / "brick-engine" / "agent"
+_AGENT_PATH = _PROJECT_ROOT / "brick_engine" / "agent"
 _EXPORTER_PATH = Path(__file__).resolve().parents[1]  # evolver/../exporter
 
 for _p in [_PROJECT_ROOT, _PHYS_PATH, _AGENT_PATH, _EXPORTER_PATH]:

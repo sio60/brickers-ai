@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 # Load .env from current directory
 load_dotenv()
 
-# Add brick-engine to path
+# Add brick_engine to path
 current_dir = Path(__file__).resolve().parent
-brick_engine_dir = current_dir / "brick-engine"
+brick_engine_dir = current_dir / "brick_engine"
 sys.path.append(str(brick_engine_dir))
 sys.path.append(str(brick_engine_dir / "agent"))
 

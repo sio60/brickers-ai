@@ -12,7 +12,7 @@ from db import get_db                        # ✅ 이제 잡힘
 
 INSTR_CANDIDATES = [
     ROOT / "brick_engine" / "exporter" / "instructions_pdf.py",   # ✅ 현재 네 구조 가능성 1
-    ROOT / "brick-engine" / "exporter" / "instructions_pdf.py",   # 가능성 2 (하이픈)
+    ROOT / "brick_engine" / "exporter" / "instructions_pdf.py",   # 가능성 2 (하이픈)
 ]
 
 def find_instructions_path() -> Path:

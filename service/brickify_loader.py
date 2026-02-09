@@ -1,5 +1,5 @@
 # service/brickify_loader.py
-"""brick-engine 동적 로드 (하이픈 폴더명 대응)"""
+"""brick_engine 동적 로드"""
 from __future__ import annotations
 
 import sys
@@ -21,7 +21,7 @@ def load_engine_convert():
 
     import importlib.util
 
-    engine_path = (PROJECT_ROOT / "brick-engine" / "glb_to_ldr_embedded.py").resolve()
+    engine_path = (PROJECT_ROOT / "brick_engine" / "glb_to_ldr_embedded.py").resolve()
     if not engine_path.exists():
         raise RuntimeError(f"engine file missing: {engine_path}")
 
@@ -40,12 +40,12 @@ def load_engine_convert():
 
 
 def load_agent_modules():
-    """brick-engine/agent 에서 regeneration_loop, GeminiClient 동적 로드 (lazy singleton)"""
+    """brick_engine/agent 에서 regeneration_loop, GeminiClient 동적 로드 (lazy singleton)"""
     global _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
     if _REGEN_LOOP_FN is not None:
         return _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
 
-    agent_dir = str((PROJECT_ROOT / "brick-engine").resolve())
+    agent_dir = str((PROJECT_ROOT / "brick_engine").resolve())
     if agent_dir not in sys.path:
         sys.path.insert(0, agent_dir)
 

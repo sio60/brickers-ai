@@ -4,9 +4,9 @@ from pathlib import Path
 import json
 import logging
 
-# Add 'brick-engine' to path so we can import 'agent'
+# Add 'brick_engine' to path so we can import 'agent'
 project_root = Path(__file__).resolve().parent.parent
-brick_engine_path = project_root / "brick-engine"
+brick_engine_path = (project_root / "brick_engine").resolve()
 sys.path.append(str(brick_engine_path))
 
 try:
