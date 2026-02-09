@@ -71,7 +71,7 @@ def _single_conversion(
         
     print(f"      [Step] Voxel count: {len(indices)}")
     # Kids 모드에서는 3만 개 이상의 보셀은 연산이 너무 느리므로 조기에 해상도를 낮추거나 타겟을 줄임
-    voxel_threshold = kwargs.get("voxel_threshold", 30000)
+    voxel_threshold = kwargs.get("voxel_threshold", 100000)
     max_pitch = kwargs.get("max_pitch", 2.5)
     
     if len(indices) > voxel_threshold:
