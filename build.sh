@@ -41,7 +41,7 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     echo "⏳ This may take a while..."
     echo ""
 
-    pip wheel ${MISSING_PACKAGES[*]} \
+    pip3 wheel ${MISSING_PACKAGES[*]} \
         --wheel-dir "$WHEELS_DIR" \
         --find-links "$WHEELS_DIR" \
         --no-cache-dir
