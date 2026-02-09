@@ -2,6 +2,7 @@
 
 use crate::types::{Brick, Issue, IssueType, Severity};
 use std::collections::{HashMap, HashSet, VecDeque};
+use glam::DVec3;
 
 /// 높이 허용 오차 (LDU)
 const HEIGHT_TOL: f64 = 5.0;
@@ -79,28 +80,33 @@ pub fn full_judge(bricks: &[Brick]) -> Vec<Issue> {
                 continue;
             }
 
-            if !has_stud_connection(brick, other) {
-                continue;
-            }
+            let is_stud_connected = has_stud_connection(brick, other);
+            let mut is_connected = false;
 
             let other_h = other.height_ldu();
-
-            // other가 brick 아래에서 지지 (other 윗면 = brick 바닥)
-            let other_top = other.y - other_h;
-            if (other_top - brick.y).abs() < HEIGHT_TOL {
-                // other가 brick을 지지함
-                supports_me.get_mut(&brick.id).unwrap().insert(other.id);
-                i_support.get_mut(&other.id).unwrap().insert(brick.id);
-                all_connections.get_mut(&brick.id).unwrap().insert(other.id);
-                all_connections.get_mut(&other.id).unwrap().insert(brick.id);
+            
+            // 1. 스터드 기반 수직 연결 확인
+            if is_stud_connected {
+                let other_top = other.y - other_h;
+                if (other_top - brick.y).abs() < HEIGHT_TOL {
+                    // other가 brick을 지지
+                    supports_me.get_mut(&brick.id).unwrap().insert(other.id);
+                    i_support.get_mut(&other.id).unwrap().insert(brick.id);
+                    is_connected = true;
+                }
+                
+                let brick_top = brick.y - brick_h;
+                if (brick_top - other.y).abs() < HEIGHT_TOL {
+                    // brick이 other를 지지
+                    i_support.get_mut(&brick.id).unwrap().insert(other.id);
+                    supports_me.get_mut(&other.id).unwrap().insert(brick.id);
+                    is_connected = true;
+                }
             }
 
-            // brick이 other 아래에서 지지 (brick 윗면 = other 바닥)
-            let brick_top = brick.y - brick_h;
-            if (brick_top - other.y).abs() < HEIGHT_TOL {
-                // brick이 other를 지지함
-                i_support.get_mut(&brick.id).unwrap().insert(other.id);
-                supports_me.get_mut(&other.id).unwrap().insert(brick.id);
+
+
+            if is_connected {
                 all_connections.get_mut(&brick.id).unwrap().insert(other.id);
                 all_connections.get_mut(&other.id).unwrap().insert(brick.id);
             }
@@ -202,6 +208,13 @@ pub fn full_judge(bricks: &[Brick]) -> Vec<Issue> {
             ));
         }
     }
+
+    // 4. stability: 무게중심 검사 (연결 여부 무관하게 전체 브릭 대상)
+    let all_brick_ids: HashSet<i32> = bricks.iter().map(|b| b.id).collect();
+    if let Some(issue) = crate::stability::check_stability(bricks, &all_brick_ids, &ground_bricks) {
+        issues.push(issue);
+    }
+
 
     issues
 }

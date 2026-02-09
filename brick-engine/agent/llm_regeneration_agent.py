@@ -41,13 +41,15 @@ for p in (_THIS_DIR, _BRICK_ENGINE_DIR, _PROJECT_ROOT, _PHYSICAL_VERIFICATION_DI
 # LLM 클라이언트 & 도구 임포트
 try:
     from .llm_clients import BaseLLMClient, GroqClient, GeminiClient
-    from .agent_tools import TuneParameters
+    from .agent_tools import TuneParameters, RemoveBricks
     from .memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
     from .hypothesis_maker.core import HypothesisMaker
+    from . import ldr_modifier  # LDR 수정 모듈 (Remove, Merge)
 except ImportError:
     from llm_clients import BaseLLMClient, GroqClient, GeminiClient
-    from agent_tools import TuneParameters
+    from agent_tools import TuneParameters, RemoveBricks
     from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+    import ldr_modifier  # LDR 수정 모듈 (Remove, Merge)
 
 # DB 연결
 try:
@@ -83,9 +85,9 @@ def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활�
 # ============================================================================
 
 DEFAULT_PARAMS = {
-    "target": 60,              # 목표 스터드 크기 (400 브릭 기준 60 정도가 적절)
-    "min_target": 5,           # 최소 스터드 크기
-    "budget": 400,             # 최대 브릭 수 (Kids L1 기준)
+    "target": 25,              # 목표 스터드 크기 (25로 고정)
+    "min_target": 25,          # 최소 스터드 크기 (이 값 이하로 줄어들지 않음 - 고정 효과)
+    "budget": 800,             # 최대 브릭 수 (Kids L1 기준)
     "shrink": 0.8,             # 축소 비율 (0.8로 강화)
     "search_iters": 12,        # 이진 탐색 반복 횟수 (12회로 증가)
     "flipx180": False,         # X축 180도 회전
@@ -285,8 +287,13 @@ class RegenerationGraph:
 - 당신은 LDR 파일을 직접 수정하지 않습니다.
 - 당신은 검증 결과를 분석하고, 파라미터 조정을 통해 알고리즘이 더 나은 결과를 만들도록 유도합니다.
 
-당신에게는 하나의 도구가 있습니다:
+당신에게는 두 개의 도구가 있습니다:
 - `TuneParameters`: 변환 파라미터를 조정하여 알고리즘이 처음부터 다시 생성합니다.
+- `RemoveBricks`: 공중부양 브릭을 삭제합니다.
+
+**도구 사용 기준 (Tool Usage Rules):**
+1. **점수 >= 90점**: `RemoveBricks` 사용 (공중부양 브릭 삭제)
+2. **점수 < 90점**: `TuneParameters` 사용 (구조 개선)
 
 **안정성 등급 (Stability Grade):**
 - 🟢 STABLE (안정, 90~100점): 냅뒀을 때 잘 서있음 - 파라미터 그대로 유지
@@ -298,8 +305,12 @@ class RegenerationGraph:
 2. **MEDIUM (중간)**: 소폭 조정으로 개선 가능. interlock, fill, support_ratio 등을 미세 조정하세요.
 3. **UNSTABLE (불안정)**: target, budget 등 핵심 파라미터를 변경하여 재생성하세요.
 
+**파라미터 튜닝 팁 (Tuning Tips):**
+- **공중부양(Floating)** 발생 시: `support_ratio` 증가, `min_target` 확인.
+- **구조 불안정(Unstable)** 시: `interlock=True`, `fill=True` 설정.
+
 목표: 물리적으로 안정적(STABLE)인 레고 구조물을 만드는 것.
-이전 시도의 검증 결과(안정성 등급, 점수, 실패율)를 분석하고 파라미터를 조정하세요.
+이전 시도의 검증 결과(안정성 등급, 점수, 실패율)를 분석하고 적절한 도구를 선택하세요.
 """
 
     def __init__(self, llm_client: Optional[BaseLLMClient] = None, log_callback=None):
@@ -391,8 +402,50 @@ class RegenerationGraph:
         print("\n[Hypothesize] 가설 수립 및 RAG 검색 중 (Dual-Model)...")
         self._log("HYPOTHESIZE", "비슷한 브릭 모델을 참고하고 전문가(Gemini+GPT)와 상의하고 있어요...")
         
-        # Dual-Model RAG 실행 (HypothesisMaker에게 위임)
-        # state에는 'observation', 'verification_result' 등이 포함되어 있어야 함
+        # 1. RAG 검색
+        current_observation = ""
+        last_msg = state['messages'][-1]
+        if isinstance(last_msg, HumanMessage):
+            current_observation = str(last_msg.content)[:500]
+            
+        similar_cases = []
+        if memory_manager:
+            # 1. 넓은 범위 검색 (Top 10) - 메트릭 정보 포함하여 검색 정확도 향상
+            verification_metrics = state.get("verification_result")
+            raw_cases = memory_manager.search_similar_cases(
+                current_observation, 
+                limit=10, 
+                min_score=0.5,
+                verification_metrics=verification_metrics
+            )
+            # 2. LLM Re-ranking (Top 3 선별)
+            similar_cases = self._rerank_and_filter_cases(current_observation, raw_cases)
+            print(f"  📚 유사 실패 사례 {len(similar_cases)}건 선정 (Re-ranked)")
+            
+        # 2. 가설 생성 (Gemini Fast 사용)
+        rag_context = ""
+        for case in similar_cases:
+            rag_context += f"- {case.get('model_id')}: {case['experiment'].get('tool')} 사용 -> {case['verification'].get('numerical_analysis')}\n"
+            
+        prompt = f"""
+현재 상황:
+{current_observation}
+
+유사 과거 사례:
+{rag_context}
+
+**도구 사용 기준 (Tool Usage Rules):**
+1. **점수 >= 90점**: `RemoveBricks` 사용 (공중부양 브릭 삭제)
+2. **점수 < 90점**: `TuneParameters` 사용 (구조 개선)
+
+위 상황을 분석하여 다음 JSON 형식으로 가설을 수립하세요:
+{{
+    "observation": "현재 문제 상황 요약 (1문장)",
+    "hypothesis": "구체적인 해결 가설 (어떤 도구가 왜 효과적일지)",
+    "reasoning": "가설의 근거 (과거 사례 또는 논리적 추론)",
+    "difficulty": "Easy|Medium|Hard" (문제 난이도 평가)
+}}
+"""
         try:
             hypothesis_result = await self.hypothesis_maker.make_hypothesis(state)
             
@@ -472,100 +525,109 @@ class RegenerationGraph:
             }
 
     def node_verifier(self, state: AgentState) -> Dict[str, Any]:
-        """물리 검증 노드"""
-        from physical_verification.ldr_loader import LdrLoader
-        from physical_verification.verifier import PhysicalVerifier
+        """물리 검증 노드 (brick_judge 기반 - Rust 네이티브)"""
+        # brick_judge 임포트 (PyBullet 대체)
+        from brick_judge import full_judge, calc_score_from_issues, parse_ldr_string
+        from brick_judge.physics import IssueType
 
-        print("\n[Verifier] 물리 검증 수행 중...")
+        print("\n[Verifier] 물리 검증 수행 중 (brick_judge)...")
         self._log("VERIFY", "튼튼하게 만들어졌는지 확인 중이에요...")
 
         if not os.path.exists(state['ldr_path']):
             return {"messages": [HumanMessage(content="LDR 파일이 생성되지 않았습니다.")], "next_action": "model"}
 
         try:
-            loader = LdrLoader()
-            plan = loader.load_from_file(state['ldr_path'])
-            total_bricks = len(plan.bricks)
+            # LDR 파일 읽기 및 파싱
+            with open(state['ldr_path'], 'r', encoding='utf-8') as f:
+                ldr_content = f.read()
+            
+            model = parse_ldr_string(ldr_content)
+            total_bricks = len(model.bricks)
 
             # 1x1 브릭 비율 계산
             small_brick_parts = {"3005.dat", "3024.dat"}  # 1x1 브릭, 1x1 플레이트
-            small_brick_count = 0
-            for b in plan.bricks:
-                # 브릭 객체의 part_id 속성 안전하게 접근
-                part_id = getattr(b, 'part_id', None) or (b.get('part') if isinstance(b, dict) else None)
-                if part_id in small_brick_parts:
-                    small_brick_count += 1
+            small_brick_count = sum(1 for b in model.bricks if b.name in small_brick_parts)
             small_brick_ratio = small_brick_count / total_bricks if total_bricks > 0 else 0.0
 
-            # PhysicalVerifier로 물리 검증 수행
-            verifier = PhysicalVerifier(plan)
-            self.verifier = verifier
-
-            stab_result = verifier.run_stability_check()
+            # brick_judge로 물리 검증 수행
+            issues = full_judge(model)
+            score = calc_score_from_issues(issues, total_bricks)
             
-            feedback = extract_verification_feedback(stab_result, total_bricks)
-            # 1x1 브릭 비율 정보 추가
-            feedback.small_brick_count = small_brick_count
-            feedback.small_brick_ratio = small_brick_ratio
+            # 이슈 분석
+            floating_count = sum(1 for i in issues if i.issue_type.value == 'floating')
+            isolated_count = sum(1 for i in issues if i.issue_type.value == 'isolated')
+            top_only_count = sum(1 for i in issues if i.issue_type.value == 'top_only')
+            has_unstable_base = any(i.issue_type.value == 'unstable_base' for i in issues)
+            
+            # 안정성 판단 (새 기준: floating/isolated 1개라도 있으면 불안정)
+            stable = not has_unstable_base and floating_count == 0 and isolated_count == 0
+            
+            # 피드백 생성
+            floating_ids = [str(i.brick_id) for i in issues if i.issue_type.value == 'floating' and i.brick_id is not None]
+            isolated_ids = [str(i.brick_id) for i in issues if i.issue_type.value == 'isolated' and i.brick_id is not None]
+            
+            feedback = VerificationFeedback(
+                stable=stable,
+                total_bricks=total_bricks,
+                fallen_bricks=0,  # brick_judge는 낙하 시뮬레이션 없음
+                floating_bricks=floating_count,
+                floating_brick_ids=floating_ids,
+                fallen_brick_ids=[],
+                failure_ratio=(floating_count + isolated_count) / total_bricks if total_bricks > 0 else 0.0,
+                stability_score=score,
+                stability_grade="STABLE" if stable else ("MEDIUM" if score >= 50 else "UNSTABLE"),
+                small_brick_count=small_brick_count,
+                small_brick_ratio=small_brick_ratio
+            )
             
             feedback_text = _format_feedback(feedback)
             
             # 상태 메시지 결정
-            if feedback.stable and feedback.floating_bricks == 0:
+            if stable:
                 short_status = "✅ 안정"
-            elif feedback.stable and feedback.floating_bricks > 0:
-                short_status = "⚠️ 부분 안정 (공중부양 존재)"
+            elif floating_count > 0:
+                short_status = f"❌ 불안정 (floating {floating_count}개)"
+            elif has_unstable_base:
+                short_status = "❌ 무게중심 불안정"
             else:
                 short_status = "❌ 불안정"
             
-            print(f"  결과: {short_status}")
+            print(f"  결과: {short_status} (점수: {score}점)")
             
-            # 불안정하거나 부분 안정이면 상세 내용 출력 (디버깅용)
-            if not feedback.stable or feedback.floating_bricks > 0:
-                 summary_text = feedback_text.replace('\n', ', ').replace('\r', '')
-                 if len(summary_text) > 200:
-                     summary_text = summary_text[:200] + "..."
-                 print(f"  요약: {summary_text}")
+            # 불안정하면 상세 내용 출력
+            if not stable:
+                summary_text = feedback_text.replace('\n', ', ').replace('\r', '')
+                if len(summary_text) > 200:
+                    summary_text = summary_text[:200] + "..."
+                print(f"  요약: {summary_text}")
             
-            # 공중부양 브릭 ID 캐싱 (Tool에서 사용)
-            floating_ids = []
-            for ev in stab_result.evidence:
-                if ev.type in ("FLOATING_BRICK", "FLOATING") and ev.brick_ids:
-                    floating_ids.extend(ev.brick_ids)
-            
-            # 현재 메트릭 저장 (도구 효과 측정용 및 RAG용)
+            # 현재 메트릭 저장
             budget = state['params'].get('budget', 500)
             current_metrics = {
                 "failure_ratio": feedback.failure_ratio,
                 "small_brick_ratio": small_brick_ratio,
                 "small_brick_count": small_brick_count,
                 "total_bricks": total_bricks,
-                "floating_count": feedback.floating_bricks,
-                "fallen_count": feedback.fallen_bricks,
+                "floating_count": floating_count,
+                "fallen_count": 0,
                 "floating_ids": floating_ids,
-                "fallen_ids": [ev.brick_ids for ev in stab_result.evidence if ev.type == "FALLEN_PART"],
+                "fallen_ids": [],
+                "isolated_count": isolated_count,
+                "top_only_count": top_only_count,
+                "has_unstable_base": has_unstable_base,
+                "stability_score": score,
                 "budget_exceeded": total_bricks > budget,
                 "target_budget": budget,
-                "subject_name": state.get("subject_name", "Unknown Object")  # [추가] 사물 이름 주입
+                "subject_name": state.get("subject_name", "Unknown Object"),
+                "backend": "brick_judge_rs"
             }
             
-            # [추가] 상세 물리 메트릭 (부피, 형태 등)
-            if memory_manager:
-                try:
-                    phys_metrics = memory_manager.calculate_model_metrics(plan, stab_result)
-                    current_metrics.update(phys_metrics)
-                except Exception as e:
-                    print(f"  ⚠️ 물리 메트릭 추출 실패: {e}")
-            
-            # [User Request] AI 검증 결과를 무시하고 알고리즘 결과를 100% 신뢰하여 무조건 통과 (Always Pass)
-            is_success = True 
-            
-            if is_success and not feedback.stable:
-                 print(f"  (참고: 불안정 판정이나 실패율 {feedback.failure_ratio*100:.1f}%가 허용치 이내이며 공중부양 없음 -> 성공 간주)")
+            # 성공 여부 판단
+            is_success = stable
+            is_over_budget = total_bricks > budget
             
             if is_success:
                 print("🎉 목표 달성! 프로세스를 종료합니다.")
-                # 최종 리포트 생성
                 final_report = {
                     "success": True,
                     "total_attempts": state['attempts'],
@@ -577,7 +639,6 @@ class RegenerationGraph:
             
             if state['attempts'] >= state['max_retries']:
                 print("💥 최대 시도 횟수 초과.")
-                # 최종 리포트 생성 (실패)
                 final_report = {
                     "success": False,
                     "total_attempts": state['attempts'],
@@ -587,32 +648,36 @@ class RegenerationGraph:
                 }
                 return {"next_action": "end", "final_report": final_report}
 
-            # 결과를 Reflect 노드로 전달 (실제 결과 분석용)
-            # 주의: previous_metrics는 Reflect에서 비교 후 업데이트해야 하므로 여기선 건드리지 않음
-            
             # LLM에게 전달할 메시지 보강
             custom_feedback = feedback_text
             
             if is_over_budget:
                 custom_feedback += f"\n\n🚨 **중요: 예산 초과! 현재 {total_bricks}개 브릭입니다. 목표 예산은 {budget}개입니다. `TuneParameters` 도구를 사용하여 `target` 값을 줄여야 합니다.**"
 
-            elif feedback.floating_bricks > 0:
-                custom_feedback += "\n\n⚠️ **중요: 아직 공중부양(Floating) 브릭이 남아있습니다. TuneParameters로 파라미터를 조정하여 알고리즘이 더 안정적인 구조를 생성하도록 해야 합니다.**"
+            elif floating_count > 0:
+                if score >= 90:
+                    custom_feedback += f"\n\n✅ **점수 {score}점으로 높음! 공중부양 브릭 {floating_count}개만 `RemoveBricks`로 삭제하면 성공입니다.**"
+                else:
+                    custom_feedback += "\n\n⚠️ **점수 {score}점으로 낮음. `TuneParameters`로 파라미터를 조정하여 구조를 개선하세요.**"
+            
+            elif has_unstable_base:
+                custom_feedback += "\n\n⚠️ **중요: 무게중심이 지지면을 벗어났습니다. 구조를 더 안정적으로 만드세요.**"
             
             return {
-                "verification_raw_result": stab_result,
+                "verification_raw_result": {"issues": [{"type": i.issue_type.value, "brick_id": i.brick_id} for i in issues]},
                 "floating_bricks_ids": floating_ids,
                 "messages": [HumanMessage(content=custom_feedback)],
-                "current_metrics": current_metrics,   # Reflect에서 실제 결과 분석용
-                "next_action": "reflect"  # Verify 후 Reflect로 이동
+                "current_metrics": current_metrics,
+                "next_action": "reflect"
             }
             
         except Exception as e:
             print(f"  ❌ 검증 중 에러: {e}")
-            # 검증 에러 시 재시도
+            import traceback
+            traceback.print_exc()
+            
             verification_errors = state.get('verification_errors', 0) + 1
             if verification_errors >= 3:
-                # 3회 이상 실패 시 재생성으로 전환
                 print(f"  ⚠️ 검증 에러 {verification_errors}회 - 재생성으로 전환합니다.")
                 return {
                     "messages": [HumanMessage(content=f"검증 시스템 에러가 반복됨: {e}")],
@@ -620,11 +685,11 @@ class RegenerationGraph:
                     "next_action": "model"
                 }
             else:
-                # 재시도
                 print(f"  🔄 검증 재시도 ({verification_errors}/3)...")
                 import time
-                time.sleep(1)  # 검증 안정화 대기
-                return {"verification_errors": verification_errors, "next_action": "verifier"}
+                time.sleep(1)
+                return {"verification_errors": verification_errors, "next_action": "verify"}
+
 
     def node_model(self, state: AgentState) -> Dict[str, Any]:
         """LLM이 상황을 분석하고 도구를 선택하는 노드"""
@@ -636,11 +701,22 @@ class RegenerationGraph:
         self._log("ANALYZE", "더 멋지게 만들 수 있는지 살펴보고 있어요...")
         
         # 사용 가능한 도구 정의
-        tools = [TuneParameters]
+        tools = [TuneParameters, RemoveBricks]
     
         # --- [전략 가이드 주입] ---
         # 안정성 등급에 따른 전략 힌트 추가
         messages_to_send = state['messages'][:]
+
+        # 도구 선택 가이드 (User Rule 반영 - Strict)
+        strategy_guide = """
+**도구 선택 절대 규칙 (Score Rule):**
+1. **점수 >= 90점 (STABLE-High)**:
+   👉 **무조건 `RemoveBricks` 사용.** (공중부양 브릭이 몇 개든 상관없이 삭제하고 검증받으세요.)
+   
+2. **점수 < 90점 (UNSTABLE / LOW SCORE)**:
+   👉 **무조건 `TuneParameters` 사용.** (파라미터를 변경하여 다시 생성하세요.)
+"""
+        messages_to_send.append(SystemMessage(content=strategy_guide))
         
         # --- [Memory 정보 주입 (RAG)] ---
         # Vector Search를 통해 현재 상황과 가장 유사한 과거 사례를 검색
@@ -709,25 +785,38 @@ class RegenerationGraph:
             print(f"  📚 Memory 정보 {len(lessons)}개 교훈 전달됨")
         
         # 직전 검증 결과 확인 - 안정성 등급 기반 전략 힌트
-        last_msg = messages_to_send[-1]
-
-        if isinstance(last_msg, HumanMessage) and "검증 결과" in str(last_msg.content):
-            content = str(last_msg.content)
+        target_msg = None
+        for msg in reversed(messages_to_send):
+            if isinstance(msg, HumanMessage) and "검증 결과" in str(msg.content):
+                target_msg = msg
+                break
+                
+        if target_msg:
+            content = str(target_msg.content)
 
             # 안정성 등급 파싱
             import re
             grade_match = re.search(r"안정성 등급: \S+ \((\w+)\)", content)
-            score_match = re.search(r"점수: (\d+)/100", content)
+            score_match = re.search(r"점수:\s*(\d+)", content)
 
             grade = grade_match.group(1) if grade_match else "UNKNOWN"
             score = int(score_match.group(1)) if score_match else 0
-
+            
             hint = ""
-            if grade == "UNSTABLE":
+            # 1. 점수 90점 이상 (최우선) - 등급 라벨 무시
+            if score >= 90:
+                print(f"  💡 [Strategy Hint] 🌟 안정 (점수: {score}) -> 잔존물 삭제 모드")
+                hint = f"""**🟢 안정 (STABLE, {score}점)**
+🎉 축하합니다! 구조가 매우 안정적입니다.
+지금 `TuneParameters`를 쓰면 구조가 바뀌어 더 나빠질 수 있습니다.
+👉 **오직 `RemoveBricks`만 사용하여** 공중부양 브릭을 핀셋처럼 제거하세요."""
+
+            elif grade == "UNSTABLE":
                 print(f"  💡 [Strategy Hint] 불안정 (점수: {score}) -> 파라미터 대폭 변경 필요")
                 hint = f"""**🔴 불안정 (UNSTABLE, {score}점)**
 구조가 무너졌습니다. target, budget, interlock, fill 등 핵심 파라미터를 대폭 변경하여 재생성하세요.
 특히 interlock=True, fill=True, support_ratio를 높이는 것을 고려하세요."""
+
             elif grade == "MEDIUM":
                 print(f"  💡 [Strategy Hint] 중간 (점수: {score}) -> 파라미터 소폭 조정 필요")
                 hint = f"""**🟡 중간 (MEDIUM, {score}점)**
@@ -842,6 +931,23 @@ class RegenerationGraph:
                 # 업데이트된 파라미터 반환
                 state['params'] = new_params
                 
+            elif tool_name == "RemoveBricks":
+                # 브릭 삭제 실행
+                brick_ids = args.get('brick_ids', [])
+                if not brick_ids:
+                    result_content = "삭제할 브릭 ID가 제공되지 않았습니다."
+                else:
+                    # 일괄 삭제 요청 생성
+                    decisions = [{"brick_id": bid, "action": "delete"} for bid in brick_ids]
+                    stats = ldr_modifier.apply_llm_decisions(state['ldr_path'], decisions)
+                    
+                    if stats['deleted'] > 0:
+                        result_content = f"브릭 {stats['deleted']}개를 성공적으로 삭제했습니다."
+                        # LDR 파일이 수정되었으므로 바로 검증(Verifier)으로 이동
+                        next_step = "verifier"
+                    else:
+                        result_content = "브릭 삭제에 실패했습니다. (ID를 찾을 수 없거나 이미 삭제됨)"
+            
             else:
                 result_content = f"알 수 없는 도구: {tool_name}"
             

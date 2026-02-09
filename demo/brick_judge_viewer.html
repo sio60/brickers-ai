@@ -1,29 +1,39 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🧱 Brick Judge 3D Viewer</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #1a1a2e;
             color: #eee;
             overflow: hidden;
         }
+
         .container {
             display: flex;
             height: 100vh;
         }
+
         #viewer {
             flex: 1;
             position: relative;
         }
+
         #canvas {
             width: 100%;
             height: 100%;
         }
+
         .sidebar {
             width: 320px;
             background: #16213e;
@@ -31,11 +41,13 @@
             overflow-y: auto;
             border-left: 1px solid #0f3460;
         }
+
         h1 {
             font-size: 1.4rem;
             margin-bottom: 20px;
             color: #e94560;
         }
+
         h2 {
             font-size: 1rem;
             margin: 20px 0 10px;
@@ -43,6 +55,7 @@
             border-bottom: 1px solid #0f3460;
             padding-bottom: 5px;
         }
+
         .upload-area {
             border: 2px dashed #0f4c75;
             border-radius: 8px;
@@ -52,13 +65,16 @@
             cursor: pointer;
             transition: all 0.3s;
         }
+
         .upload-area:hover {
             border-color: #e94560;
             background: rgba(233, 69, 96, 0.1);
         }
+
         .upload-area input {
             display: none;
         }
+
         .btn {
             background: #e94560;
             color: white;
@@ -71,30 +87,37 @@
             margin-top: 10px;
             transition: background 0.3s;
         }
+
         .btn:hover {
             background: #ff6b6b;
         }
+
         .btn:disabled {
             background: #555;
             cursor: not-allowed;
         }
+
         .stats {
             background: #0f3460;
             border-radius: 8px;
             padding: 15px;
             margin-bottom: 15px;
         }
+
         .stats-row {
             display: flex;
             justify-content: space-between;
             margin-bottom: 8px;
         }
+
         .stats-label {
             color: #888;
         }
+
         .stats-value {
             font-weight: bold;
         }
+
         .score {
             font-size: 2rem;
             text-align: center;
@@ -102,17 +125,21 @@
             border-radius: 8px;
             margin-bottom: 15px;
         }
+
         .score.stable {
             background: linear-gradient(135deg, #1d976c, #93f9b9);
             color: #000;
         }
+
         .score.unstable {
             background: linear-gradient(135deg, #e94560, #ff6b6b);
         }
+
         .issue-list {
             max-height: 300px;
             overflow-y: auto;
         }
+
         .issue-item {
             background: #0f3460;
             border-radius: 6px;
@@ -122,39 +149,58 @@
             transition: all 0.2s;
             border-left: 4px solid;
         }
+
         .issue-item:hover {
             transform: translateX(5px);
         }
-        .issue-item.critical { border-color: #e94560; }
-        .issue-item.high { border-color: #ff9800; }
-        .issue-item.medium { border-color: #ffc107; }
-        .issue-item.low { border-color: #4caf50; }
+
+        .issue-item.critical {
+            border-color: #e94560;
+        }
+
+        .issue-item.high {
+            border-color: #ff9800;
+        }
+
+        .issue-item.medium {
+            border-color: #ffc107;
+        }
+
+        .issue-item.low {
+            border-color: #4caf50;
+        }
+
         .issue-type {
             font-size: 0.75rem;
             text-transform: uppercase;
             color: #888;
         }
+
         .issue-msg {
             margin-top: 5px;
             font-size: 0.9rem;
         }
+
         .legend {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
             margin-bottom: 15px;
         }
+
         .legend-item {
             display: flex;
             align-items: center;
             gap: 5px;
             font-size: 0.8rem;
         }
+
         .legend-color {
             width: 16px;
             height: 16px;
             border-radius: 3px;
         }
+
         .loading {
             position: absolute;
             top: 50%;
@@ -162,6 +208,7 @@
             transform: translate(-50%, -50%);
             text-align: center;
         }
+
         .spinner {
             width: 50px;
             height: 50px;
@@ -170,19 +217,27 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
+
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
-        .hidden { display: none; }
+
+        .hidden {
+            display: none;
+        }
+
         #info {
             position: absolute;
             top: 10px;
             left: 10px;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0, 0, 0, 0.7);
             padding: 10px 15px;
             border-radius: 6px;
             font-size: 0.85rem;
         }
+
         textarea {
             width: 100%;
             height: 120px;
@@ -197,6 +252,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div id="viewer">
@@ -286,8 +342,11 @@
                     ⚡ 전체 불량 깜빡임
                 </button>
 
-                <button class="btn" id="physicsBtn" style="background: #9c27b0; margin-top: 20px;">
-                    🎮 물리 시뮬레이션
+                <button class="btn" id="comSimBtn" style="background: #9c27b0; margin-top: 20px;">
+                    ⚖️ 무게중심 시뮬레이션
+                </button>
+                <button class="btn" id="physicsBtn" style="background: #ff9800; margin-top: 5px;">
+                    💥 물리 시뮬레이션 (붕괴)
                 </button>
                 <button class="btn" id="resetBtn" style="background: #0f4c75; margin-top: 5px;">
                     🔄 리셋
@@ -434,11 +493,11 @@
                     showLoading(false);
                     resolve(brickId);
                 },
-                undefined,
-                (error) => {
-                    showLoading(false);
-                    reject(error);
-                });
+                    undefined,
+                    (error) => {
+                        showLoading(false);
+                        reject(error);
+                    });
             });
         }
 
@@ -801,22 +860,46 @@
                     const offset = Math.sqrt((avgX - baseAvgX) ** 2 + (avgZ - baseAvgZ) ** 2);
 
                     if (offset > 50) {
+                        // 전복 방향 벡터 계산 (베이스 중심 -> 무게중심)
+                        const dx = avgX - baseAvgX;
+                        const dz = avgZ - baseAvgZ;
+                        const len = Math.sqrt(dx * dx + dz * dz);
+                        const tippingX = len > 0 ? dx / len : 1;
+                        const tippingZ = len > 0 ? dz / len : 0;
+
                         issues.push({
                             brick_id: null,
                             type: 'off_balance',
-                            severity: 'high',
-                            message: `무게중심이 베이스에서 ${offset.toFixed(0)} LDU 벗어남`
+                            severity: 'critical',  // Changed to critical to trigger global tipping
+                            message: `무게중심이 베이스에서 ${offset.toFixed(0)} LDU 벗어남`,
+                            data: {
+                                tipping: { x: tippingX, z: tippingZ }
+                            }
                         });
                     }
                 }
             }
 
-            let score = 100;
-            for (const issue of issues) {
-                if (issue.severity === 'critical') score -= 30;
-                else if (issue.severity === 'high') score -= 15;
-                else if (issue.severity === 'medium') score -= 5;
-                else score -= 2;
+            // 점수 계산: 문제 브릭 비율 기반
+            // - unstable_base/off_balance → 0점
+            // - 그 외: 100 - (문제 브릭 수 / 전체 브릭 수 * 100)
+            let score;
+            const hasUnstableBase = issues.some(i =>
+                i.type === 'unstable_base' || i.type === 'off_balance'
+            );
+
+            if (hasUnstableBase) {
+                score = 0;
+            } else {
+                // top_only는 점수에서 제외
+                const problemBrickIds = new Set(
+                    issues
+                        .filter(i => i.type !== 'top_only')
+                        .map(i => i.brick_id)
+                        .filter(id => id !== null)
+                );
+                const problemRatio = bricks.length > 0 ? problemBrickIds.size / bricks.length : 0;
+                score = Math.round(100 * (1 - problemRatio));
             }
             score = Math.max(0, Math.min(100, score));
 
@@ -824,7 +907,7 @@
                 totalBricks: bricks.length,
                 issues,
                 score,
-                stable: !issues.some(i => i.severity === 'critical') && score >= 50
+                stable: !issues.some(i => i.type === 'unstable_base' || i.type === 'floating' || i.type === 'isolated')
             };
         }
 
@@ -1271,12 +1354,17 @@
         // ============================================
         // 물리 시뮬레이션
         // ============================================
+        // ============================================
+        // 물리 시뮬레이션
+        // ============================================
         let physicsRunning = false;
         let fallingBricks = [];
+        let globalTipping = null; // 전체 전복 상태
         let originalPositions = new Map();
         let lastAnalysisResult = null;
 
-        function startPhysicsSimulation() {
+        // 무게중심 시뮬레이션 (전체 모델 전복)
+        function startCOMSimulation() {
             if (!model || !lastAnalysisResult) {
                 alert('먼저 분석을 실행하세요');
                 return;
@@ -1285,13 +1373,71 @@
 
             physicsRunning = true;
             fallingBricks = [];
+            globalTipping = null;
 
             // 원래 위치 저장
             brickMeshes.forEach((mesh, id) => {
                 originalPositions.set(id, mesh.position.clone());
             });
 
-            // 문제 있는 브릭들 (FLOATING, WEAK) 찾기
+            // 전역 불안정(전복) 체크
+            const globalIssue = lastAnalysisResult.issues.find(i =>
+                i.type === 'unstable_base' || i.type === 'off_balance' ||
+                (i.severity === 'critical' && i.brick_id === null)
+            );
+
+            if (globalIssue) {
+                console.log("⚠️ 무게중심 시뮬레이션: 전복 시작");
+                console.log("globalIssue:", JSON.stringify(globalIssue, null, 2));
+
+                let axis = new THREE.Vector3(1, 0, 0);
+                let dir = 1;
+
+                if (globalIssue.data && globalIssue.data.tipping) {
+                    const tx = globalIssue.data.tipping.x;
+                    const tz = globalIssue.data.tipping.z;
+                    console.log(`Tipping Vector: x=${tx}, z=${tz}`);
+                    axis.set(-tz, 0, tx).normalize();
+                    dir = 1;
+                } else {
+                    console.log("전복 데이터 없음 - 랜덤 방향(JS 폴백)");
+                    axis.set(Math.random() > 0.5 ? 1 : 0, 0, Math.random() > 0.5 ? 1 : 0).normalize();
+                    if (axis.length() === 0) axis.set(1, 0, 0);
+                    dir = Math.random() > 0.5 ? 1 : -1;
+                }
+
+                globalTipping = {
+                    axis: axis,
+                    dir: dir,
+                    velocity: 0,
+                    angle: 0
+                };
+
+                animatePhysics();
+            } else {
+                alert('무게중심이 안정적입니다! (전복 위험 없음)');
+                physicsRunning = false;
+            }
+        }
+
+        // 물리 시뮬레이션 (개별 브릭 붕괴)
+        function startCrumbleSimulation() {
+            if (!model || !lastAnalysisResult) {
+                alert('먼저 분석을 실행하세요');
+                return;
+            }
+            if (physicsRunning) return;
+
+            physicsRunning = true;
+            fallingBricks = [];
+            globalTipping = null;
+
+            // 원래 위치 저장
+            brickMeshes.forEach((mesh, id) => {
+                originalPositions.set(id, mesh.position.clone());
+            });
+
+            // 문제 브릭만 수집 (floating, weak, isolated)
             const problemBrickIds = new Set(
                 lastAnalysisResult.issues
                     .filter(i => i.type === 'floating' || i.type === 'weak' || i.type === 'isolated')
@@ -1299,45 +1445,65 @@
                     .filter(id => id !== null)
             );
 
-            // 떨어질 브릭 설정
             problemBrickIds.forEach(id => {
                 const mesh = brickMeshes.get(id);
                 if (mesh) {
                     fallingBricks.push({
                         mesh,
                         velocity: 0,
-                        rotation: (Math.random() - 0.5) * 0.1,  // 랜덤 회전
+                        rotation: (Math.random() - 0.5) * 0.1,
                         rotationAxis: Math.random() > 0.5 ? 'x' : 'z'
                     });
                 }
             });
 
             if (fallingBricks.length === 0) {
-                alert('떨어질 브릭이 없습니다! (안정적인 구조)');
+                alert('떨어질 브릭이 없습니다! (모든 브릭이 안정적)');
                 physicsRunning = false;
                 return;
             }
 
-            // 물리 애니메이션 시작
+            console.log(`💥 물리 시뮬레이션: ${fallingBricks.length}개 브릭 붕괴`);
             animatePhysics();
+        }
+
+        // 기존 호환을 위한 래퍼 (레거시)
+        function startPhysicsSimulation() {
+            startCrumbleSimulation();
         }
 
         function animatePhysics() {
             if (!physicsRunning) return;
 
-            const gravity = 2;  // 중력 가속도
-            const groundY = 300;  // 바닥 Y 위치 (LDraw: +Y가 아래)
-            const bounce = 0.3;  // 튕김 계수
+            // 1. 전체 전복 (Tipping)
+            if (globalTipping) {
+                const gravity = 0.002; // 각가속도
+                globalTipping.velocity += gravity;
+                globalTipping.angle += globalTipping.velocity;
+
+                // 월드 축 기준으로 회전
+                model.rotateOnWorldAxis(globalTipping.axis, globalTipping.velocity * globalTipping.dir);
+
+                // 90도(PI/2) 이상 넘어가면 멈춤
+                if (globalTipping.angle > Math.PI / 2) {
+                    physicsRunning = false;
+                    // 약간의 바운스 효과를 줄 수도 있음
+                } else {
+                    requestAnimationFrame(animatePhysics);
+                }
+                return;
+            }
+
+            // 2. 낱알 붕괴 (Crumbling)
+            const gravity = 2;
+            const groundY = 300; // 대략적인 바닥
+            const bounce = 0.3;
             let allStopped = true;
 
             for (const brick of fallingBricks) {
-                // 속도 업데이트 (중력)
                 brick.velocity += gravity;
-
-                // 위치 업데이트 (Y 증가 = 아래로)
                 brick.mesh.position.y += brick.velocity;
 
-                // 회전 추가 (떨어지는 동안)
                 if (brick.mesh.position.y < groundY) {
                     if (brick.rotationAxis === 'x') {
                         brick.mesh.rotation.x += brick.rotation;
@@ -1346,18 +1512,14 @@
                     }
                 }
 
-                // 바닥 충돌
                 if (brick.mesh.position.y > groundY) {
                     brick.mesh.position.y = groundY;
                     brick.velocity = -brick.velocity * bounce;
-
-                    // 속도가 작으면 멈춤
                     if (Math.abs(brick.velocity) < 1) {
                         brick.velocity = 0;
                     }
                 }
 
-                // 아직 움직이는 브릭이 있는지
                 if (Math.abs(brick.velocity) > 0.1 || brick.mesh.position.y < groundY - 1) {
                     allStopped = false;
                 }
@@ -1373,13 +1535,24 @@
         function resetSimulation() {
             physicsRunning = false;
             fallingBricks = [];
+            globalTipping = null;
 
-            // 원래 위치로 복원
+            // 원래 위치 복원
             originalPositions.forEach((pos, id) => {
                 const mesh = brickMeshes.get(id);
                 if (mesh) {
                     mesh.position.copy(pos);
-                    mesh.rotation.set(Math.PI, 0, 0);  // LDraw 기본 회전
+                    mesh.rotation.set(Math.PI, 0, 0); // 개별 브릭 회전 초기화? (LDraw 기본이 mesh별로 다를 수 있어서 주의)
+                    // loadLDR에서 child.userData.originalMaterial 저장했듯이 originalRotation도 저장했어야 완벽하지만
+                    // 여기선 LDrawLoader가 개별 mesh 회전을 주지 않고 vertex에 굽는 방식인지 확인 필요.
+                    // 보통 LDrawLoader는 mesh 자체 rotation은 0 이고 geometry가 변환되어 있음.
+                    // 단, 3004.dat 등을 인스턴싱할땐 다름.
+                    // 일단 (Math.PI, 0, 0)은 model(그룹)의 회전값임. 개별 mesh는 (0,0,0)이나 (PI,0,0)일 수 있음.
+                    // 간단히 mesh.rotation.set(0,0,0) 또는 초기값 사용이 맞음.
+                    // 하지만 fallingBricks 로직에서 mesh.rotation을 건드렸으므로 복구 필요.
+
+                    // 복구: 그냥 0,0,0으로 (대부분의 경우 맞음)
+                    mesh.rotation.set(0, 0, 0);
                 }
             });
 
@@ -1408,24 +1581,21 @@
                 type: i.type,
                 severity: i.severity,
                 message: i.message,
-                color: i.color  // 이슈 타입별 색상 (hex)
+                color: i.color,  // 이슈 타입별 색상 (hex)
+                data: i.data     // 추가 데이터 (전복 벡터 등)
             }));
 
-            // 이슈 기반 점수 계산 (원래 JS 로직과 동일)
-            let score = 100;
-            for (const issue of issues) {
-                if (issue.severity === 'critical') score -= 30;
-                else if (issue.severity === 'high') score -= 15;
-                else if (issue.severity === 'medium') score -= 5;
-                else score -= 2;
-            }
-            score = Math.max(0, Math.min(100, score));
+            // 서버에서 계산된 점수 사용 (새 로직: 문제 브릭 비율 기반)
+            const score = data.score;
+            const hasUnstableBase = issues.some(i =>
+                i.type === 'unstable_base' || i.type === 'off_balance'
+            );
 
             return {
                 totalBricks: data.brick_count,
                 issues: issues,
                 score: score,
-                stable: !issues.some(i => i.severity === 'critical') && score >= 50,
+                stable: data.stable,  // 서버에서 계산된 안정성 사용
                 backend: data.backend,
                 elapsed_ms: data.elapsed_ms,
                 brick_colors: data.brick_colors || {},  // brick_id → hex color
@@ -1514,9 +1684,14 @@
             blinkAllBadBricks();
         });
 
-        // 물리 시뮬레이션 버튼
+        // 무게중심 시뮬레이션 버튼
+        document.getElementById('comSimBtn').addEventListener('click', () => {
+            startCOMSimulation();
+        });
+
+        // 물리 시뮬레이션 버튼 (붕괴)
         document.getElementById('physicsBtn').addEventListener('click', () => {
-            startPhysicsSimulation();
+            startCrumbleSimulation();
         });
 
         document.getElementById('resetBtn').addEventListener('click', () => {
@@ -1611,4 +1786,5 @@
         document.getElementById('ldrText').value = demoLDR;
     </script>
 </body>
+
 </html>

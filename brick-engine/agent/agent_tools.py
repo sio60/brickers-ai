@@ -1,4 +1,4 @@
-from typing import List, Optional, Literal
+from typing import List
 from pydantic import BaseModel, Field
 
 
@@ -25,3 +25,12 @@ class TuneParameters(BaseModel):
     support_ratio: float = Field(..., description="지지 비율(0~1). 높을수록 안정적이지만 브릭 수가 증가합니다.")
     small_side_contact: bool = Field(..., description="작은 브릭의 사이드 접촉 허용 여부.")
     reasoning: str = Field(..., description="이 파라미터를 선택한 이유에 대한 간략한 설명.")
+
+
+class RemoveBricks(BaseModel):
+    """
+    특정 브릭들을 삭제하여 안정성을 확보합니다.
+    주의: 점수가 90점 이상이고, 소수의 공중부양(Floating) 브릭만 문제일 때 사용하세요.
+    """
+    brick_ids: List[str] = Field(..., description="삭제할 브릭 ID 목록 (예: ['3005.dat_0', '3024.dat_5'])")
+    reasoning: str = Field(..., description="삭제 이유 (예: '점수 92점이나 공중부양 브릭 2개 발생하여 제거')")

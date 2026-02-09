@@ -4,10 +4,8 @@
 # 인덱스 밀림 및 ID 불일치 문제를 해결함 (LdrLoader의 글로벌 인덱스 방식 채택)
 # ============================================================================
 
-import re
-import os
 import logging
-from typing import Tuple, Optional, List, Dict, Any
+from typing import Tuple, Optional, List
 from pathlib import Path
 from collections import defaultdict
 
@@ -164,7 +162,7 @@ def apply_llm_decisions(
             stats["kept"] += 1
     
     # 4. 결과 저장 (None이 아닌 라인만 쓰기)
-    new_lines = [l for l in lines if l is not None]
+    new_lines = [line for line in lines if line is not None]
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
         
@@ -345,7 +343,6 @@ def merge_small_bricks(
             f.writelines(new_lines)
         
         # 최종 브릭 수 계산
-        final_brick_count = sum(1 for l in new_lines if l.strip().startswith("1 "))
         stats["new_count"] = stats["original_count"] - len(merged_line_indices) + len(new_bricks)
         
         logger.info(f"브릭 병합 완료: {stats['merged']}개 그룹 병합됨")
