@@ -30,10 +30,10 @@ AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-2").strip()
 SQS_REQUEST_QUEUE_URL = os.environ.get("AWS_SQS_REQUEST_QUEUE_URL", "").strip()  # Backend → AI (REQUEST 수신)
 SQS_ENABLED = _is_truthy(os.environ.get("AWS_SQS_ENABLED", "false"))
 SQS_POLL_INTERVAL = int(os.environ.get("SQS_POLL_INTERVAL", "5"))  # 초
-SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "5"))  # [수정] 한 번에 여러 개 가져옴
+SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "10"))  # [상향] 한 번에 최대 10개까지 가져옴
 SQS_WAIT_TIME = int(os.environ.get("SQS_WAIT_TIME", "10"))  # Long polling
 SQS_VISIBILITY_TIMEOUT = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "1800"))  # 30분
-MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "3")) # [추가] 병렬 처리 제한 (CPU/RAM 고려)
+MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "5")) # [상향] 병렬 처리 제한 (CPU/RAM 고려)
 
 # 병렬 처리 제어용 세마포어
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
@@ -113,9 +113,14 @@ async def poll_and_process():
             # 메시지 비동기 처리 시작 (디커플링: 폴링 루프를 블로킹하지 않음)
             for m in messages:
                 asyncio.create_task(process_message(m))
+            
+            return len(messages)
+        
+        return 0
 
     except Exception as e:
         log(f"❌ [SQS Consumer] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")
+        return 0
 
 
 async def process_message(message: Dict[str, Any]):
@@ -245,8 +250,13 @@ async def start_consumer():
 
     while True:
         try:
-            await poll_and_process()
-            await asyncio.sleep(SQS_POLL_INTERVAL)
+            msg_count = await poll_and_process()
+            
+            # 메시지를 가져왔다면 쉬지 않고 즉시 다음 폴링 시도
+            if msg_count > 0:
+                await asyncio.sleep(0.1) # 짧은 yield
+            else:
+                await asyncio.sleep(SQS_POLL_INTERVAL)
 
         except Exception as e:
             log(f"❌ [SQS Consumer] 예외 발생 | error={str(e)}")
