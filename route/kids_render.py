@@ -349,7 +349,7 @@ async def process_kids_request_internal(
                     invert_y=False,
                     smart_fix=True,
                     span=4,
-                    max_new_voxels=12000,
+                    max_new_voxels=6000, # 12000 -> 6000 (속도 최적화)
                     refine_iters=4,        # 8→4 (속도 개선)
                     ensure_connected=True,
                     min_embed=2,
