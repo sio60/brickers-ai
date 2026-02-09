@@ -1,0 +1,199 @@
+# service/render_client.py
+"""LDView를 로컬에서 직접 실행하여 LDR 스텝별 렌더링"""
+from __future__ import annotations
+
+import os
+import re
+import math
+import base64
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+import anyio
+
+LDVIEW_BIN = os.environ.get("LDVIEW_BIN", "LDView")
+LDRAWDIR = os.environ.get("LDRAWDIR", "/usr/share/ldraw")
+
+# LDView 사용 가능 여부 (컨테이너 빌드 시 설치됨)
+RENDER_ENABLED = shutil.which(LDVIEW_BIN) is not None
+
+
+def _split_ldr_steps(ldr_text: str) -> List[str]:
+    """
+    LDR 텍스트를 0 STEP 기준으로 분할하여 누적(cumulative) LDR 리스트 반환.
+    step_ldrs[i] = 1번째 ~ (i+1)번째 스텝까지 누적된 LDR 내용
+    """
+    lines = ldr_text.replace("\r\n", "\n").split("\n")
+
+    header_lines: list[str] = []
+    body_lines: list[str] = []
+    in_body = False
+    for raw in lines:
+        line = raw.strip()
+        if not in_body:
+            if re.match(r"^0\s+(STEP|ROTSTEP)\b", line, re.IGNORECASE):
+                in_body = True
+                body_lines.append(raw)
+            elif line.startswith("1 "):
+                in_body = True
+                body_lines.append(raw)
+            else:
+                header_lines.append(raw)
+        else:
+            body_lines.append(raw)
+
+    steps_parts: list[list[str]] = []
+    current: list[str] = []
+    for raw in body_lines:
+        line = raw.strip()
+        if re.match(r"^0\s+(STEP|ROTSTEP)\b", line, re.IGNORECASE):
+            if current:
+                steps_parts.append(current)
+                current = []
+        else:
+            if line:
+                current.append(raw)
+    if current:
+        steps_parts.append(current)
+
+    if not steps_parts:
+        return [ldr_text]
+
+    header_block = "\n".join(header_lines)
+    cumulative: list[str] = []
+    accumulated: list[str] = []
+    for part in steps_parts:
+        accumulated.extend(part)
+        full = header_block + "\n" + "\n".join(accumulated) + "\n"
+        cumulative.append(full)
+
+    return cumulative
+
+
+def _render_snapshot(
+    ldr_path: str,
+    output_path: str,
+    width: int,
+    height: int,
+    camera: Tuple[float, float, float],
+) -> bool:
+    """LDView CLI를 xvfb-run으로 실행하여 스냅샷 캡처."""
+    x, y, z = camera
+    r = math.sqrt(x * x + y * y + z * z) or 1.0
+    lat = math.degrees(math.asin(-y / r))
+    lon = math.degrees(math.atan2(x, z))
+
+    cmd = [
+        "xvfb-run", "-a",
+        LDVIEW_BIN,
+        ldr_path,
+        f"-SaveSnapshot={output_path}",
+        f"-SaveWidth={width}",
+        f"-SaveHeight={height}",
+        "-SaveZoomToFit=1",
+        "-SaveAlpha=0",
+        "-EdgeLines=1",
+        "-LineSmoothing=1",
+        "-ShowHighlightLines=1",
+        "-ConditionalHighlights=1",
+        f"-DefaultLatitude={lat:.1f}",
+        f"-DefaultLongitude={lon:.1f}",
+        f"-LDrawDir={LDRAWDIR}",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            print(f"[LDView] stderr: {result.stderr[:500]}")
+        return Path(output_path).exists() and Path(output_path).stat().st_size > 0
+    except subprocess.TimeoutExpired:
+        print(f"[LDView] Timeout rendering {ldr_path}")
+        return False
+    except FileNotFoundError:
+        print(f"[LDView] Binary not found: {LDVIEW_BIN}")
+        return False
+
+
+def _render_all_steps_sync(
+    ldr_content: str,
+    width: int = 1024,
+    height: int = 768,
+    views: List[List[float]] | None = None,
+) -> List[List[bytes]]:
+    """
+    (sync) LDR → 스텝 분할 → 각 스텝 × 뷰 렌더링 → PNG bytes 리스트 반환.
+    """
+    if views is None:
+        views = [
+            [200, -200, 200],
+            [-200, -200, 200],
+            [0, -300, -200],
+        ]
+
+    step_ldrs = _split_ldr_steps(ldr_content)
+    total = len(step_ldrs)
+    print(f"[Renderer] {total} steps, {len(views)} views each")
+
+    tmpdir = tempfile.mkdtemp(prefix="brickers_render_")
+    step_images: List[List[bytes]] = []
+
+    try:
+        for step_idx, ldr_text in enumerate(step_ldrs):
+            ldr_file = os.path.join(tmpdir, f"step_{step_idx}.ldr")
+            with open(ldr_file, "w", encoding="utf-8") as f:
+                f.write(ldr_text)
+
+            view_bytes: List[bytes] = []
+            for view_idx, cam in enumerate(views):
+                png_file = os.path.join(tmpdir, f"step_{step_idx}_view_{view_idx}.png")
+                camera = (float(cam[0]), float(cam[1]), float(cam[2]))
+
+                ok = _render_snapshot(
+                    ldr_path=ldr_file,
+                    output_path=png_file,
+                    width=width,
+                    height=height,
+                    camera=camera,
+                )
+
+                if ok:
+                    with open(png_file, "rb") as pf:
+                        view_bytes.append(pf.read())
+                    print(f"  [Step {step_idx+1}/{total}] View {view_idx+1}: OK")
+                else:
+                    view_bytes.append(b"")
+                    print(f"  [Step {step_idx+1}/{total}] View {view_idx+1}: FAILED")
+
+            step_images.append(view_bytes)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return step_images
+
+
+async def render_ldr_steps(
+    ldr_content: str,
+    width: int = 1024,
+    height: int = 768,
+    views: Optional[List[List[float]]] = None,
+) -> List[List[bytes]]:
+    """
+    LDR 텍스트를 스텝별로 렌더링하여 이미지 bytes 리스트 반환. (async wrapper)
+
+    Returns:
+        step_images[step_idx][view_idx] = PNG bytes
+    Raises:
+        RuntimeError: LDView 미설치 또는 렌더링 실패
+    """
+    if not RENDER_ENABLED:
+        raise RuntimeError(
+            f"LDView binary not found ({LDVIEW_BIN}). "
+            "PDF generation requires LDView installed in the container."
+        )
+
+    return await anyio.to_thread.run_sync(
+        lambda: _render_all_steps_sync(ldr_content, width, height, views)
+    )
