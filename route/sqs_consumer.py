@@ -33,10 +33,8 @@ SQS_POLL_INTERVAL = int(os.environ.get("SQS_POLL_INTERVAL", "5"))  # 초
 SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "10"))  # [상향] 한 번에 최대 10개까지 가져옴
 SQS_WAIT_TIME = int(os.environ.get("SQS_WAIT_TIME", "10"))  # Long polling
 SQS_VISIBILITY_TIMEOUT = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "1800"))  # 30분
-MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "5")) # [상향] 병렬 처리 제한 (CPU/RAM 고려)
-
-# 병렬 처리 제어용 세마포어
-_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+# 전역 상태 (모니터링용)
+_TOTAL_REQUESTS_RECEIVED = 0
 
 # boto3 lazy import
 try:
@@ -112,7 +110,9 @@ async def poll_and_process():
             
             # 메시지 비동기 처리 시작 (디커플링: 폴링 루프를 블로킹하지 않음)
             for m in messages:
-                asyncio.create_task(process_message(m))
+                global _TOTAL_REQUESTS_RECEIVED
+                _TOTAL_REQUESTS_RECEIVED += 1
+                asyncio.create_task(process_message(m, _TOTAL_REQUESTS_RECEIVED))
             
             return len(messages)
         
@@ -123,7 +123,7 @@ async def poll_and_process():
         return 0
 
 
-async def process_message(message: Dict[str, Any]):
+async def process_message(message: Dict[str, Any], request_num: int):
     """
     메시지 처리
     - REQUEST 타입 메시지만 처리
@@ -154,18 +154,14 @@ async def process_message(message: Dict[str, Any]):
         age = body.get("age", "6-7")
         budget = body.get("budget")
 
-        # ✅ 세마포어를 통한 병렬 실행 제한
-        async with _semaphore:
-            log(f"🚀 AI 렌더링 시작...", user_email=user_email)
-            
-            # Kids 렌더링 실행
-            result = await process_kids_request_internal(
-                job_id=job_id,
-                source_image_url=source_image_url,
-                age=age,
-                budget=budget,
-                user_email=user_email, # [추가]
-            )
+        # Kids 렌더링 실행
+        result = await process_kids_request_internal(
+            job_id=job_id,
+            source_image_url=source_image_url,
+            age=age,
+            budget=budget,
+            user_email=user_email,
+        )
 
         log(f"✅ AI 렌더링 완료!", user_email=user_email)
         log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
