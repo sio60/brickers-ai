@@ -17,6 +17,7 @@ from route import kids_render
 from route.sqs_consumer import start_consumer
 from route import color_variant
 from route import instructions_pdf  # [NEW] PDF Generation
+from route import admin             # ✅ [NEW] Admin/Logs
 
 from chat.router import router as chat_router
 from chat.memory import InMemoryConversationStore
@@ -59,6 +60,7 @@ app.mount(
 app.include_router(kids_render.router)      # Kids Mode
 app.include_router(color_variant.router)    # Color Variant
 app.include_router(instructions_pdf.router) # [NEW] PDF Generation
+app.include_router(admin.router)            # ✅ [NEW] Admin/Logs
 app.include_router(chat_router)             # ✅ 챗봇 (/api/v1/chat)
 
 # --- [Integrate] Brick Judge (Rust Viewer) ---
