@@ -1,16 +1,12 @@
 #!/bin/bash
 # ============================================
 # AI Server 빌드 스크립트
-# Docker 멀티스테이지 빌드 + BuildKit 캐시
+# Docker 멀티스테이지 빌드
 # ============================================
 
 set -e
 
-# BuildKit 활성화 (캐시 마운트 사용)
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
-
-echo "🐳 Building Docker image (BuildKit cache enabled)..."
+echo "🐳 Building Docker image..."
 docker-compose build
 
 echo ""

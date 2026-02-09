@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # ============================================
 # Stage 1: Rust Builder
 # ============================================
@@ -11,11 +10,9 @@ RUN apt-get update && apt-get install -y python3 python3-pip python3-venv
 # 소스 복사 (Cargo.toml, pyproject.toml 포함)
 COPY brick_judge/rust /build/rust
 
-# Maturin 설치 및 빌드 (cargo 캐시 활용)
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/build/rust/target \
-    pip3 install --break-system-packages maturin \
-    && maturin build --release --out /build/wheels
+# Maturin 설치 및 빌드
+RUN pip3 install --break-system-packages maturin
+RUN maturin build --release --out /build/wheels
 
 # ============================================
 # Stage 2: Python Builder
@@ -31,10 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# requirements 복사 및 wheel 빌드 (pip 캐시로 재빌드 속도 향상)
+# requirements 복사 및 wheel 빌드 (Docker 레이어 캐시로 재빌드 스킵)
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip wheel --wheel-dir /build/wheels -r requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /build/wheels -r requirements.txt
 
 # ============================================
 # Stage 3: Runtime
