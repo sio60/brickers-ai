@@ -52,10 +52,13 @@ COPY --from=rust-builder /build/wheels /tmp/wheels
 
 COPY requirements.txt .
 
-# 모든 wheel 설치 (brick_judge_rs 포함)
+# 모든 wheel 설치 (pip가 종속성 해결을 위해 /tmp/wheels를 먼저 보게 함)
 RUN pip install --no-cache-dir \
     --find-links=/tmp/wheels \
-    -r requirements.txt \
+    -r requirements.txt
+
+# brick_judge_rs 별도 설치 (requirements.txt에 없으므로)
+RUN pip install --no-cache-dir /tmp/wheels/brick_judge_rs*.whl \
     && rm -rf /tmp/wheels
 
 # 소스코드 복사
