@@ -25,6 +25,8 @@ services:
       - ./vectordb:/app/vectordb
       # ✅ HuggingFace 모델 캐시 (재시작 시 다시 다운로드 방지)
       - hf_cache:/root/.cache/huggingface
+      # ✅ Docker Socket (로그 수집용, Read-Only)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       # ✅ 시간대 설정 (한국)
       - TZ=Asia/Seoul

@@ -391,6 +391,7 @@ class RegenerationGraph:
             
             print(f"  💭 최종 가설: {hypothesis_result.get('hypothesis')}")
             print(f"  📝 근거: {hypothesis_result.get('reasoning')}")
+            print(f"  📊 난이도: {hypothesis_result.get('difficulty')}")
             
             return {
                 "current_hypothesis": hypothesis_result,
