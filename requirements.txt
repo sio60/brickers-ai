@@ -76,4 +76,3 @@ langgraph
 reportlab
 fpdf2
 maturin
-brick_judge_rs
