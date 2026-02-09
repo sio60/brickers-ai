@@ -66,6 +66,26 @@ def make_agent_log_sender(job_id: str):
     return send_log
 
 
+async def check_job_canceled(job_id: str) -> bool:
+    """Backend에서 Job 상태 확인 (취소 여부 체크)"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/kids/jobs/{job_id}",
+                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                status = data.get("status", "")
+                if status == "CANCELED":
+                    print(f"   🚫 [Job Status] Job is CANCELED | jobId={job_id}")
+                    return True
+            return False
+    except Exception as e:
+        print(f"   ⚠️ [Job Status] 상태 확인 실패 (진행) | jobId={job_id} | error={str(e)}")
+        return False  # 확인 실패 시 계속 진행
+
+
 async def send_agent_log(job_id: str, step: str, message: str) -> None:
     """CoScientist 에이전트 로그 전송 (async context용 - kids_render.py 파이프라인)"""
     url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs"
