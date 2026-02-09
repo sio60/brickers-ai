@@ -341,7 +341,8 @@ def _single_conversion(
     print(f"      [Step] Voxel count: {len(indices)}")
     
     # Voxel threshold check (메모리 보호용)
-    voxel_threshold = kwargs.pop("max_new_voxels", 15000)
+    # Kids 모드에서 t3.small 서버 기준 6,000개가 넘으면 최적화가 너무 느려짐
+    voxel_threshold = kwargs.pop("max_new_voxels", 6000) 
     max_pitch = kwargs.pop("max_pitch", 3.0)
     
     if len(indices) > voxel_threshold:
@@ -359,18 +360,20 @@ def _single_conversion(
             print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
             return -1, []
 
-    # Color sampling
+    # Color sampling (KDTree를 사용하여 속도 최적화)
     print(f"      [Step] Color Sampling...")
     c_start = time.time()
     centers = vg.points
     if use_mesh_color:
+        face_centers = mesh.triangles_center
+        face_tree = KDTree(face_centers)
+        _, face_indices = face_tree.query(centers)
+        
         if hasattr(mesh.visual, 'to_color'):
             temp_mesh = mesh.copy()
             temp_mesh.visual = temp_mesh.visual.to_color()
-            _, _, face_indices = temp_mesh.nearest.on_surface(centers)
             colors_raw = temp_mesh.visual.face_colors[face_indices][:, :3]
         else:
-            _, _, face_indices = mesh.nearest.on_surface(centers)
             colors_raw = mesh.visual.face_colors[face_indices][:, :3]
     else:
         colors_raw = np.tile([200, 200, 200], (len(centers), 1))
