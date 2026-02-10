@@ -197,7 +197,7 @@ async def process_kids_request_internal(
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
     # --- SSE 실시간 로그 전송용 (async) ---
-    async def _sse(step: str, message: str):
+    async def _sse(step: str, message: str = ""):
         """파이프라인 단계별 SSE 로그 전송 (async httpx)"""
         await send_agent_log(job_id, step, message)
 
@@ -221,7 +221,7 @@ async def process_kids_request_internal(
             # 0) S3에서 원본 이미지 다운로드
             step_start = time.time()
             _log("\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
-            await _sse("download", "그림을 받았어요! 어떤 모양인지 자세히 살펴볼게요.")
+            await _sse("download", "이미지 수신 완료. 구조부터 살펴보겠습니다.")
             img_bytes = await _download_from_s3(source_image_url)
             raw_path = out_req_dir / "raw.png"
             await _write_bytes_async(raw_path, img_bytes)
@@ -230,7 +230,7 @@ async def process_kids_request_internal(
             # 1) Gemini 보정
             step_start = time.time()
             _log("\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
-            await _sse("gemini", "그림의 명암과 특징을 분석해서 브릭 색상으로 변환하기 좋게 보정하고 있어요.")
+            await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
             corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
 
             final_subject = subject or ai_subject
@@ -245,7 +245,7 @@ async def process_kids_request_internal(
             # 2) Tripo 3D
             step_start = time.time()
             _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
-            await _sse("tripo", "평면 조각들을 모아서 입체적인 3D 모델로 상상하고 있어요.")
+            await _sse("tripo", "2D 정보를 바탕으로 3D 형태를 잡아봅니다.")
             await update_job_stage(job_id, "THREE_D_PREVIEW")
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
@@ -331,7 +331,7 @@ async def process_kids_request_internal(
             
             _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
             await update_job_stage(job_id, "MODEL")
-            await _sse("brickify", "3D 모델을 브릭 단위로 쪼개보고 있어요. 조립하기 쉽고 단단한 구조를 찾아낼게요.")
+            await _sse("brickify", "브릭 단위로 분해하면서 안정적인 조합을 탐색 중이에요.")
 
             out_ldr = out_brick_dir / "result.ldr"
 
@@ -383,7 +383,7 @@ async def process_kids_request_internal(
             step_start = time.time()
             s3_mode = "ON" if USE_S3 else "OFF"
             _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
-            await _sse("bom", "설계가 거의 끝났어요! 필요한 부품들을 하나씩 세어보고 있어요.")
+            await _sse("bom", "현재 설계를 기준으로 필요한 부품 수를 계산하고 있어요.")
             ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
             print("   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
@@ -397,6 +397,7 @@ async def process_kids_request_internal(
 
             # 5-2) PDF 생성 요청 (Blueprint 서버로 SQS 위임)
             pdf_url = None
+            await _sse("pdf", "조립 순서를 정리해서 설명서로 옮기고 있어요.")
             try:
                 await send_pdf_request_message(
                     job_id=job_id,
@@ -407,7 +408,7 @@ async def process_kids_request_internal(
             except Exception as pdf_err:
                 _log(f"⚠️ [STEP 5/5] PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
 
-            await _sse("complete", "완성! 아주 멋진 브릭 모델이 준비됐어요. 바로 확인해 보세요!")
+            await _sse("complete", "설계가 끝났어요. 결과를 한번 살펴볼까요?")
 
             total_elapsed = time.time() - total_start
             _log("\u2550" * 70)
