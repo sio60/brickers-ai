@@ -2,7 +2,6 @@ import logging
 import httpx
 import config
 from typing import Optional
-from .state import LogAnalysisState
 import os
 
 logger = logging.getLogger("agent.log_analyzer.persistence")
@@ -11,7 +10,7 @@ logger = logging.getLogger("agent.log_analyzer.persistence")
 ADMIN_API_BASE = f"{config.API_PUBLIC_BASE_URL}/api/admin"
 
 
-# ...
+
 
 async def archive_job_logs(job_id: str, logs: list[str], status: str = "FAILED", container_name: str = "brickers-ai-container"):
     """
@@ -29,7 +28,6 @@ async def archive_job_logs(job_id: str, logs: list[str], status: str = "FAILED",
     
     try:
         # 백엔드 API 호출 (직접 DB 저장 대신 정석적인 방식 채택)
-        # TODO: admin.py의 /archive 엔드포인트도 status를 받을 수 있게 확장하면 좋음
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{ADMIN_API_BASE}/archive",
@@ -37,7 +35,7 @@ async def archive_job_logs(job_id: str, logs: list[str], status: str = "FAILED",
                     "job_id": job_id,
                     "logs": full_log_text,
                     "container_name": container_name,
-                    # "status": status  <-- admin.py API 확장이 필요할 수 있음
+                    "status": status  # [수정] status 전송 활성화
                 },
                 timeout=10.0
             )
