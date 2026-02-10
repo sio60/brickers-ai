@@ -43,8 +43,9 @@ def test_kids_generation():
     params = {
         "target": args.target,
         "budget": effective_budget,
-        "shrink": 0.8,
-        "search_iters": 12,
+        "shrink": 0.6,
+        "search_iters": 10,
+        "min_target": 5,
         "flipx180": False,
         "flipy180": False,
         "invert_y": False,
