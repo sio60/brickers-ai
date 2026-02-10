@@ -222,6 +222,7 @@ def _single_conversion(
     color_smooth: int = 1,
     avoid_1x1: bool = False,
     log_fn: Optional[Any] = None,
+    smart_fix: bool = True,
     **kwargs: Any
 ) -> Tuple[int, List[Dict]]:
     """
