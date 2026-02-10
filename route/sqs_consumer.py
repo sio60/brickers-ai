@@ -1,5 +1,10 @@
 """
 SQS Consumer - AI Server에서 Backend로부터 REQUEST 메시지 수신
+
+아키텍처: SQS Poller → asyncio.Queue → 단일 Worker (순차 처리)
+- 폴링은 독립적으로 계속 진행 (이벤트루프 non-blocking)
+- 작업은 내부 큐에 쌓였다가 1개씩 순차 처리
+- 로그 섞임 없음, 리소스 경쟁 없음
 """
 from __future__ import annotations
 
@@ -13,24 +18,13 @@ from typing import Dict, Any
 from route.kids_render import process_kids_request_internal
 from route.sqs_producer import send_result_message
 from service.backend_client import check_job_canceled
-from service.kids_config import MAX_CONCURRENT_TASKS  # [추가] 동시성 제어 설정
-
-# 세마포어 (Lazy Init)
-_SEMAPHORE = None
-
-def _get_semaphore():
-    global _SEMAPHORE
-    if _SEMAPHORE is None:
-        _SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
-        print(f"[SQS Consumer] ✅ 세마포어 초기화 (Max Concurrent: {MAX_CONCURRENT_TASKS})")
-    return _SEMAPHORE
 
 
 def log(msg: str, user_email: str = "System") -> None:
     """타임스탬프 및 사용자 정보 포함 로그 출력"""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     user_tag = f"[{user_email}]" if user_email else "[System]"
-    print(f"[{ts}] {user_tag} {msg}")
+    print(f"[{ts}] {user_tag} {msg}", flush=True)
 
 
 def _is_truthy(v: str) -> bool:
@@ -39,14 +33,28 @@ def _is_truthy(v: str) -> bool:
 
 # 환경 변수
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-2").strip()
-SQS_REQUEST_QUEUE_URL = os.environ.get("AWS_SQS_REQUEST_QUEUE_URL", "").strip()  # Backend → AI (REQUEST 수신)
+SQS_REQUEST_QUEUE_URL = os.environ.get("AWS_SQS_REQUEST_QUEUE_URL", "").strip()
 SQS_ENABLED = _is_truthy(os.environ.get("AWS_SQS_ENABLED", "false"))
-SQS_POLL_INTERVAL = int(os.environ.get("SQS_POLL_INTERVAL", "5"))  # 초
-SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "10"))  # [상향] 한 번에 최대 10개까지 가져옴
-SQS_WAIT_TIME = int(os.environ.get("SQS_WAIT_TIME", "10"))  # Long polling
-SQS_VISIBILITY_TIMEOUT = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "1800"))  # 30분
+SQS_POLL_INTERVAL = int(os.environ.get("SQS_POLL_INTERVAL", "5"))
+SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "1"))  # 순차 처리이므로 1개씩
+SQS_WAIT_TIME = int(os.environ.get("SQS_WAIT_TIME", "10"))
+SQS_VISIBILITY_TIMEOUT = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "1800"))
+
 # 전역 상태 (모니터링용)
 _TOTAL_REQUESTS_RECEIVED = 0
+_TOTAL_REQUESTS_COMPLETED = 0
+_TOTAL_REQUESTS_FAILED = 0
+
+# 내부 작업 큐 (Lazy Init)
+_JOB_QUEUE: asyncio.Queue | None = None
+
+
+def _get_job_queue() -> asyncio.Queue:
+    global _JOB_QUEUE
+    if _JOB_QUEUE is None:
+        _JOB_QUEUE = asyncio.Queue(maxsize=100)
+    return _JOB_QUEUE
+
 
 # boto3 lazy import
 try:
@@ -75,166 +83,194 @@ def _get_sqs_client():
     if not SQS_REQUEST_QUEUE_URL:
         raise RuntimeError("AWS_SQS_REQUEST_QUEUE_URL is not set")
 
-    # boto3는 아래 env를 자동으로 읽음:
-    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION
     _SQS_CLIENT = boto3.client("sqs", region_name=AWS_REGION)
     return _SQS_CLIENT
 
 
-_POLL_COUNT = 0  # 폴링 횟수 추적
+# ============================================================================
+# SQS Poller — 큐에서 메시지를 가져와 내부 큐에 넣기만 함
+# ============================================================================
 
-async def poll_and_process():
+_POLL_COUNT = 0
+
+
+async def _sqs_poller():
     """
-    SQS에서 REQUEST 메시지 폴링 및 처리
-    - Long polling 사용 (불필요한 요청 최소화)
-    - REQUEST 타입 메시지만 처리
-    - 순차 처리 (AI는 CPU intensive)
+    SQS 폴링 루프 (독립 코루틴)
+    - Long polling으로 메시지 수신
+    - 내부 asyncio.Queue에 넣기만 함 (처리는 Worker가 담당)
+    - 처리 완료를 기다리지 않으므로 이벤트루프 blocking 없음
     """
     global _POLL_COUNT
 
-    if not SQS_ENABLED:
-        return
+    job_queue = _get_job_queue()
 
-    try:
-        sqs = _get_sqs_client()
-        _POLL_COUNT += 1
-
-        # 10회마다 폴링 로그 (너무 많은 로그 방지)
-        if _POLL_COUNT % 10 == 1:
-            log(f"🔄 [SQS Consumer] 폴링 중... (poll #{_POLL_COUNT})")
-
-        # boto3 (sqs.receive_message)는 동기(blocking) 함수이므로 별도 스레드에서 실행
-        # 이렇게 하지 않으면 10초 동안 전체 이벤트 루프가 멈춤
-        def _receive():
-            return sqs.receive_message(
-                QueueUrl=SQS_REQUEST_QUEUE_URL,
-                MaxNumberOfMessages=SQS_MAX_MESSAGES,
-                WaitTimeSeconds=SQS_WAIT_TIME,
-                VisibilityTimeout=SQS_VISIBILITY_TIMEOUT,
-            )
-
-        response = await anyio.to_thread.run_sync(_receive)
-
-        messages = response.get("Messages", [])
-
-        if messages:
-            log(f"📥 [SQS Consumer] 메시지 수신! | count={len(messages)} | poll #{_POLL_COUNT}")
-            
-            # 메시지 비동기 처리 시작 (디커플링: 폴링 루프를 블로킹하지 않음)
-            for m in messages:
-                global _TOTAL_REQUESTS_RECEIVED
-                _TOTAL_REQUESTS_RECEIVED += 1
-                asyncio.create_task(process_message(m, _TOTAL_REQUESTS_RECEIVED))
-            
-            return len(messages)
-        
-        return 0
-
-    except Exception as e:
-        log(f"❌ [SQS Consumer] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")
-        return 0
-
-
-async def process_message(message: Dict[str, Any], request_num: int):
-    """
-    메시지 처리
-    - REQUEST 타입 메시지만 처리
-    - kids_render 내부 함수 호출
-    - RESULT 메시지 전송 (성공/실패)
-    """
-    message_id = message.get("MessageId", "unknown")
-    receipt_handle = message["ReceiptHandle"]
-
-    log("=" * 60)
-    log(f"📨 [SQS Consumer] 메시지 처리 대기 중... | messageId={message_id}")
-
-    # [수정] 세마포어로 동시 실행 수 제한
-    async with _get_semaphore():
+    while True:
         try:
-            body = json.loads(message["Body"])
-            user_email = body.get("userEmail", "unknown") # [추가]
+            sqs = _get_sqs_client()
+            _POLL_COUNT += 1
 
-            log(f"📨 [SQS Consumer] 처리 시작 | jobId={body.get('jobId')}", user_email=user_email)
-            log(f"   - type: {body.get('type')}", user_email=user_email)
+            if _POLL_COUNT % 10 == 1:
+                q_size = job_queue.qsize()
+                log(f"🔄 [Poller] 폴링 중... (poll #{_POLL_COUNT}) | 대기 큐: {q_size}개")
 
-            # REQUEST 타입만 처리
-            if body.get("type") != "REQUEST":
-                log(f"⚠️ [SQS Consumer] RESULT 타입 무시", user_email=user_email)
-                delete_message(receipt_handle)
-                return
+            # boto3는 blocking이므로 쓰레드에서 실행
+            def _receive():
+                return sqs.receive_message(
+                    QueueUrl=SQS_REQUEST_QUEUE_URL,
+                    MaxNumberOfMessages=SQS_MAX_MESSAGES,
+                    WaitTimeSeconds=SQS_WAIT_TIME,
+                    VisibilityTimeout=SQS_VISIBILITY_TIMEOUT,
+                )
 
-            job_id = body.get("jobId")
-            source_image_url = body.get("sourceImageUrl")
-            age = body.get("age", "6-7")
-            budget = body.get("budget")
+            response = await anyio.to_thread.run_sync(_receive)
+            messages = response.get("Messages", [])
 
-            # ✅ 취소 여부 확인 (AI 처리 시작 전)
-            if await check_job_canceled(job_id):
-                log(f"🚫 [SQS Consumer] 취소된 작업 스킵 | jobId={job_id}", user_email=user_email)
-                delete_message(receipt_handle)
-                return
-
-            # Kids 렌더링 실행
-            result = await process_kids_request_internal(
-                job_id=job_id,
-                source_image_url=source_image_url,
-                age=age,
-                budget=budget,
-                user_email=user_email,
-            )
-
-            log(f"✅ AI 렌더링 완료!", user_email=user_email)
-            log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
-            log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
-            log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
-            log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
-
-            # ✅ RESULT 메시지 전송 (성공)
-            log(f"📤 [SQS Consumer] RESULT 메시지 전송 중...")
-            await send_result_message(
-                job_id=job_id,
-                success=True,
-                corrected_url=result["correctedUrl"],
-                glb_url=result["modelUrl"],
-                ldr_url=result["ldrUrl"],
-                bom_url=result["bomUrl"],
-                pdf_url=result.get("pdfUrl", ""),
-                parts=result["parts"],
-                final_target=result["finalTarget"],
-                tags=result.get("tags", []),
-            )
-
-            # ✅ 메시지 삭제 (처리 완료)
-            delete_message(receipt_handle)
-
-            log(f"✅ [SQS Consumer] 처리 완료 | jobId={job_id}", user_email=user_email)
-            log("=" * 60, user_email=user_email)
-
-        except json.JSONDecodeError as e:
-            log(f"❌ [SQS Consumer] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
-            # 파싱 실패 메시지는 삭제 (재처리 불가)
-            delete_message(receipt_handle)
+            if messages:
+                global _TOTAL_REQUESTS_RECEIVED
+                for m in messages:
+                    _TOTAL_REQUESTS_RECEIVED += 1
+                    await job_queue.put((m, _TOTAL_REQUESTS_RECEIVED))
+                log(
+                    f"📥 [Poller] 메시지 수신 → 내부 큐 전달 | "
+                    f"count={len(messages)} | 큐 대기: {job_queue.qsize()}개"
+                )
+                # 메시지 있으면 즉시 다음 폴링
+                await asyncio.sleep(0.1)
+            else:
+                await asyncio.sleep(SQS_POLL_INTERVAL)
 
         except Exception as e:
-            # user_email 변수가 try 블록 안에서 정의되므로, 여기서 없을 수도 있음
-            # 안전하게 처리
-            u_email = locals().get("user_email", "unknown")
-            log(f"❌ [SQS Consumer] 처리 실패 | error={str(e)}", user_email=u_email)
+            log(f"❌ [Poller] 폴링 실패 | poll #{_POLL_COUNT} | error={str(e)}")
+            await asyncio.sleep(SQS_POLL_INTERVAL)
 
-            # ✅ RESULT 메시지 전송 (실패)
+
+# ============================================================================
+# Job Worker — 내부 큐에서 하나씩 꺼내 순차 처리
+# ============================================================================
+
+async def _job_worker():
+    """
+    단일 워커 코루틴 (순차 처리)
+    - 내부 큐에서 메시지를 1개씩 꺼내서 처리
+    - 동시 실행 없음 → 로그 섞임 없음, 리소스 경쟁 없음
+    - 각 작업 완료 후 다음 작업 시작
+    """
+    global _TOTAL_REQUESTS_COMPLETED, _TOTAL_REQUESTS_FAILED
+
+    job_queue = _get_job_queue()
+    log("[Worker] 🏭 단일 워커 시작 (순차 처리 모드)")
+
+    while True:
+        try:
+            # 큐에서 다음 작업 대기 (blocking but async-safe)
+            message, request_num = await job_queue.get()
+
+            message_id = message.get("MessageId", "unknown")
+            receipt_handle = message["ReceiptHandle"]
+
+            log("=" * 60)
+            log(f"📨 [Worker] 작업 시작 | #{request_num} | messageId={message_id}")
+            log(f"   📋 남은 대기: {job_queue.qsize()}개")
+
             try:
-                job_id = json.loads(message["Body"]).get("jobId", "unknown")
+                body = json.loads(message["Body"])
+                user_email = body.get("userEmail", "unknown")
+
+                log(f"📨 [Worker] 처리 시작 | jobId={body.get('jobId')}", user_email=user_email)
+                log(f"   - type: {body.get('type')}", user_email=user_email)
+
+                # REQUEST 타입만 처리
+                if body.get("type") != "REQUEST":
+                    log(f"⚠️ [Worker] RESULT 타입 무시", user_email=user_email)
+                    delete_message(receipt_handle)
+                    job_queue.task_done()
+                    continue
+
+                job_id = body.get("jobId")
+                source_image_url = body.get("sourceImageUrl")
+                age = body.get("age", "6-7")
+                budget = body.get("budget")
+
+                # 취소 여부 확인 (처리 시작 전)
+                if await check_job_canceled(job_id):
+                    log(f"🚫 [Worker] 취소된 작업 스킵 | jobId={job_id}", user_email=user_email)
+                    delete_message(receipt_handle)
+                    job_queue.task_done()
+                    continue
+
+                # Kids 렌더링 실행 (순차 — 이 작업이 끝나야 다음 작업 시작)
+                result = await process_kids_request_internal(
+                    job_id=job_id,
+                    source_image_url=source_image_url,
+                    age=age,
+                    budget=budget,
+                    user_email=user_email,
+                )
+
+                log(f"✅ AI 렌더링 완료!", user_email=user_email)
+                log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
+                log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
+                log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
+                log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
+
+                # RESULT 메시지 전송 (성공)
+                log("📤 [Worker] RESULT 메시지 전송 중...")
                 await send_result_message(
                     job_id=job_id,
-                    success=False,
-                    error_message=str(e),
+                    success=True,
+                    corrected_url=result["correctedUrl"],
+                    glb_url=result["modelUrl"],
+                    ldr_url=result["ldrUrl"],
+                    bom_url=result["bomUrl"],
+                    pdf_url=result.get("pdfUrl", ""),
+                    parts=result["parts"],
+                    final_target=result["finalTarget"],
+                    tags=result.get("tags", []),
                 )
-            except Exception as send_error:
-                log(f"❌ [SQS Consumer] 결과 전송 실패 | error={str(send_error)}", user_email=u_email)
 
-            # AI 처리 실패 메시지는 삭제 (재처리 X, RESULT로 실패 전달함)
-            delete_message(receipt_handle)
+                delete_message(receipt_handle)
+                _TOTAL_REQUESTS_COMPLETED += 1
 
+                log(f"✅ [Worker] 처리 완료 | jobId={job_id} | "
+                    f"완료: {_TOTAL_REQUESTS_COMPLETED} | 실패: {_TOTAL_REQUESTS_FAILED}",
+                    user_email=user_email)
+                log("=" * 60, user_email=user_email)
+
+            except json.JSONDecodeError as e:
+                log(f"❌ [Worker] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
+                delete_message(receipt_handle)
+                _TOTAL_REQUESTS_FAILED += 1
+
+            except Exception as e:
+                u_email = locals().get("user_email", "unknown")
+                log(f"❌ [Worker] 처리 실패 | error={str(e)}", user_email=u_email)
+
+                # RESULT 메시지 전송 (실패)
+                try:
+                    job_id = json.loads(message["Body"]).get("jobId", "unknown")
+                    await send_result_message(
+                        job_id=job_id,
+                        success=False,
+                        error_message=str(e),
+                    )
+                except Exception as send_error:
+                    log(f"❌ [Worker] 결과 전송 실패 | error={str(send_error)}", user_email=u_email)
+
+                delete_message(receipt_handle)
+                _TOTAL_REQUESTS_FAILED += 1
+
+            finally:
+                job_queue.task_done()
+
+        except Exception as e:
+            log(f"❌ [Worker] 워커 예외 | error={str(e)}")
+            await asyncio.sleep(1)
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
 
 def delete_message(receipt_handle: str):
     """메시지 삭제"""
@@ -245,39 +281,47 @@ def delete_message(receipt_handle: str):
             ReceiptHandle=receipt_handle,
         )
     except Exception as e:
-        log(f"❌ [SQS Consumer] 메시지 삭제 실패 | error={str(e)}")
+        log(f"❌ [SQS] 메시지 삭제 실패 | error={str(e)}")
 
+
+def get_consumer_stats() -> Dict[str, Any]:
+    """모니터링용 통계 (admin 엔드포인트에서 사용 가능)"""
+    q = _get_job_queue()
+    return {
+        "total_received": _TOTAL_REQUESTS_RECEIVED,
+        "total_completed": _TOTAL_REQUESTS_COMPLETED,
+        "total_failed": _TOTAL_REQUESTS_FAILED,
+        "queue_size": q.qsize(),
+        "poll_count": _POLL_COUNT,
+    }
+
+
+# ============================================================================
+# Entry Point — FastAPI startup에서 호출
+# ============================================================================
 
 async def start_consumer():
     """
-    SQS Consumer 시작 (FastAPI startup event에서 호출)
-    - 무한 루프로 폴링
-    - 에러 발생 시에도 계속 실행
+    SQS Consumer 시작 (2개 코루틴 동시 실행)
+    1. _sqs_poller: SQS 폴링 → 내부 큐에 넣기
+    2. _job_worker: 내부 큐에서 1개씩 꺼내 순차 처리
     """
     if not SQS_ENABLED:
         log("[SQS Consumer] ⚠️ SQS 비활성화 상태 (AWS_SQS_ENABLED=false)")
         return
 
     log("═" * 70)
-    log("[SQS Consumer] 🚀 시작")
+    log("[SQS Consumer] 🚀 시작 (Poller + 단일 Worker 아키텍처)")
     log(f"   - Queue URL: {SQS_REQUEST_QUEUE_URL}")
     log(f"   - Poll Interval: {SQS_POLL_INTERVAL}초")
-    log(f"   - Max Messages: {SQS_MAX_MESSAGES}")
+    log(f"   - Max Messages per poll: {SQS_MAX_MESSAGES}")
     log(f"   - Wait Time: {SQS_WAIT_TIME}초 (Long polling)")
     log(f"   - Visibility Timeout: {SQS_VISIBILITY_TIMEOUT}초")
+    log(f"   - Worker: 단일 순차 처리 (동시 실행 없음)")
     log("═" * 70)
 
-    while True:
-        try:
-            msg_count = await poll_and_process()
-            
-            # 메시지를 가져왔다면 쉬지 않고 즉시 다음 폴링 시도
-            if msg_count > 0:
-                await asyncio.sleep(0.1) # 짧은 yield
-            else:
-                await asyncio.sleep(SQS_POLL_INTERVAL)
-
-        except Exception as e:
-            log(f"❌ [SQS Consumer] 예외 발생 | error={str(e)}")
-            # 에러 발생해도 계속 실행
-            await asyncio.sleep(SQS_POLL_INTERVAL)
+    # 두 코루틴을 동시에 실행
+    # Poller: SQS → 내부 큐
+    # Worker: 내부 큐 → 순차 처리
+    asyncio.create_task(_sqs_poller())
+    asyncio.create_task(_job_worker())

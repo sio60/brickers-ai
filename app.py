@@ -82,9 +82,9 @@ app.add_api_route("/api/info", bj_server.info, methods=["GET"], tags=["info"])
 @app.on_event("startup")
 async def startup():
     """서버 시작 시 초기화"""
-    print("=" * 70)
-    print("[FastAPI] 🚀 Application Startup")
-    print("=" * 70)
+    print("=" * 70, flush=True)
+    print("[FastAPI] 🚀 Application Startup", flush=True)
+    print("=" * 70, flush=True)
 
     # --- OpenAI/Gemini HTTP 클라이언트 초기화 ---
     openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -94,11 +94,11 @@ async def startup():
     base_url = "https://api.openai.com/v1/" if openai_key else "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     if not api_key:
-        print("⚠️ [Warn] OPENAI_API_KEY/GEMINI_API_KEY 둘 다 없음. 챗봇 기능 비활성화.")
+        print("⚠️ [Warn] OPENAI_API_KEY/GEMINI_API_KEY 둘 다 없음. 챗봇 기능 비활성화.", flush=True)
         app.state.openai_http = None
         app.state.chat_service = None
     else:
-        print(f"[Startup] Using API at {base_url}")
+        print(f"[Startup] Using API at {base_url}", flush=True)
         app.state.openai_http = httpx.AsyncClient(
             base_url=base_url,
             headers={
@@ -116,15 +116,15 @@ async def startup():
 
     # --- SQS Consumer 백그라운드 태스크 시작 ---
     asyncio.create_task(start_consumer())
-    print("[FastAPI] ✅ SQS Consumer 백그라운드 태스크 시작")
+    print("[FastAPI] ✅ SQS Consumer 백그라운드 태스크 시작", flush=True)
 
     # --- 라우트 디버깅 (등록된 모든 API 주소 출력) ---
-    print("\n[Debug] Registered Routes:")
+    print("\n[Debug] Registered Routes:", flush=True)
     for route in app.routes:
         if hasattr(route, "path"):
             methods = getattr(route, "methods", {"?"})
-            print(f"  - {methods} {route.path}")
-    print("=" * 70)
+            print(f"  - {methods} {route.path}", flush=True)
+    print("=" * 70, flush=True)
 
 
 @app.on_event("shutdown")
