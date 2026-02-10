@@ -10,18 +10,18 @@ brick_engine_path = (project_root / "brick_engine").resolve()
 sys.path.append(str(brick_engine_path))
 
 try:
-    from agent.log_agent import app
+    from agent.log_analyzer import app
 except ImportError as e:
     print(f"Failed to import agent: {e}")
     # Fallback: Try project root if structure is different
     sys.path.append(str(project_root))
     try:
-        from brick_engine.agent.log_agent import app
+        from brick_engine.agent.log_analyzer import app
     except ImportError:
         print(f"Fatal: Could not import agent. Check sys.path: {sys.path}")
         sys.exit(1)
 
-def main():
+async def main():
     # Configure logging to show in terminal
     logging.basicConfig(
         level=logging.INFO,
@@ -29,18 +29,23 @@ def main():
     )
 
     print("\n" + "="*60)
-    print("🚀 Starting Log Analysis Agent Verification (Looped Graph)")
+    print("🚀 Starting Log Analysis Agent Verification (Job-Centric Async)")
     print("="*60)
     
     # Selection of test scenario
+    # 실제 로그와 유사한 형식 (Job ID 포함)
     simulated_log_db = """
-    [2024-05-20 10:00:05] ERROR: Connection to MongoDB failed.
+    [2024-05-20 10:00:01] INFO: 🚀 [AI-SERVER] 요청 시작 | jobId=test-job-123
+    [2024-05-20 10:00:05] ERROR: Connection to MongoDB failed. | jobId=test-job-123
     pymongo.errors.ServerSelectionTimeoutError: localhost:27017: [Errno 111] Connection refused
+    [2024-05-20 10:00:06] ERROR: ❌ [AI-SERVER] 요청 실패! | jobId=test-job-123
     """
     
     simulated_log_sqs = """
-    [2024-05-20 10:05:00] ERROR: Boto3 Error while polling SQS.
+    [2024-05-20 10:05:00] INFO: 🚀 [AI-SERVER] 요청 시작 | jobId=sqs-fail-000
+    [2024-05-20 10:05:01] ERROR: Boto3 Error while polling SQS. | jobId=sqs-fail-000
     botocore.exceptions.ClientError: An error occurred (AccessDenied) when calling the GetQueueAttributes operation.
+    [2024-05-20 10:05:02] ERROR: ❌ [AI-SERVER] 요청 실패! | jobId=sqs-fail-000
     """
     
     # Select scenario
@@ -53,7 +58,8 @@ def main():
         "analysis_result": None,
         "error_count": 0,
         "messages": [],
-        "iteration": 0
+        "iteration": 0,
+        "job_id": None
     }
 
     # Docker Check
@@ -65,14 +71,14 @@ def main():
         print("✅ Docker is available and responding.")
     except Exception as e:
         print(f"⚠️ Docker connectivity issue: {e}")
-        print("   (Test will proceed using simulated logs if organic fetch fails)")
+        print("   (Test will proceed using simulated logs)")
 
-    print(f"\n⚙️ Invoking LangGraph 'app.invoke()'...")
+    print(f"\n⚙️ Invoking LangGraph 'app.ainvoke()'...")
     print("-" * 40)
     
     try:
-        # Run the graph
-        output = app.invoke(initial_state)
+        # Run the graph asynchronously
+        output = await app.ainvoke(initial_state)
         print("-" * 40)
         print("✅ Invocation complete.")
         
@@ -99,7 +105,8 @@ def main():
         else:
             print("\n❌ Fatal: No analysis result returned from agent.")
             
-        print(f"\n🔄 Total Transitions (Iterations): {output.get('iteration', 0)}")
+        print(f"\n🔄 Job ID: {output.get('job_id')}")
+        print(f"🔄 Total Transitions (Iterations): {output.get('iteration', 0)}")
         print("="*60 + "\n")
             
     except Exception as e:
@@ -108,4 +115,5 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())

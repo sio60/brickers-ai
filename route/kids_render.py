@@ -53,6 +53,9 @@ from service.brickify_loader import (
 from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom
 from service.render_client import render_ldr_steps, RENDER_ENABLED
 
+# Log Analysis
+from brick_engine.agent.log_analyzer import archive_failed_job_logs
+
 # Re-export for app.py / sqs_consumer.py
 __all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
 
@@ -475,6 +478,13 @@ async def process_kids_request_internal(
         _write_error_log(out_req_dir, tb)
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
+        
+        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence)
+        try:
+            asyncio.create_task(archive_failed_job_logs(job_id))
+        except:
+            pass
+
         raise RuntimeError(str(e)) from e
 
 

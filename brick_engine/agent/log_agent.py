@@ -29,6 +29,7 @@ class LogAnalysisState(TypedDict):
     analysis_result: Optional[str] 
     error_count: int
     iteration: int # Loop counter
+    job_id: Optional[str] # 특정 Job 추적용 추가
 
 # --- Tool Execution Logic ---
 # --- Tool Execution Logic (Moved to agent_tools.py or imported) ---
@@ -43,83 +44,110 @@ class LogAnalysisState(TypedDict):
 
 # --- Nodes (노드 정의) ---
 
-def fetch_logs_node(state: LogAnalysisState):
+async def fetch_logs_node(state: LogAnalysisState):
     """
     [노드 1: 로그 수집]
-    Docker SDK를 사용하여 실행 중인 컨테이너의 최신 로그를 가져옵니다.
+    Docker SDK 또는 상태값을 활용하여 특정 Job의 로그만 추출하거나 최근 실패한 Job을 찾습니다.
     """
     container_name = state.get("container_name", "brickers-ai-container")
-    logger.info(f"--- [로그 에이전트] 1단계: 컨테이너 로그 수집 중 ({container_name}) ---")
+    target_job_id = state.get("job_id") # 특정 Job ID가 지정되었는지 확인
+    
+    logger.info(f"--- [로그 에이전트] 1단계: 로그 수집 및 Job 분석 시작 ({container_name}) ---")
+    
     try:
+        # 1. 독커에서 넉넉하게 로그 가져오기 (Job 전체 맥락을 파악하기 위해)
         client = docker.from_env()
         container = client.containers.get(container_name)
-        logs = container.logs(tail=500).decode("utf-8", errors="replace")
-        logger.info(f"✅ 로그 수집 성공 ({len(logs)} 바이트).")
+        raw_logs = container.logs(tail=2000).decode("utf-8", errors="replace")
+        logger.info(f"✅ 원본 로그 수집 완료 ({len(raw_logs)} 바이트).")
     except Exception as e:
-        # 독커 수집 실패 시 시뮬레이션 로그 사용 여부 확인
         existing_logs = state.get("logs", "")
-        if existing_logs and ("ERROR" in existing_logs or "Traceback" in existing_logs):
-             logger.warning("⚠️ 독커 연결 실패. 상태에 저장된 테스트용 로그를 사용합니다.")
-             logs = existing_logs 
+        if existing_logs:
+             logger.warning("⚠️ 독커 연결 실패. 입력된 텍스트 로그를 사용합니다.")
+             raw_logs = existing_logs 
         else:
              logger.error(f"❌ 독커 로그 수집 에러: {str(e)}")
-             logs = f"Docker에서 로그를 가져오는 중 오류 발생: {str(e)}\n(독커가 실행 중인지 확인하세요)"
+             return {"analysis_result": json.dumps({"action": "finish", "analysis": {"error_found": True, "summary": f"로그 수집 불가: {str(e)}"}})}
+
+    # 2. Job ID 기반 로그 추출 로직
+    # 실패한 Job ID 찾기 (패턴: ❌ [AI-SERVER] 요청 실패! | jobId=...)
+    import re
     
+    if not target_job_id:
+        # 가장 최근에 '실패'한 Job ID를 찾음
+        failure_matches = re.findall(r"요청 실패! \| jobId=([a-f0-9-]+)", raw_logs)
+        if failure_matches:
+            target_job_id = failure_matches[-1]
+            logger.info(f"🕵️ 최근 실패한 Job 발견: {target_job_id}")
+        else:
+            # 실패건이 없으면 가장 최근 '시작'된 Job ID 추출
+            start_matches = re.findall(r"요청 시작 \| jobId=([a-f0-9-]+)", raw_logs)
+            if start_matches:
+                target_job_id = start_matches[-1]
+                logger.info(f"ℹ️ 실패 건은 없으나 최근 Job 분석 진행: {target_job_id}")
+
+    # 3. 해당 Job ID와 관련된 로그만 모으기
+    if target_job_id:
+        job_logs_list = []
+        for line in raw_logs.splitlines():
+            if target_job_id in line:
+                job_logs_list.append(line)
+        
+        filtered_logs = "\n".join(job_logs_list)
+        logger.info(f"📂 Job [{target_job_id}] 관련 로그 {len(job_logs_list)}줄 필터링 완료.")
+    else:
+        filtered_logs = raw_logs[-4000:] # Job ID 못 찾으면 기존처럼 마지막 부분 사용
+        logger.warning("⚠️ Job ID를 식별하지 못했습니다. 마지막 4000자만 사용합니다.")
+
     user_prompt = f"""
-    [시스템 로그]
-    {logs[-4000:]} 
+    [지정된 Job ID: {target_job_id or "알 수 없음"}]
+    [해당 Job 관련 로그]
+    {filtered_logs} 
     
-    로그를 분석하여 오류(Traceback, Exception, Timeout)를 식별하십시오.
+    이 Job의 로그만 집중적으로 분석하여 오류(Traceback, Exception, Timeout)의 근본 원인을 식별하십시오.
     
     사용 가능한 도구:
-    1. `read_file`: Traceback에서 파일 경로가 보일 때 코드를 확인하기 위해 사용.
-    2. `check_db`: 'ConnectionTimeout', 'MongoError' 등 DB 관련 오류 시 사용.
-    3. `check_sqs`: 'Empty Message', 'Boto3Error', 처리 지연 발생 시 사용.
-    4. `check_system`: 'MemoryError', 'Kill signal', 전반적인 느려짐 발생 시 사용.
-    
-    도구를 사용하거나 분석을 종료하기 위한 JSON을 출력하십시오.
+    1. `read_file`: 코드 레벨의 오류 확인 시 사용.
+    2. `check_db`: DB 연결/상태 점검 시 사용.
+    3. `check_sqs`: 메시지 큐 지연/에러 시 사용.
+    4. `check_system`: 리소스 부족 의심 시 사용.
     """
     
     return {
-        "logs": logs, 
+        "logs": filtered_logs, 
         "messages": [HumanMessage(content=user_prompt)], 
         "iteration": 0,
-        "error_count": 0
+        "job_id": target_job_id
     }
 
-def diagnose_node(state: LogAnalysisState):
+async def diagnose_node(state: LogAnalysisState):
     """
     [노드 2: 에러 진단 및 의사결정]
-    LLM이 로그를 분석하여 '도구를 사용할지' 아니면 '분석을 종료할지' 결정합니다.
     """
     messages = state.get("messages", [])
     iteration = state.get("iteration", 0)
     logger.info(f"--- [로그 에이전트] 2단계: 에러 진단 중 (반복: {iteration}) ---")
     
-    # 의사결정을 위한 시스템 프롬프트
     system_prompt = """
-    당신은 전문 디버깅 에이전트입니다.
-    목표: 에러의 근본 원인(코드, DB, SQS 또는 시스템)을 찾으십시오.
+    당신은 전문 디버깅 에이전트 및 시스템 아키텍트입니다.
+    목표: 특정 Job ID와 관련된 로그를 분석하여 근본 원인을 찾으십시오.
     
     의사결정 프로세스:
-    1. **로그 분석**: 키워드를 찾으십시오.
-       - 코드 에러 -> `read_file` (주의: 인자명은 'file_path'를 사용)
-       - DB 에러 (Timeout, Connection) -> `check_db`
-       - Queue/AWS 에러 -> `check_sqs`
-       - 리소스/크래시 -> `check_system`
-    
-    2. **정교화**: 도구를 사용했다면, 다음 단계에서 그 결과를 분석하십시오.
+    1. **로그 분석**: 코드 에러(`read_file`), DB(`check_db`), SQS(`check_sqs`), 시스템(`check_system`) 중 의심 지점 확인.
+    2. **아키텍처 제안**: 단순 수치 조정을 넘어, 특정 로직이 누락되었거나 새로운 함수(도구)가 필요하다고 판단되면 이를 해결책(suggestion)에 구체적인 코드 예시와 함께 포함하십시오.
     
     출력 형식 (JSON):
     - 도구 사용: `{"action": "도구이름", "args": {...}, "reasoning": "이유"}`
-    - 종료: `{"action": "finish", "analysis": {"error_found": true, "summary": "요약(한국어)", "root_cause": "원인(한국어)", "suggestion": "해결책(한국어)"}}`
+    - 종료: `{"action": "finish", "analysis": {"error_found": true, "summary": "요약", "root_cause": "원인", "suggestion": "해결책 (필요시 새로운 로직/함수 설계 포함)"}}`
     
-    모든 분석 결과(summary, root_cause, suggestion)는 반드시 한국어로 작성하십시오.
+    모든 분석 보고서는 한국어로 작성하십시오.
     """
     
     try:
         llm = GeminiClient()
-        response = llm.generate_json(messages[-1].content, system_prompt)
+        # 비동기 호출을 위해 to_thread 사용 (llm_clients가 동기인 경우)
+        import asyncio
+        response = await asyncio.to_thread(llm.generate_json, messages[-1].content, system_prompt)
         logger.info(f"🤖 AI 결정: {json.dumps(response, ensure_ascii=False)}")
         
         return {"analysis_result": json.dumps(response, ensure_ascii=False), "iteration": iteration + 1}
@@ -128,10 +156,9 @@ def diagnose_node(state: LogAnalysisState):
          logger.error(f"❌ AI 진단 실패: {str(e)}")
          return {"analysis_result": json.dumps({"action": "finish", "analysis": {"error_found": True, "summary": f"진단 도중 에러 발생: {str(e)}"}})}
 
-def tool_execution_node(state: LogAnalysisState):
+async def tool_execution_node(state: LogAnalysisState):
     """
     [노드 3: 도구 실행]
-    `diagnose_node`에서 요청한 도구를 실행하고 결과를 반환합니다.
     """
     raw_result = state.get("analysis_result")
     try:
@@ -144,16 +171,18 @@ def tool_execution_node(state: LogAnalysisState):
     args = decision.get("args", {})
     logger.info(f"🛠️ [로그 에이전트] 3단계: 도구 '{action}' 실행 중...")
     
+    # 도구별 실행 (현재 도구들은 동기 방식이므로 to_thread 권장)
+    import asyncio
     tool_output = ""
 
     if action == "read_file":
-        tool_output = execute_read_file(args)
+        tool_output = await asyncio.to_thread(execute_read_file, args)
     elif action == "check_db":
-        tool_output = execute_check_db(args)
+        tool_output = await asyncio.to_thread(execute_check_db, args)
     elif action == "check_system":
-        tool_output = execute_check_system(args)
+        tool_output = await asyncio.to_thread(execute_check_system, args)
     elif action == "check_sqs":
-        tool_output = execute_check_sqs(args)
+        tool_output = await asyncio.to_thread(execute_check_sqs, args)
     
     if tool_output:
         logger.info(f"📥 도구 결과 수신 ({len(tool_output)} 바이트).")
