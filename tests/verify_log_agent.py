@@ -10,15 +10,13 @@ brick_engine_path = (project_root / "brick_engine").resolve()
 sys.path.append(str(brick_engine_path))
 
 try:
-    from agent.log_analyzer import app
-except ImportError as e:
-    print(f"Failed to import agent: {e}")
-    # Fallback: Try project root if structure is different
-    sys.path.append(str(project_root))
+    from brick_engine.agent.log_agent import app
+except ImportError:
     try:
-        from brick_engine.agent.log_analyzer import app
-    except ImportError:
+        from agent.log_agent import app
+    except ImportError as e:
         print(f"Fatal: Could not import agent. Check sys.path: {sys.path}")
+        print(f"Error: {e}")
         sys.exit(1)
 
 async def main():

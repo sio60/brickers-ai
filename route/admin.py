@@ -33,8 +33,21 @@ class AnalysisResponse(BaseModel):
     suggestion: Optional[str] = None
     job_id: Optional[str] = None # 분석된 Job ID 반환
 
-# --- Agent Import ---
+class ArchiveLogRequest(BaseModel):
+    job_id: str
+    logs: str
+    container_name: str = "brickers-ai-container"
+
+class ArchivedLogResponse(BaseModel):
+    job_id: str
+    logs: str
+    timestamp: str
+    container: str
+
+# --- Agent & DB Import ---
 from brick_engine.agent.log_agent import app as log_agent_app
+from brick_engine.agent.yang_db import get_db
+from datetime import datetime
 
 # --- Endpoints ---
 
@@ -130,3 +143,62 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
     except Exception as e:
         logger.error(f"❌ [admin.py] Analysis Failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Analysis Failed: {str(e)}")
+
+
+@router.post("/archive")
+async def archive_log(request: ArchiveLogRequest):
+    """
+    Archive failed job logs to MongoDB.
+    """
+    logger.info(f"🌐 [API: POST /archive] Archiving logs for Job ID: {request.job_id}")
+    try:
+        db = get_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database connection unavailable")
+            
+        collection = db["failed_job_logs"]
+        doc = {
+            "jobId": request.job_id,
+            "logs": request.logs,
+            "timestamp": datetime.utcnow().isoformat(),
+            "container": request.container_name,
+            "status": "FAILED"
+        }
+        collection.replace_one({"jobId": request.job_id}, doc, upsert=True)
+        logger.info(f"✅ [admin.py] Archived logs for {request.job_id}")
+        return {"status": "success", "jobId": request.job_id}
+        
+    except Exception as e:
+        logger.error(f"❌ [admin.py] Archive Failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Archive Failed: {str(e)}")
+
+
+@router.get("/archived/{job_id}", response_model=ArchivedLogResponse)
+async def get_archived_log(job_id: str):
+    """
+    Fetch archived logs from MongoDB.
+    """
+    logger.info(f"🌐 [API: GET /archived/{job_id}] Fetching archived logs.")
+    try:
+        db = get_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database connection unavailable")
+            
+        collection = db["failed_job_logs"]
+        doc = collection.find_one({"jobId": job_id})
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Logs for Job ID {job_id} not found")
+            
+        return {
+            "job_id": doc["jobId"],
+            "logs": doc["logs"],
+            "timestamp": doc["timestamp"],
+            "container": doc.get("container", "unknown")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ [admin.py] Fetch Archived Failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Fetch Archived Failed: {str(e)}")
