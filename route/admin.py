@@ -45,7 +45,7 @@ class ArchivedLogResponse(BaseModel):
     container: str
 
 # --- Agent & DB Import ---
-from brick_engine.agent.log_agent import app as log_agent_app
+from brick_engine.agent.log_analyzer import app as log_agent_app
 from brick_engine.agent.yang_db import get_db
 from datetime import datetime
 
