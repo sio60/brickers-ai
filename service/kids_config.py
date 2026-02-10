@@ -49,11 +49,11 @@ AGE_TO_BUDGET = {"4-5": 100, "6-7": 150, "8-10": 200, "PRO": 5000}
 
 def budget_to_start_target(eff_budget: int) -> int:
     if eff_budget <= 100:
-        return 20
+        return 15
     if eff_budget <= 150:
-        return 25
+        return 20
     if eff_budget <= 200:
-        return 30
+        return 25
     if eff_budget >= 2000: # PRO 모드
         return 100
     return 40
