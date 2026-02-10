@@ -189,8 +189,9 @@ async def process_kids_request_internal(
     if not TRIPO_API_KEY:
         raise RuntimeError("TRIPO_API_KEY is not set")
     
-    # [NEW] Job Start Time 기록 (Log Persistence용)
-    job_start_time = datetime.utcnow()
+    # [NEW] In-Memory Log Buffer (Docker API 의존 제거)
+    # 직접 생성한 로그 문자열을 리스트에 모아두었다가 전송 (가장 빠르고 안전함)
+    job_log_buffer: list[str] = []
 
     req_id = job_id
     out_req_dir = GENERATED_DIR / f"req_{req_id}"
@@ -199,6 +200,14 @@ async def process_kids_request_internal(
     out_req_dir.mkdir(parents=True, exist_ok=True)
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
+
+    # 내부 래퍼 로그 (이메일 자동 주입 + 버퍼링)
+    def _log(msg: str):
+        # 1. 콘솔 출력 (기존)
+        log(f"[{job_id}] {msg}", user_email=user_email)
+        # 2. 메모리 버퍼 저장 (New) -> 나중에 DB로 보냄
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        job_log_buffer.append(f"[{ts}] {msg}")
 
     # --- SSE 실시간 로그 전송용 (async) ---
     async def _sse(step: str, message: str = ""):
@@ -213,10 +222,10 @@ async def process_kids_request_internal(
     _log(f"\u2699\ufe0f  S3 \ubaa8\ub4dc: {s3_label} | bucket={S3_BUCKET or 'N/A'}")
     _log("\u2550" * 70)
     
-    # [NEW] Job Start 로그 아카이빙 (비동기)
+    # [NEW] Job Start 로그 아카이빙 (비동기) - 현재까지 쌓인 로그 전송
     try:
-        # 시작 시점에는 아직 로그가 별로 없으므로 start_time 안 줌 (단순 알림)
-        asyncio.create_task(archive_job_logs(job_id, status="RUNNING"))
+        # copy()를 보내서 비동기 실행 중에 원본 리스트가 바뀌어도 문제 없게 함
+        asyncio.create_task(archive_job_logs(job_id, list(job_log_buffer), status="RUNNING"))
     except:
         pass
 
@@ -424,9 +433,9 @@ async def process_kids_request_internal(
             _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
             _log("\u2550" * 70)
             
-            # [NEW] Job Success 로그 아카이빙 (비동기) - start_time 전달해서 전체 수집
+            # [NEW] Job Success 로그 아카이빙 (비동기) - In-Memory Log Buffer 전달
             try:
-                asyncio.create_task(archive_job_logs(job_id, status="SUCCESS", start_time=job_start_time))
+                asyncio.create_task(archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS"))
             except:
                 pass
 
@@ -454,9 +463,9 @@ async def process_kids_request_internal(
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
         
-        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence) - start_time 전달
+        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence) - In-Memory Log Buffer 전달
         try:
-            asyncio.create_task(archive_job_logs(job_id, status="FAILED", start_time=job_start_time))
+            asyncio.create_task(archive_job_logs(job_id, list(job_log_buffer), status="FAILED"))
         except:
             pass
 
