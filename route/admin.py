@@ -6,13 +6,23 @@ import os
 import json
 import docker
 import logging # Added import logging
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+from db import get_db
 
 
 # Logger configuration
 logger = logging.getLogger("api.admin") # Added logger setup
+
+try:
+    from brick_engine.agent.log_analyzer.agent import app as log_agent_app
+except ImportError:
+    # Local dev path fallback if needed
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+    from brick_engine.agent.log_analyzer.agent import app as log_agent_app
 
 # Create router
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -34,23 +44,20 @@ class AnalysisResponse(BaseModel):
     suggestion: Optional[str] = None
     job_id: Optional[str] = None # 분석된 Job ID 반환
 
-class ArchiveLogRequest(BaseModel):
-    job_id: str
-    logs: str
-    container_name: str = "brickers-ai-container"
-
 class ArchivedLogResponse(BaseModel):
     job_id: str
     logs: str
     timestamp: str
     container: str
 
-# --- Agent & DB Import ---
-from brick_engine.agent.log_analyzer import app as log_agent_app
-from brick_engine.agent.yang_db import get_db
-from datetime import datetime
 
-# --- Endpoints ---
+class ArchiveLogRequest(BaseModel):
+    job_id: str
+    logs: str
+    container_name: str = "brickers-ai-container"
+    status: str = "FAILED"  # [추가] 상태 수신 (기본값: FAILED)
+
+
 
 @router.get("/logs/{container_name}", response_model=LogResponse)
 def get_container_logs(
@@ -175,9 +182,10 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
 @router.post("/archive")
 async def archive_log(request: ArchiveLogRequest):
     """
-    Archive failed job logs to MongoDB.
+    Archive job logs to MongoDB.
+    FAILED 상태인 경우 AI 에이전트 분석도 함께 실행하여 결과를 저장합니다.
     """
-    logger.info(f"🌐 [API: POST /archive] Archiving logs for Job ID: {request.job_id}")
+    logger.info(f"🌐 [API: POST /archive] Archiving logs for Job ID: {request.job_id} ({request.status})")
     try:
         db = get_db()
         if db is None:
@@ -189,11 +197,52 @@ async def archive_log(request: ArchiveLogRequest):
             "logs": request.logs,
             "timestamp": datetime.utcnow().isoformat(),
             "container": request.container_name,
-            "status": "FAILED"
+            "status": request.status
         }
         collection.replace_one({"jobId": request.job_id}, doc, upsert=True)
         logger.info(f"✅ [admin.py] Archived logs for {request.job_id}")
-        return {"status": "success", "jobId": request.job_id}
+
+        # --- FAILED일 때 AI 분석 자동 실행 ---
+        ai_analysis = None
+        if request.status == "FAILED" and request.logs:
+            try:
+                logger.info(f"🧠 [admin.py] FAILED 로그 감지 → AI 분석 시작 (Job: {request.job_id})")
+                analysis_state = {
+                    "container_name": request.container_name,
+                    "logs": request.logs,       # 로그를 직접 전달 (DB 재조회 불필요)
+                    "analysis_result": None,
+                    "error_count": 0,
+                    "messages": [],
+                    "iteration": 0,
+                    "job_id": request.job_id
+                }
+                result_state = await log_agent_app.ainvoke(analysis_state)
+
+                raw_result = result_state.get("analysis_result", "")
+                if raw_result:
+                    result_json = json.loads(raw_result)
+                    ai_analysis = result_json.get("analysis", result_json)
+
+                    # 같은 문서에 AI 분석 결과 추가
+                    collection.update_one(
+                        {"jobId": request.job_id},
+                        {"$set": {
+                            "ai_analysis": ai_analysis,
+                            "ai_analyzed_at": datetime.utcnow().isoformat()
+                        }}
+                    )
+                    logger.info(f"✅ [admin.py] AI 분석 완료 & 저장 (Job: {request.job_id})")
+                    logger.info(f"📝 요약: {ai_analysis.get('summary', 'N/A')[:100]}")
+
+            except Exception as ai_err:
+                logger.error(f"⚠️ [admin.py] AI 분석 실패 (로그 저장은 정상): {ai_err}")
+                # AI 분석 실패해도 로그 저장은 이미 성공했으므로 에러 발생시키지 않음
+
+        return {
+            "status": "success",
+            "jobId": request.job_id,
+            "ai_analysis": ai_analysis  # 분석 결과가 있으면 함께 반환
+        }
         
     except Exception as e:
         logger.error(f"❌ [admin.py] Archive Failed: {str(e)}")
