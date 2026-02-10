@@ -264,7 +264,7 @@ def generate_pdf_with_images_and_bom(
                 pdf.cell(col_color, 6, get_color_name(part.color), border=1, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
 
             if len(bom.parts) > 15:
-                pdf.set_font(pdf.korean_font, "I", 9)
+                pdf.set_font(pdf.korean_font, "", 9)
                 pdf.cell(0, 6, f"... and {len(bom.parts) - 15} more parts", new_x="LMARGIN", new_y="NEXT")
 
     # 전체 BOM 요약 페이지
