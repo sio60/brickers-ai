@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 def analyze_symmetry(model: "BrickModel", parts_db: Dict) -> List[Dict]:
     """
     좌우 대칭 분석 - 한쪽에만 있는 브릭 찾기
+    동적 대칭축: 모델 X 중심 기준 (X=0 고정 아님)
 
     Returns:
         [{'missing_side': 'left'|'right', 'mirror_brick': brick,
@@ -24,6 +25,10 @@ def analyze_symmetry(model: "BrickModel", parts_db: Dict) -> List[Dict]:
 
     margin = SYMMETRY_CENTER_MARGIN
     tolerance = SYMMETRY_TOLERANCE
+
+    # 동적 대칭축: 모델 X 좌표의 중심
+    xs = [b.position.x for b in model.bricks]
+    center_x = (min(xs) + max(xs)) / 2.0
 
     # Y 레이어별 브릭 수 카운트 + 최상단 레이어 판단
     y_layer_count = {}
@@ -41,17 +46,23 @@ def analyze_symmetry(model: "BrickModel", parts_db: Dict) -> List[Dict]:
         is_top = abs(brick.position.y - min_y) < tolerance
         return is_sparse and is_top
 
-    # X=0 기준 좌우 분류 (악센트 브릭만 제외)
+    # 동적 중심 기준 좌우 분류 (악센트 브릭만 제외)
     left_bricks = [b for b in model.bricks
-                   if b.position.x < -margin and not is_accent(b)]
+                   if b.position.x < (center_x - margin) and not is_accent(b)]
     right_bricks = [b for b in model.bricks
-                    if b.position.x > margin and not is_accent(b)]
+                    if b.position.x > (center_x + margin) and not is_accent(b)]
+
+    # 좌우 브릭이 너무 적으면 비대칭 모델로 판단
+    side_total = len(left_bricks) + len(right_bricks)
+    if side_total == 0:
+        return []
 
     missing = []
 
     # 오른쪽 브릭에 대해 왼쪽 대칭 브릭이 있는지 확인
     for rb in right_bricks:
-        mirror_x = -rb.position.x
+        # center_x 기준 반전: mirror_x = center_x - (rb.x - center_x) = 2*center_x - rb.x
+        mirror_x = 2 * center_x - rb.position.x
         found = False
         for lb in left_bricks:
             if (abs(lb.position.x - mirror_x) < tolerance and
@@ -72,7 +83,7 @@ def analyze_symmetry(model: "BrickModel", parts_db: Dict) -> List[Dict]:
 
     # 왼쪽 브릭에 대해 오른쪽 대칭 브릭이 있는지 확인
     for lb in left_bricks:
-        mirror_x = -lb.position.x
+        mirror_x = 2 * center_x - lb.position.x
         found = False
         for rb in right_bricks:
             if (abs(rb.position.x - mirror_x) < tolerance and
@@ -90,6 +101,11 @@ def analyze_symmetry(model: "BrickModel", parts_db: Dict) -> List[Dict]:
                 'part_id': lb.part_id,
                 'color': lb.color_code
             })
+
+    # 오탐 방지: 오탐률 50% 초과 시 비대칭 모델로 판단
+    if len(missing) > side_total * 0.5:
+        print(f"  [SYMMETRY] 오탐 감지: {len(missing)}/{side_total} ({len(missing)*100//side_total}%) → 비대칭 모델, 스킵")
+        return []
 
     return missing
 
