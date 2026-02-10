@@ -23,6 +23,7 @@ class LogResponse(BaseModel):
 
 class AnalysisRequest(BaseModel):
     container_name: str = "brickers-ai-container"
+    job_id: Optional[str] = None
 
 class AnalysisResponse(BaseModel):
     container: str
@@ -30,8 +31,9 @@ class AnalysisResponse(BaseModel):
     summary: str
     root_cause: Optional[str] = None
     suggestion: Optional[str] = None
+    job_id: Optional[str] = None # 분석된 Job ID 반환
 
-# --- Agent Import (Lazy load to avoid circular dependencies if any) ---
+# --- Agent Import ---
 from brick_engine.agent.log_agent import app as log_agent_app
 
 # --- Endpoints ---
@@ -91,7 +93,7 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
         
         # 2. Run Agent
         logger.info(f"🧠 [admin.py] Invoking LangGraph Agent for {request.container_name}...")
-        result_state = log_agent_app.invoke(initial_state)
+        result_state = await log_agent_app.ainvoke(initial_state)
         logger.info(f"✅ [admin.py] Agent execution finished after {result_state.get('iteration')} iterations.")
         
         # 3. Parse Result
@@ -121,7 +123,8 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
             "is_error": analysis_data.get("error_found", False),
             "summary": analysis_data.get("summary", "분석 완료"),
             "root_cause": analysis_data.get("root_cause"),
-            "suggestion": analysis_data.get("suggestion")
+            "suggestion": analysis_data.get("suggestion"),
+            "job_id": result_state.get("job_id")
         }
 
     except Exception as e:
