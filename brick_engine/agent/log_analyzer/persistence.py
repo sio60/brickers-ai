@@ -20,21 +20,23 @@ async def archive_job_logs(job_id: str, status: str = "FAILED", container_name: 
     logger.info(f"📦 [로그 아카이브] Job ID [{job_id}] ({status}) 로그 백업 시작...")
     
     try:
-        client = docker.from_env()
-        container = client.containers.get(container_name)
-        
-        raw_logs = ""
-        if start_time:
-            # 타임스탬프 기반 수집 (Job ID 필터링 없이 해당 시간 대 모든 로그)
-            # Docker requires timestamp in int/float or string, datetime works too
-            raw_logs = container.logs(since=start_time).decode("utf-8", errors="replace")
-            full_log_text = raw_logs
-            logger.info(f"🕒 [로그 아카이브] Timestamp 기반 수집: {start_time} 이후 {len(raw_logs)} bytes")
-        else:
-            # 기존 방식: 최근 5000줄에서 ID 필터링
-            raw_logs = container.logs(tail=5000).decode("utf-8", errors="replace")
-            job_logs = [line for line in raw_logs.splitlines() if job_id in line]
-            full_log_text = "\n".join(job_logs) if job_logs else ""
+        # 동기 Docker 호출을 스레드로 분리 (Blocking 방지)
+        def _get_docker_logs():
+            client = docker.from_env()
+            container = client.containers.get(container_name)
+            
+            if start_time:
+                return container.logs(since=start_time).decode("utf-8", errors="replace")
+            else:
+                raw = container.logs(tail=5000).decode("utf-8", errors="replace")
+                filtered = [line for line in raw.splitlines() if job_id in line]
+                return "\n".join(filtered) if filtered else ""
+
+        try:
+            full_log_text = await anyio.to_thread.run_sync(_get_docker_logs)
+        except Exception as docker_err:
+            logger.warning(f"⚠️ [로그 아카이브] Docker 로그 추출 실패: {docker_err}")
+            full_log_text = ""
 
         if not full_log_text and status != "RUNNING":
              # RUNNING 초기에는 아직 로그가 안 찍혔을 수도 있으므로 경고 스킵
