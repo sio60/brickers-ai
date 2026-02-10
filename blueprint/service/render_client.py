@@ -9,10 +9,12 @@ import base64
 import shutil
 import subprocess
 import tempfile
+from io import BytesIO
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import anyio
+from PIL import Image, ImageOps
 
 LDVIEW_BIN = os.environ.get("LDVIEW_BIN", "LDView")
 LDRAWDIR = os.environ.get("LDRAWDIR", "/usr/share/ldraw")
@@ -95,6 +97,8 @@ def _render_snapshot(
         f"-SaveHeight={height}",
         "-SaveZoomToFit=1",
         "-SaveAlpha=0",
+        "-BackgroundColor3=0xffffff",
+        "-UseOrthographicProjection=1",
         "-EdgeLines=1",
         "-LineSmoothing=1",
         "-ShowHighlightLines=1",
@@ -128,9 +132,9 @@ def _render_all_steps_sync(
     """
     if views is None:
         views = [
-            [200, -200, 200],
-            [-200, -200, 200],
-            [0, -300, -200],
+            [250, -350, 250],    # 45° quarter view (main view)
+            [1, -600, 1],        # Top-down view
+            [400, -50, 400],     # Ground level view
         ]
 
     step_ldrs = _split_ldr_steps(ldr_content)
@@ -160,8 +164,17 @@ def _render_all_steps_sync(
                 )
 
                 if ok:
-                    with open(png_file, "rb") as pf:
-                        view_bytes.append(pf.read())
+                    # Add 10% white padding for breathing room
+                    img = Image.open(png_file)
+                    pad_x = int(img.width * 0.10)
+                    pad_y = int(img.height * 0.10)
+                    padded = ImageOps.expand(
+                        img, border=(pad_x, pad_y, pad_x, pad_y),
+                        fill=(255, 255, 255),
+                    )
+                    buf = BytesIO()
+                    padded.save(buf, format="PNG")
+                    view_bytes.append(buf.getvalue())
                     print(f"  [Step {step_idx+1}/{total}] View {view_idx+1}: OK")
                 else:
                     view_bytes.append(b"")
@@ -172,6 +185,73 @@ def _render_all_steps_sync(
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     return step_images
+
+
+def _render_part_thumbnails_sync(
+    parts: List[Tuple[str, int]],
+    width: int = 256,
+    height: int = 256,
+) -> Dict[str, bytes]:
+    """
+    개별 파츠 썸네일 렌더링.
+    Returns: {"partId_color": PNG bytes, ...}
+    """
+    from typing import Dict as DictType
+
+    thumbnails: DictType[str, bytes] = {}
+    if not parts:
+        return thumbnails
+
+    tmpdir = tempfile.mkdtemp(prefix="brickers_thumbs_")
+    camera = (250, -350, 250)  # 45° quarter view
+
+    try:
+        for part_id, color in parts:
+            key = f"{part_id}_{color}"
+            if key in thumbnails:
+                continue
+
+            ldr_content = (
+                f"0 Part Thumbnail\n"
+                f"1 {color} 0 0 0 1 0 0 0 1 0 0 0 1 {part_id}.dat\n"
+            )
+            ldr_file = os.path.join(tmpdir, f"{key}.ldr")
+            png_file = os.path.join(tmpdir, f"{key}.png")
+
+            with open(ldr_file, "w", encoding="utf-8") as f:
+                f.write(ldr_content)
+
+            ok = _render_snapshot(ldr_file, png_file, width, height, camera)
+            if ok:
+                img = Image.open(png_file)
+                pad = int(max(img.size) * 0.05)
+                padded = ImageOps.expand(
+                    img, border=pad, fill=(255, 255, 255),
+                )
+                buf = BytesIO()
+                padded.save(buf, format="PNG")
+                thumbnails[key] = buf.getvalue()
+                print(f"  [Thumb] {key}: OK")
+            else:
+                thumbnails[key] = b""
+                print(f"  [Thumb] {key}: FAILED")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return thumbnails
+
+
+async def render_part_thumbnails(
+    parts: List[Tuple[str, int]],
+    width: int = 256,
+    height: int = 256,
+) -> Dict[str, bytes]:
+    """파츠 썸네일 렌더링 (async wrapper)"""
+    if not RENDER_ENABLED:
+        return {}
+    return await anyio.to_thread.run_sync(
+        lambda: _render_part_thumbnails_sync(parts, width, height)
+    )
 
 
 async def render_ldr_steps(
