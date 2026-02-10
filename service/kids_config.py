@@ -44,7 +44,7 @@ DOWNLOAD_TIMEOUT_SEC = float(os.environ.get("KIDS_DOWNLOAD_TIMEOUT_SEC", "180.0"
 MAX_CONCURRENT_TASKS = int(os.environ.get("MAX_CONCURRENT_TASKS", "5"))
 
 # Age → budget mapping (사용자 요청으로 400/450/500으로 복구, PRO 추가)
-AGE_TO_BUDGET = {"4-5": 400, "6-7": 450, "8-10": 500, "PRO": 2000}
+AGE_TO_BUDGET = {"4-5": 400, "6-7": 450, "8-10": 500, "PRO": 5000}
 
 
 def budget_to_start_target(eff_budget: int) -> int:

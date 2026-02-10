@@ -64,6 +64,8 @@ LDRAW_COLORS: Dict[int, Tuple[int, int, int, str]] = {
     78: (254, 186, 189, "Light Pink"),
     84: (170, 125, 85, "Medium Dark Flesh"),
     85: (89, 39, 115, "Dark Purple"),
+    110: (255, 187, 0, "Bright Light Orange"),
+    226: (242, 206, 46, "Bright Light Yellow"),
     320: (120, 27, 33, "Dark Red"),
     378: (163, 193, 173, "Sand Green"),
     484: (179, 62, 0, "Dark Orange"),
@@ -217,8 +219,10 @@ def _single_conversion(
     use_mesh_color: bool,
     step_order: str,
     glb_path: str,
-    smart_fix: bool = True,
     color_smooth: int = 1,
+    avoid_1x1: bool = False,
+    log_fn: Optional[Any] = None,
+    smart_fix: bool = True,
     **kwargs: Any
 ) -> Tuple[int, List[Dict]]:
     """
@@ -261,8 +265,8 @@ def _single_conversion(
     
     # Voxel threshold check (메모리 보호용)
     # Kids 모드에서 t3.small 서버 기준 6,000개가 넘으면 최적화가 너무 느려짐
-    voxel_threshold = kwargs.pop("max_new_voxels", 6000) 
-    max_pitch = kwargs.pop("max_pitch", 3.0)
+    voxel_threshold = kwargs.get("max_new_voxels", 6000) 
+    max_pitch = kwargs.get("max_pitch", 3.0)
     
     if len(indices) > voxel_threshold:
         if pitch < max_pitch:
@@ -273,7 +277,7 @@ def _single_conversion(
                 combined, out_ldr_path, target, kind, plates_per_voxel,
                 interlock, max_area, solid_color, use_mesh_color, step_order, glb_path,
                 smart_fix=smart_fix, color_smooth=color_smooth,
-                pitch=new_pitch, **kwargs
+                pitch=new_pitch, log_fn=log_fn, **kwargs
             )
         else:
             print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
@@ -293,11 +297,16 @@ def _single_conversion(
         _, v_indices = v_tree.query(centers)
         colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
         
-        # 밝기 보정 (Exposure boost) - AI 생성 모델의 어두운 텍스처 보정
-        # 흰색이 회색으로 매칭되는 것을 방지하기 위해 전체적으로 밝기를 높임
-        brightness = kwargs.get("color_brightness", 1.25)
+        # 밝기 및 채도 보정 (AI 생성 모델의 어두운/탁한 텍스처 보정)
+        brightness = kwargs.get("color_brightness", 1.4)
+        saturation = kwargs.get("color_saturation", 1.5)
+        
         if brightness != 1.0:
             colors_raw = np.clip(colors_raw * brightness, 0, 255)
+            
+        if saturation != 1.0:
+            avg = np.mean(colors_raw, axis=-1, keepdims=True)
+            colors_raw = np.clip(avg + (colors_raw - avg) * saturation, 0, 255)
     else:
         colors_raw = np.tile([200, 200, 200], (len(centers), 1))
     c_end = time.time()
@@ -322,6 +331,8 @@ def _single_conversion(
     # 부유 브릭 보정
     if smart_fix:
         print(f"      [Step] Embedding floating parts...")
+        if log_fn:
+            log_fn("brickify", "공중에 뜬 부분이 있으면 무너지기 쉬워요. 기둥을 세우고 내부 지지대를 보강하고 있어요.")
         bricks_data = embed_floating_parts(bricks_data)
 
     # Optimize (Greedy Packing)
@@ -332,7 +343,8 @@ def _single_conversion(
         kind=kind,
         plates_per_voxel=plates_per_voxel,
         interlock=interlock,
-        max_area=max_area
+        max_area=max_area,
+        avoid_1x1=avoid_1x1
     )
     o_end = time.time()
     print(f"      [Step] Optimization Done: {o_end - o_start:.2f}s")
@@ -359,6 +371,7 @@ def convert_glb_to_ldr(
     use_mesh_color: bool = True,
     invert_y: bool = False,
     smart_fix: bool = True,
+    avoid_1x1: bool = False,
     step_order: str = "bottomup",
     color_smooth: int = 1,
     **kwargs: Any
@@ -384,7 +397,7 @@ def convert_glb_to_ldr(
     print(f"[Engine] Starting conversion: {glb_path} -> {out_ldr_path}")
     print(f"[Engine] Target: {target} studs, Budget: {budget} bricks")
 
-    _log("brickify", "브릭으로 어떻게 만들지 고민하고 있어요...")
+    _log("brickify", "브릭으로 어떻게 만들면 가장 예쁠까 고민하고 있어요...")
 
     # 1. Load meshes
     scene = trimesh.load(glb_path, force='scene')
@@ -411,7 +424,7 @@ def convert_glb_to_ldr(
     for i in range(search_iters):
         print(f"\n[Engine] SEARCH ITERATION {i+1}/{search_iters}")
         print(f"[Engine] Current Target Studs: {int(curr_target)}")
-        _log("brickify", f"브릭을 하나씩 쌓아보고 있어요... ({i+1}/{search_iters})")
+        _log("brickify", f"브릭을 하나씩 쌓아보고 있어요... ({i+1}/{search_iters}단계)")
         
         parts_count, optimized = _single_conversion(
             combined=combined,
@@ -427,6 +440,8 @@ def convert_glb_to_ldr(
             glb_path=glb_path,
             smart_fix=smart_fix,
             color_smooth=color_smooth,
+            avoid_1x1=avoid_1x1,
+            log_fn=_log,
             **kwargs
         )
         
@@ -438,7 +453,7 @@ def convert_glb_to_ldr(
             
             if parts_count <= budget:
                 print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
-                _log("brickify", f"딱 맞게 {parts_count}개로 쌓았어요!")
+                _log("brickify", f"딱 맞네요! {parts_count}개의 브릭으로 튼튼하게 설계했어요.")
                 break
         
         if i < search_iters - 1:
@@ -446,7 +461,7 @@ def convert_glb_to_ldr(
             if curr_target < 5:
                 curr_target = 5
             print(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
-            _log("brickify", "브릭이 좀 많네요, 다시 고민해볼게요...")
+            _log("brickify", "브릭이 목표 개수보다 조금 많네요! 디자인의 핵심은 유지하면서 더 단순하고 깔끔한 구조로 다시 시도해 볼게요.")
         else:
             print(f"[Engine] WARNING: Failed to meet budget after {search_iters} iters.")
 
@@ -454,7 +469,7 @@ def convert_glb_to_ldr(
     if not final_optimized:
         raise RuntimeError("Failed to generate any bricks")
 
-    _log("brickify", "조립 순서를 고민하고 있어요...")
+    _log("brickify", "설계도를 다듬으면서 조립 순서를 논리적으로 배치하고 있어요...")
 
     write_ldr(
         out_ldr_path,
@@ -463,7 +478,7 @@ def convert_glb_to_ldr(
         title=Path(glb_path).stem
     )
 
-    _log("brickify", "브릭 설계가 끝났어요!")
+    _log("brickify", "브릭 설계가 완벽하게 끝났어요!")
 
     return {
         "parts": len(final_optimized),
