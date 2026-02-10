@@ -13,6 +13,17 @@ from typing import Dict, Any
 from route.kids_render import process_kids_request_internal
 from route.sqs_producer import send_result_message
 from service.backend_client import check_job_canceled
+from service.kids_config import MAX_CONCURRENT_TASKS  # [추가] 동시성 제어 설정
+
+# 세마포어 (Lazy Init)
+_SEMAPHORE = None
+
+def _get_semaphore():
+    global _SEMAPHORE
+    if _SEMAPHORE is None:
+        _SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+        print(f"[SQS Consumer] ✅ 세마포어 초기화 (Max Concurrent: {MAX_CONCURRENT_TASKS})")
+    return _SEMAPHORE
 
 
 def log(msg: str, user_email: str = "System") -> None:
@@ -135,89 +146,94 @@ async def process_message(message: Dict[str, Any], request_num: int):
     receipt_handle = message["ReceiptHandle"]
 
     log("=" * 60)
-    log(f"📨 [SQS Consumer] 메시지 처리 시작 | messageId={message_id}")
+    log(f"📨 [SQS Consumer] 메시지 처리 대기 중... | messageId={message_id}")
 
-    try:
-        body = json.loads(message["Body"])
-        user_email = body.get("userEmail", "unknown") # [추가]
-
-        log(f"📨 [SQS Consumer] 처리 시작 | jobId={body.get('jobId')}", user_email=user_email)
-        log(f"   - type: {body.get('type')}", user_email=user_email)
-
-        # REQUEST 타입만 처리
-        if body.get("type") != "REQUEST":
-            log(f"⚠️ [SQS Consumer] RESULT 타입 무시", user_email=user_email)
-            delete_message(receipt_handle)
-            return
-
-        job_id = body.get("jobId")
-        source_image_url = body.get("sourceImageUrl")
-        age = body.get("age", "6-7")
-        budget = body.get("budget")
-
-        # ✅ 취소 여부 확인 (AI 처리 시작 전)
-        if await check_job_canceled(job_id):
-            log(f"🚫 [SQS Consumer] 취소된 작업 스킵 | jobId={job_id}", user_email=user_email)
-            delete_message(receipt_handle)
-            return
-
-        # Kids 렌더링 실행
-        result = await process_kids_request_internal(
-            job_id=job_id,
-            source_image_url=source_image_url,
-            age=age,
-            budget=budget,
-            user_email=user_email,
-        )
-
-        log(f"✅ AI 렌더링 완료!", user_email=user_email)
-        log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
-        log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
-        log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
-        log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
-
-        # ✅ RESULT 메시지 전송 (성공)
-        log(f"📤 [SQS Consumer] RESULT 메시지 전송 중...")
-        await send_result_message(
-            job_id=job_id,
-            success=True,
-            corrected_url=result["correctedUrl"],
-            glb_url=result["modelUrl"],
-            ldr_url=result["ldrUrl"],
-            bom_url=result["bomUrl"],
-            pdf_url=result.get("pdfUrl", ""),
-            parts=result["parts"],
-            final_target=result["finalTarget"],
-            tags=result.get("tags", []),
-        )
-
-        # ✅ 메시지 삭제 (처리 완료)
-        delete_message(receipt_handle)
-
-        log(f"✅ [SQS Consumer] 처리 완료 | jobId={job_id}", user_email=user_email)
-        log("=" * 60, user_email=user_email)
-
-    except json.JSONDecodeError as e:
-        log(f"❌ [SQS Consumer] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
-        # 파싱 실패 메시지는 삭제 (재처리 불가)
-        delete_message(receipt_handle)
-
-    except Exception as e:
-        log(f"❌ [SQS Consumer] 처리 실패 | error={str(e)}", user_email=user_email)
-
-        # ✅ RESULT 메시지 전송 (실패)
+    # [수정] 세마포어로 동시 실행 수 제한
+    async with _get_semaphore():
         try:
-            job_id = json.loads(message["Body"]).get("jobId", "unknown")
+            body = json.loads(message["Body"])
+            user_email = body.get("userEmail", "unknown") # [추가]
+
+            log(f"📨 [SQS Consumer] 처리 시작 | jobId={body.get('jobId')}", user_email=user_email)
+            log(f"   - type: {body.get('type')}", user_email=user_email)
+
+            # REQUEST 타입만 처리
+            if body.get("type") != "REQUEST":
+                log(f"⚠️ [SQS Consumer] RESULT 타입 무시", user_email=user_email)
+                delete_message(receipt_handle)
+                return
+
+            job_id = body.get("jobId")
+            source_image_url = body.get("sourceImageUrl")
+            age = body.get("age", "6-7")
+            budget = body.get("budget")
+
+            # ✅ 취소 여부 확인 (AI 처리 시작 전)
+            if await check_job_canceled(job_id):
+                log(f"🚫 [SQS Consumer] 취소된 작업 스킵 | jobId={job_id}", user_email=user_email)
+                delete_message(receipt_handle)
+                return
+
+            # Kids 렌더링 실행
+            result = await process_kids_request_internal(
+                job_id=job_id,
+                source_image_url=source_image_url,
+                age=age,
+                budget=budget,
+                user_email=user_email,
+            )
+
+            log(f"✅ AI 렌더링 완료!", user_email=user_email)
+            log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
+            log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
+            log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
+            log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
+
+            # ✅ RESULT 메시지 전송 (성공)
+            log(f"📤 [SQS Consumer] RESULT 메시지 전송 중...")
             await send_result_message(
                 job_id=job_id,
-                success=False,
-                error_message=str(e),
+                success=True,
+                corrected_url=result["correctedUrl"],
+                glb_url=result["modelUrl"],
+                ldr_url=result["ldrUrl"],
+                bom_url=result["bomUrl"],
+                pdf_url=result.get("pdfUrl", ""),
+                parts=result["parts"],
+                final_target=result["finalTarget"],
+                tags=result.get("tags", []),
             )
-        except Exception as send_error:
-            log(f"❌ [SQS Consumer] 결과 전송 실패 | error={str(send_error)}", user_email=user_email)
 
-        # AI 처리 실패 메시지는 삭제 (재처리 X, RESULT로 실패 전달함)
-        delete_message(receipt_handle)
+            # ✅ 메시지 삭제 (처리 완료)
+            delete_message(receipt_handle)
+
+            log(f"✅ [SQS Consumer] 처리 완료 | jobId={job_id}", user_email=user_email)
+            log("=" * 60, user_email=user_email)
+
+        except json.JSONDecodeError as e:
+            log(f"❌ [SQS Consumer] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
+            # 파싱 실패 메시지는 삭제 (재처리 불가)
+            delete_message(receipt_handle)
+
+        except Exception as e:
+            # user_email 변수가 try 블록 안에서 정의되므로, 여기서 없을 수도 있음
+            # 안전하게 처리
+            u_email = locals().get("user_email", "unknown")
+            log(f"❌ [SQS Consumer] 처리 실패 | error={str(e)}", user_email=u_email)
+
+            # ✅ RESULT 메시지 전송 (실패)
+            try:
+                job_id = json.loads(message["Body"]).get("jobId", "unknown")
+                await send_result_message(
+                    job_id=job_id,
+                    success=False,
+                    error_message=str(e),
+                )
+            except Exception as send_error:
+                log(f"❌ [SQS Consumer] 결과 전송 실패 | error={str(send_error)}", user_email=u_email)
+
+            # AI 처리 실패 메시지는 삭제 (재처리 X, RESULT로 실패 전달함)
+            delete_message(receipt_handle)
 
 
 def delete_message(receipt_handle: str):
