@@ -1,6 +1,7 @@
 import docker
 import logging
 from datetime import datetime
+from typing import Optional
 from .state import LogAnalysisState
 
 # DB Connection (Lazy import to avoid issues)
