@@ -38,7 +38,7 @@ AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-2").strip()
 SQS_PDF_QUEUE_URL = os.environ.get("AWS_SQS_PDF_QUEUE_URL", "").strip()
 SQS_ENABLED = _is_truthy(os.environ.get("AWS_SQS_ENABLED", "false"))
 SQS_POLL_INTERVAL = int(os.environ.get("SQS_POLL_INTERVAL", "5"))
-SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "5"))
+SQS_MAX_MESSAGES = int(os.environ.get("SQS_MAX_MESSAGES", "1"))
 SQS_WAIT_TIME = int(os.environ.get("SQS_WAIT_TIME", "10"))
 SQS_VISIBILITY_TIMEOUT = int(os.environ.get("SQS_VISIBILITY_TIMEOUT", "600"))
 
@@ -187,8 +187,9 @@ async def poll_and_process() -> int:
         if messages:
             _log(f"📥 메시지 수신 | count={len(messages)} | poll #{_POLL_COUNT}")
 
+        # 순차 처리 (LDView 렌더링은 CPU 헤비 → 동시 실행 시 리소스 경쟁)
         for m in messages:
-            asyncio.create_task(_handle_message(m))
+            await _handle_message(m)
 
         return len(messages)
 
