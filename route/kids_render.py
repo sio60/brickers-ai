@@ -49,9 +49,8 @@ from service.brickify_loader import (
     pick_glb_from_downloaded,
 )
 
-# PDF Generation
-from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom
-from service.render_client import render_ldr_steps, RENDER_ENABLED
+# PDF Generation (SQS로 Blueprint 서버에 위임)
+from route.sqs_producer import send_pdf_request_message
 
 # Log Analysis
 from brick_engine.agent.log_analyzer.persistence import archive_failed_job_logs
@@ -180,7 +179,7 @@ async def process_kids_request_internal(
     시그니처/리턴 100% 동일 유지
     """
     total_start = time.time()
-    
+
     # 내부 래퍼 로그 (이메일 자동 주입)
     def _log(msg: str):
         log(msg, user_email=user_email)
@@ -215,7 +214,7 @@ async def process_kids_request_internal(
 
             # 0) S3에서 원본 이미지 다운로드
             step_start = time.time()
-            _log(f"\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
+            _log("\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
             await _sse("download", "그림을 받았어요! 어떤 모양인지 자세히 살펴볼게요.")
             img_bytes = await _download_from_s3(source_image_url)
             raw_path = out_req_dir / "raw.png"
@@ -224,7 +223,7 @@ async def process_kids_request_internal(
 
             # 1) Gemini 보정
             step_start = time.time()
-            _log(f"\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
+            _log("\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
             await _sse("gemini", "그림의 명암과 특징을 분석해서 브릭 색상으로 변환하기 좋게 보정하고 있어요.")
             corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
 
@@ -323,7 +322,7 @@ async def process_kids_request_internal(
             # PRO 모드(5000개 수준) 시 복셀 제한 상향 (해상도 유지)
             v_limit = 50000 if eff_budget >= 4000 else (20000 if eff_budget >= 1000 else 6000)
             start_target = budget_to_start_target(eff_budget)
-            
+
             _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
             await update_job_stage(job_id, "MODEL")
             await _sse("brickify", "3D 모델을 브릭 단위로 쪼개보고 있어요. 조립하기 쉽고 단단한 구조를 찾아낼게요.")
@@ -381,7 +380,7 @@ async def process_kids_request_internal(
             await _sse("bom", "설계가 거의 끝났어요! 필요한 부품들을 하나씩 세어보고 있어요.")
             ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
-            print(f"   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
+            print("   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
             bom_data = await anyio.to_thread.run_sync(generate_bom_from_ldr, out_ldr)
             out_bom = out_brick_dir / "bom.json"
             await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
@@ -390,59 +389,17 @@ async def process_kids_request_internal(
 
             _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
 
-            # 5-2) PDF 생성 (렌더링 서비스 사용)
+            # 5-2) PDF 생성 요청 (Blueprint 서버로 SQS 위임)
             pdf_url = None
-            if RENDER_ENABLED:
-                try:
-                    step_start_pdf = time.time()
-                    _log(f"📌 [STEP 5/5] PDF 생성 시작 (LDView 로컬 렌더링)")
-                    await _sse("pdf", "아이들이 보고 따라 하기 쉽게 조립 설명서를 한 페이지씩 그리고 있어요.")
-
-                    # LDR 텍스트 읽기
-                    ldr_text = await anyio.to_thread.run_sync(
-                        lambda: out_ldr.read_text(encoding="utf-8")
-                    )
-
-                    # 렌더링 서비스에서 스텝별 이미지 받기
-                    step_images = await render_ldr_steps(ldr_text)
-                    _log(f"   ✅ 렌더링 완료: {len(step_images)} steps")
-
-                    # LDR에서 Step별 BOM 파싱
-                    step_boms = parse_ldr_step_boms(ldr_text)
-
-                    # 커버 이미지 (마지막 스텝 첫 번째 뷰)
-                    cover_img = None
-                    if step_images and step_images[-1] and step_images[-1][0]:
-                        cover_img = step_images[-1][0]
-
-                    # PDF 생성
-                    pdf_bytes = generate_pdf_with_images_and_bom(
-                        model_name=final_subject or "Brickers Model",
-                        step_images=step_images,
-                        step_boms=step_boms,
-                        cover_image=cover_img,
-                    )
-                    _log(f"   ✅ PDF 생성: {len(pdf_bytes)} bytes")
-
-                    # S3 업로드
-                    if USE_S3 and S3_BUCKET:
-                        now = datetime.now()
-                        safe_name = re.sub(r'[\\/:*?"<>|]+', "_", final_subject or "instructions")
-                        s3_key = f"uploads/pdf/{now.year:04d}/{now.month:02d}/{uuid.uuid4().hex[:8]}_{safe_name}.pdf"
-                        pdf_url = upload_bytes_to_s3(pdf_bytes, s3_key, "application/pdf")
-                        _log(f"   ✅ PDF S3 업로드: {pdf_url}")
-                    else:
-                        # 로컬 저장
-                        pdf_path = out_brick_dir / "instructions.pdf"
-                        await _write_bytes_async(pdf_path, pdf_bytes)
-                        pdf_url = to_generated_url(pdf_path, out_dir=out_brick_dir)
-
-                    _log(f"✅ [STEP 5/5] PDF 생성 완료 | {time.time()-step_start_pdf:.2f}s")
-                except Exception as pdf_err:
-                    _log(f"⚠️ [STEP 5/5] PDF 생성 실패 (파이프라인 계속): {pdf_err}")
-                    pdf_url = None
-            else:
-                _log(f"📌 [INFO] LDView 미설치 - PDF 생성 스킵")
+            try:
+                await send_pdf_request_message(
+                    job_id=job_id,
+                    ldr_url=ldr_url,
+                    model_name=final_subject or "Brickers Model",
+                )
+                _log("📤 [STEP 5/5] PDF 생성 요청 전송 (brickers-blueprints-queue)")
+            except Exception as pdf_err:
+                _log(f"⚠️ [STEP 5/5] PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
 
             await _sse("complete", "완성! 아주 멋진 브릭 모델이 준비됐어요. 바로 확인해 보세요!")
 
