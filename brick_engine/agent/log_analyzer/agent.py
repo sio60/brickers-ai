@@ -18,7 +18,7 @@ from ..agent_tools import (
 )
 
 # Logger configuration
-logger = logging.getLogger("agent.log_agent.agent")
+logger = logging.getLogger("agent.log_analyzer.agent")
 
 # --- Nodes (노드 정의) ---
 
