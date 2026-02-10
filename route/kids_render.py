@@ -53,7 +53,7 @@ from service.brickify_loader import (
 from route.sqs_producer import send_pdf_request_message
 
 # Log Analysis
-from brick_engine.agent.log_analyzer.persistence import archive_failed_job_logs
+from brick_engine.agent.log_analyzer.persistence import archive_job_logs
 
 # Re-export for app.py / sqs_consumer.py
 __all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
@@ -179,7 +179,7 @@ async def process_kids_request_internal(
     시그니처/리턴 100% 동일 유지
     """
     total_start = time.time()
-
+    
     # 내부 래퍼 로그 (이메일 자동 주입)
     def _log(msg: str):
         log(msg, user_email=user_email)
@@ -208,6 +208,12 @@ async def process_kids_request_internal(
     s3_label = "ON" if USE_S3 else "OFF"
     _log(f"\u2699\ufe0f  S3 \ubaa8\ub4dc: {s3_label} | bucket={S3_BUCKET or 'N/A'}")
     _log("\u2550" * 70)
+    
+    # [NEW] Job Start 로그 아카이빙 (비동기)
+    try:
+        asyncio.create_task(archive_job_logs(job_id, status="RUNNING"))
+    except:
+        pass
 
     try:
         with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
@@ -322,7 +328,7 @@ async def process_kids_request_internal(
             # PRO 모드(5000개 수준) 시 복셀 제한 상향 (해상도 유지)
             v_limit = 50000 if eff_budget >= 4000 else (20000 if eff_budget >= 1000 else 6000)
             start_target = budget_to_start_target(eff_budget)
-
+            
             _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
             await update_job_stage(job_id, "MODEL")
             await _sse("brickify", "3D 모델을 브릭 단위로 쪼개보고 있어요. 조립하기 쉽고 단단한 구조를 찾아낼게요.")
@@ -411,6 +417,12 @@ async def process_kids_request_internal(
             _log(f"   - Brickify: {brickify_elapsed:.2f}s")
             _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
             print("\u2550" * 70)
+            
+            # [NEW] Job Success 로그 아카이빙 (비동기)
+            try:
+                asyncio.create_task(archive_job_logs(job_id, status="SUCCESS"))
+            except:
+                pass
 
             return {
                 "correctedUrl": corrected_url,
@@ -436,9 +448,9 @@ async def process_kids_request_internal(
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
         
-        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence)
+        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence) - status="FAILED"
         try:
-            asyncio.create_task(archive_failed_job_logs(job_id))
+            asyncio.create_task(archive_job_logs(job_id, status="FAILED"))
         except:
             pass
 
