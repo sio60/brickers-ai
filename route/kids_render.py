@@ -361,8 +361,8 @@ async def process_kids_request_internal(
                     target=start_target,
                     budget=eff_budget,
                     min_target=5,
-                    shrink=0.85,
-                    search_iters=3,        # 6→3 (속도 개선)
+                    shrink=0.70,
+                    search_iters=5,        # 3→5 (예산 조건 충족률 개선)
                     kind="brick",
                     plates_per_voxel=3,
                     interlock=True,

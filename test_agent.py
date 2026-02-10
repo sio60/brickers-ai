@@ -31,8 +31,8 @@ def test_kids_generation():
     
     args = parser.parse_args()
     
-    # Priority: --budget > positional budget > default 400
-    effective_budget = args.budget if args.budget is not None else (args.budget_pos if args.budget_pos is not None else 400)
+    # Priority: --budget > positional budget > default 200
+    effective_budget = args.budget if args.budget is not None else (args.budget_pos if args.budget_pos is not None else 200)
 
     if not os.path.exists(args.glb_path):
         print(f"FAILED: GLB file not found: {args.glb_path}")
