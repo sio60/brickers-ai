@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfuse2 \
     wget \
     unzip \
+    xauth \
     && rm -rf /var/lib/apt/lists/*
 
 # LDView AppImage → extract (Docker에서 FUSE 불가하므로 풀어서 사용)
