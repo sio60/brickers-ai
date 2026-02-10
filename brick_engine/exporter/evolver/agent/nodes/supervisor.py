@@ -162,13 +162,11 @@ def _build_context(state: AgentState, valid_strategies: List[str]) -> str:
     strategy_lines = [f"- {s}: {strategy_desc.get(s, s)}" for s in valid_strategies]
     parts.append(f"[사용 가능한 전략]\n" + "\n".join(strategy_lines))
 
-    # 이력
-    if state['memory']['failed_approaches']:
-        parts.append(f"[실패 이력] {state['memory']['failed_approaches'][-3:]}")
-    if state['memory']['successful_patterns']:
-        parts.append(f"[성공 이력] {state['memory']['successful_patterns'][-3:]}")
+    # 이력 (참고용 - 전략 회피가 아닌 실행 개선 목적)
     if state['memory'].get('lessons'):
-        parts.append(f"[학습된 교훈]\n" + "\n".join(state['memory']['lessons'][-5:]))
+        parts.append(f"[이전 교훈 (같은 전략을 더 잘 실행하기 위한 참고)]\n" + "\n".join(state['memory']['lessons'][-5:]))
+    if state['memory']['successful_patterns']:
+        parts.append(f"[성공 패턴] {state['memory']['successful_patterns'][-3:]}")
 
     return "\n\n".join(parts)
 

@@ -14,8 +14,8 @@ PLATE_HEIGHT = 8    # 플레이트 높이 (LDU)
 LDU_PER_STUD = 20   # 1 스터드 = 20 LDU
 
 # 대칭 분석
-SYMMETRY_TOLERANCE = 5       # 위치 매칭 허용 오차 (LDU)
-SYMMETRY_CENTER_MARGIN = 5   # 중앙 영역 판정 마진
+SYMMETRY_TOLERANCE = 20      # 위치 매칭 허용 오차 (LDU) - 1 stud
+SYMMETRY_CENTER_MARGIN = 20  # 중앙 영역 판정 마진 - 1 stud
 SPARSE_LAYER_THRESHOLD = 2   # 희소 레이어 기준
 SKIP_SYMMETRY_TYPES = frozenset(['plant'])  # 비대칭이 자연스러운 모형 (animal 제거 - 다리는 대칭 필요)
 
