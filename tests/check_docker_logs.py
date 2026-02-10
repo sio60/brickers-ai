@@ -7,7 +7,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-from brick_engine.agent.log_agent import app
+from brick_engine.agent.log_analyzer import app, fetch_logs_node
 
 async def test_real_docker_fetch():
     logging.basicConfig(level=logging.INFO)
@@ -39,7 +39,6 @@ async def test_real_docker_fetch():
 
     print("\n3. Testing Agent's real fetch node...")
     try:
-        from brick_engine.agent.log_agent import fetch_logs_node
         result = await fetch_logs_node(initial_state)
         print("✅ Fetch node execution result:")
         print(f"   Collected Logs Length: {len(result.get('logs', ''))}")
