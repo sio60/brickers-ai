@@ -28,6 +28,15 @@ async def test_real_docker_fetch():
     print("\n2. [Skipped] Checking DB for archived logs")
     # logs = await get_archived_logs(test_job_id)
 
+    # --- initial_state 정의 복구 ---
+    initial_state = {
+        "container_name": container_name,
+        "job_id": test_job_id,
+        "messages": [],
+        "iteration": 0,
+        "logs": ""
+    }
+
     print("\n3. Testing Agent's real fetch node...")
     try:
         from brick_engine.agent.log_agent import fetch_logs_node

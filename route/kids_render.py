@@ -54,7 +54,7 @@ from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images
 from service.render_client import render_ldr_steps, RENDER_ENABLED
 
 # Log Analysis
-from brick_engine.agent.log_analyzer import archive_failed_job_logs
+from brick_engine.agent.log_agent import archive_failed_job_logs
 
 # Re-export for app.py / sqs_consumer.py
 __all__ = ["router", "GENERATED_DIR", "process_kids_request_internal"]
