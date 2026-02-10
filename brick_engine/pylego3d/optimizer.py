@@ -37,10 +37,12 @@ def _get_part(kind: str, w: int, l: int) -> Optional[Tuple[str, int]]:
         return catalog[(l, w)], 90
     return None
 
-def _candidate_sizes(kind: str, max_area: Optional[int] = None) -> List[Tuple[int, int]]:
+def _candidate_sizes(kind: str, max_area: Optional[int] = None, avoid_1x1: bool = False) -> List[Tuple[int, int]]:
     catalog = PLATE_PARTS if kind == "plate" else BRICK_PARTS
     uniq = set()
     for (w, l) in catalog.keys():
+        if avoid_1x1 and (w == 1 and l == 1):
+            continue
         a, b = sorted((w, l))
         if max_area is not None and a * b > max_area:
             continue
@@ -67,10 +69,11 @@ def _tile_one_color(
     interlock: bool,
     prev_ids: Optional[np.ndarray],
     max_area: Optional[int],
+    avoid_1x1: bool = False,
 ) -> Tuple[List[Dict[str, Any]], np.ndarray]:
     H, W = occ.shape
     used = np.zeros((H, W), dtype=bool)
-    sizes = _candidate_sizes(kind, max_area=max_area)
+    sizes = _candidate_sizes(kind, max_area=max_area, avoid_1x1=avoid_1x1)
 
     parts: List[Dict[str, Any]] = []
     ids = np.full((H, W), -1, dtype=np.int32)
@@ -107,6 +110,10 @@ def _tile_one_color(
 
             bf = best_fit_at(x, z)
             if bf is None:
+                if avoid_1x1:
+                    # 1x1을 피해야 하는데 적절한 브릭이 없으면 스킵 (최후의 수단)
+                    used[z, x] = True 
+                    continue
                 got = _get_part(kind, 1, 1)
                 if got is None:
                     raise RuntimeError("Catalog missing 1x1 part.")
@@ -138,6 +145,7 @@ def optimize_bricks(
     plates_per_voxel: int = 3,
     interlock: bool = True,
     max_area: Optional[int] = 20,
+    avoid_1x1: bool = False,
 ) -> List[Dict[str, Any]]:
     if mode != "voxel":
         raise ValueError("Only mode='voxel' supported.")
@@ -180,6 +188,7 @@ def optimize_bricks(
                 interlock=interlock,
                 prev_ids=prev_ids_global,
                 max_area=max_area,
+                avoid_1x1=avoid_1x1,
             )
 
             for p in parts:

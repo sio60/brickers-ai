@@ -222,6 +222,7 @@ def _single_conversion(
     glb_path: str,
     smart_fix: bool = True,
     color_smooth: int = 1,
+    avoid_1x1: bool = False,
     **kwargs: Any
 ) -> Tuple[int, List[Dict]]:
     """
@@ -340,7 +341,8 @@ def _single_conversion(
         kind=kind,
         plates_per_voxel=plates_per_voxel,
         interlock=interlock,
-        max_area=max_area
+        max_area=max_area,
+        avoid_1x1=avoid_1x1
     )
     o_end = time.time()
     print(f"      [Step] Optimization Done: {o_end - o_start:.2f}s")
@@ -367,6 +369,7 @@ def convert_glb_to_ldr(
     use_mesh_color: bool = True,
     invert_y: bool = False,
     smart_fix: bool = True,
+    avoid_1x1: bool = False,
     step_order: str = "bottomup",
     color_smooth: int = 1,
     **kwargs: Any
@@ -435,6 +438,7 @@ def convert_glb_to_ldr(
             glb_path=glb_path,
             smart_fix=smart_fix,
             color_smooth=color_smooth,
+            avoid_1x1=avoid_1x1,
             **kwargs
         )
         
