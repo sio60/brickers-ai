@@ -219,9 +219,9 @@ def _single_conversion(
     use_mesh_color: bool,
     step_order: str,
     glb_path: str,
-    smart_fix: bool = True,
     color_smooth: int = 1,
     avoid_1x1: bool = False,
+    log_fn: Optional[Any] = None,
     **kwargs: Any
 ) -> Tuple[int, List[Dict]]:
     """
@@ -276,7 +276,7 @@ def _single_conversion(
                 combined, out_ldr_path, target, kind, plates_per_voxel,
                 interlock, max_area, solid_color, use_mesh_color, step_order, glb_path,
                 smart_fix=smart_fix, color_smooth=color_smooth,
-                pitch=new_pitch, **kwargs
+                pitch=new_pitch, log_fn=log_fn, **kwargs
             )
         else:
             print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
@@ -330,7 +330,8 @@ def _single_conversion(
     # 부유 브릭 보정
     if smart_fix:
         print(f"      [Step] Embedding floating parts...")
-        _log("brickify", "공중에 뜬 부분이 있으면 무너지기 쉬워요. 기둥을 세우고 내부 지지대를 보강하고 있어요.")
+        if log_fn:
+            log_fn("brickify", "공중에 뜬 부분이 있으면 무너지기 쉬워요. 기둥을 세우고 내부 지지대를 보강하고 있어요.")
         bricks_data = embed_floating_parts(bricks_data)
 
     # Optimize (Greedy Packing)
@@ -439,6 +440,7 @@ def convert_glb_to_ldr(
             smart_fix=smart_fix,
             color_smooth=color_smooth,
             avoid_1x1=avoid_1x1,
+            log_fn=_log,
             **kwargs
         )
         
