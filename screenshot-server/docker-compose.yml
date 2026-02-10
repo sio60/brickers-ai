@@ -1,0 +1,16 @@
+# docker-compose.yml - Screenshot Server Only (port 8002)
+services:
+  screenshot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brickers-screenshot:latest
+    container_name: brickers-screenshot
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
