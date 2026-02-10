@@ -34,7 +34,7 @@ class AnalysisResponse(BaseModel):
     job_id: Optional[str] = None # 분석된 Job ID 반환
 
 # --- Agent Import ---
-from brick_engine.agent.log_analyzer import app as log_agent_app
+from brick_engine.agent.log_agent import app as log_agent_app
 
 # --- Endpoints ---
 
