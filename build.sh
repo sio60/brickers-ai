@@ -6,6 +6,9 @@
 
 set -e
 
+echo "🧹 Cleaning up unused Docker resources..."
+docker system prune -f
+
 echo "🐳 Building Docker image..."
 docker-compose build
 
