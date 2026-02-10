@@ -23,6 +23,7 @@ def _is_truthy(v: str) -> bool:
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-2").strip()
 SQS_RESULT_QUEUE_URL = os.environ.get("AWS_SQS_RESULT_QUEUE_URL", "").strip()  # AI → Backend (RESULT 전송)
 SQS_PDF_QUEUE_URL = os.environ.get("AWS_SQS_PDF_QUEUE_URL", "").strip()  # AI → Blueprint (PDF 생성 요청)
+SQS_SCREENSHOT_QUEUE_URL = os.environ.get("AWS_SQS_SCREENSHOT_QUEUE_URL", "").strip()  # AI → Screenshot (스크린샷 요청)
 SQS_ENABLED = _is_truthy(os.environ.get("AWS_SQS_ENABLED", "false"))
 
 # boto3 lazy import
@@ -180,4 +181,50 @@ async def send_pdf_request_message(
     except Exception as e:
         log(f"❌ [SQS Producer] PDF 요청 전송 실패 | jobId={job_id} | error={str(e)}")
         # PDF 전송 실패는 파이프라인을 중단시키지 않음 (로그만 남김)
+        raise
+
+
+async def send_screenshot_request_message(
+    job_id: str,
+    ldr_url: str,
+    model_name: str,
+) -> None:
+    """
+    스크린샷 생성 요청을 brickers-screenshots-queue로 전송
+
+    Args:
+        job_id: Job ID
+        ldr_url: LDR 파일 S3 URL
+        model_name: 모델 이름
+    """
+    if not SQS_ENABLED:
+        log(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (스크린샷 요청 전송 스킵) | jobId={job_id}")
+        return
+
+    if not SQS_SCREENSHOT_QUEUE_URL:
+        log(f"[SQS Producer] ⚠️ AWS_SQS_SCREENSHOT_QUEUE_URL 미설정 (스크린샷 요청 전송 스킵) | jobId={job_id}")
+        return
+
+    log(f"📤 [SQS Producer] 스크린샷 요청 메시지 생성 | jobId={job_id}")
+
+    try:
+        client = _get_sqs_client()
+
+        message = {
+            "type": "SCREENSHOT_REQUEST",
+            "jobId": job_id,
+            "ldrUrl": ldr_url,
+            "modelName": model_name,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        response = client.send_message(
+            QueueUrl=SQS_SCREENSHOT_QUEUE_URL,
+            MessageBody=json.dumps(message),
+        )
+
+        log(f"✅ [SQS Producer] 스크린샷 요청 전송 완료 | jobId={job_id} | messageId={response.get('MessageId', 'N/A')}")
+
+    except Exception as e:
+        log(f"❌ [SQS Producer] 스크린샷 요청 전송 실패 | jobId={job_id} | error={str(e)}")
         raise
