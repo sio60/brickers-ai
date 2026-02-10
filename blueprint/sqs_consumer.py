@@ -17,8 +17,9 @@ from typing import Dict, Any
 import anyio
 import httpx
 
-from service.render_client import render_ldr_steps, RENDER_ENABLED
-from route.instructions_pdf import parse_ldr_step_boms, generate_pdf_with_images_and_bom
+from service.render_client import render_ldr_steps, render_part_thumbnails, RENDER_ENABLED
+from service.ldr_parser import parse_ldr_step_boms
+from service.pdf_generator import generate_pdf_with_images_and_bom
 from service.s3_client import USE_S3, S3_BUCKET, upload_bytes_to_s3
 from service.backend_client import notify_pdf_complete
 
@@ -108,12 +109,21 @@ async def process_pdf_message(body: Dict[str, Any]) -> None:
     _log(f"   [2/6] 렌더링 완료 | {len(step_images)} steps")
 
     # 3. BOM 파싱
-    _log("   [3/6] BOM 파싱 중...")
+    _log("   [3/7] BOM 파싱 중...")
     step_boms = parse_ldr_step_boms(ldr_text)
-    _log(f"   [3/6] BOM 파싱 완료 | {len(step_boms)} steps")
+    _log(f"   [3/7] BOM 파싱 완료 | {len(step_boms)} steps")
 
-    # 4. PDF 생성
-    _log("   [4/6] PDF 생성 중...")
+    # 4. 파츠 썸네일 렌더링
+    _log("   [4/7] 파츠 썸네일 렌더링 중...")
+    unique_parts = set()
+    for bom in step_boms:
+        for part in bom.parts:
+            unique_parts.add((part.id, part.color))
+    part_thumbs = await render_part_thumbnails(list(unique_parts))
+    _log(f"   [4/7] 파츠 썸네일 완료 | {len(part_thumbs)} thumbnails")
+
+    # 5. PDF 생성
+    _log("   [5/7] PDF 생성 중...")
     cover_img = None
     if step_images and step_images[-1] and step_images[-1][0]:
         cover_img = step_images[-1][0]
@@ -123,11 +133,12 @@ async def process_pdf_message(body: Dict[str, Any]) -> None:
         step_images=step_images,
         step_boms=step_boms,
         cover_image=cover_img,
+        part_thumbnails=part_thumbs,
     )
-    _log(f"   [4/6] PDF 생성 완료 | {len(pdf_bytes)} bytes")
+    _log(f"   [5/7] PDF 생성 완료 | {len(pdf_bytes)} bytes")
 
-    # 5. S3 업로드
-    _log("   [5/6] S3 업로드 중...")
+    # 6. S3 업로드
+    _log("   [6/7] S3 업로드 중...")
     if not (USE_S3 and S3_BUCKET):
         raise RuntimeError("S3 is not configured. Cannot upload PDF.")
 
@@ -135,12 +146,12 @@ async def process_pdf_message(body: Dict[str, Any]) -> None:
     safe_name = re.sub(r'[\\/:*?"<>|]+', "_", model_name or "instructions")
     s3_key = f"{PDF_S3_PREFIX}/{now.year:04d}/{now.month:02d}/{uuid.uuid4().hex[:8]}_{safe_name}.pdf"
     pdf_url = upload_bytes_to_s3(pdf_bytes, s3_key, "application/pdf")
-    _log(f"   [5/6] S3 업로드 완료 | {pdf_url}")
+    _log(f"   [6/7] S3 업로드 완료 | {pdf_url}")
 
-    # 6. Backend 알림
-    _log("   [6/6] Backend 알림 전송 중...")
+    # 7. Backend 알림
+    _log("   [7/7] Backend 알림 전송 중...")
     await notify_pdf_complete(job_id, pdf_url)
-    _log("   [6/6] Backend 알림 완료")
+    _log("   [7/7] Backend 알림 완료")
 
     _log(f"✅ PDF 생성 완료 | jobId={job_id} | pdfUrl={pdf_url}")
 
