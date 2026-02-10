@@ -180,13 +180,17 @@ async def process_kids_request_internal(
     """
     total_start = time.time()
     
-    # 내부 래퍼 로그 (이메일 자동 주입)
+    # 내부 래퍼 로그 (이메일 자동 주입 + Job ID 태깅 for Log Persistence)
     def _log(msg: str):
-        log(msg, user_email=user_email)
+        # Job ID가 포함되어야 persistence.py에서 필터링 가능
+        log(f"[{job_id}] {msg}", user_email=user_email)
 
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
         raise RuntimeError("TRIPO_API_KEY is not set")
+    
+    # [NEW] Job Start Time 기록 (Log Persistence용)
+    job_start_time = datetime.utcnow()
 
     req_id = job_id
     out_req_dir = GENERATED_DIR / f"req_{req_id}"
@@ -202,7 +206,7 @@ async def process_kids_request_internal(
         await send_agent_log(job_id, step, message)
 
     _log("\u2550" * 70)
-    _log(f"\U0001f680 [AI-SERVER] \uc694\uccad \uc2dc\uc791 | jobId={job_id}")
+    _log(f"\U0001f680 [AI-SERVER] \uc694\uccad \uc2dc\uc791") # jobId 중복 제거
     _log(f"\U0001f4c1 \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 URL: {source_image_url}")
     _log(f"\U0001f4ca \ud30c\ub77c\ubbf8\ud130: subject={subject} | age={age} | budget={budget}")
     s3_label = "ON" if USE_S3 else "OFF"
@@ -211,6 +215,7 @@ async def process_kids_request_internal(
     
     # [NEW] Job Start 로그 아카이빙 (비동기)
     try:
+        # 시작 시점에는 아직 로그가 별로 없으므로 start_time 안 줌 (단순 알림)
         asyncio.create_task(archive_job_logs(job_id, status="RUNNING"))
     except:
         pass
@@ -250,7 +255,7 @@ async def process_kids_request_internal(
 
             async with TripoClient(api_key=TRIPO_API_KEY) as client:
                 task_id = await client.image_to_model(image=str(corrected_path))
-                print(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
+                _log(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
 
                 with anyio.fail_after(TRIPO_WAIT_TIMEOUT_SEC):
                     task = await client.wait_for_task(task_id, verbose=DEBUG)
@@ -258,9 +263,9 @@ async def process_kids_request_internal(
                 if task.status != TaskStatus.SUCCESS:
                     raise RuntimeError(f"Tripo task failed: status={task.status}")
 
-                print(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
+                _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
                 downloaded = await client.download_task_models(task, str(out_tripo_dir))
-                print(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
+                _log(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
 
             tripo_elapsed = time.time() - step_start
             _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
@@ -320,7 +325,7 @@ async def process_kids_request_internal(
             if not glb_path.exists() or glb_path.stat().st_size == 0:
                 raise RuntimeError(f"GLB missing/empty: {glb_path}")
 
-            print(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
+            _log(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
             # 4) Brickify (CPU Intensive - Process Pool for True Parallelism)
             step_start = time.time()
@@ -386,12 +391,12 @@ async def process_kids_request_internal(
             await _sse("bom", "설계가 거의 끝났어요! 필요한 부품들을 하나씩 세어보고 있어요.")
             ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
-            print("   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
+            _log("   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
             bom_data = await anyio.to_thread.run_sync(generate_bom_from_ldr, out_ldr)
             out_bom = out_brick_dir / "bom.json"
             await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
             bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
-            print(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+            _log(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
 
             _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
 
@@ -416,11 +421,11 @@ async def process_kids_request_internal(
             _log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
             _log(f"   - Brickify: {brickify_elapsed:.2f}s")
             _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
-            print("\u2550" * 70)
+            _log("\u2550" * 70)
             
-            # [NEW] Job Success 로그 아카이빙 (비동기)
+            # [NEW] Job Success 로그 아카이빙 (비동기) - start_time 전달해서 전체 수집
             try:
-                asyncio.create_task(archive_job_logs(job_id, status="SUCCESS"))
+                asyncio.create_task(archive_job_logs(job_id, status="SUCCESS", start_time=job_start_time))
             except:
                 pass
 
@@ -448,9 +453,9 @@ async def process_kids_request_internal(
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
         
-        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence) - status="FAILED"
+        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence) - start_time 전달
         try:
-            asyncio.create_task(archive_job_logs(job_id, status="FAILED"))
+            asyncio.create_task(archive_job_logs(job_id, status="FAILED", start_time=job_start_time))
         except:
             pass
 
