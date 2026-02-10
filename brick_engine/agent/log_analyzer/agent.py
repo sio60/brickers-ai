@@ -1,7 +1,6 @@
 import json
 import logging
 import re
-import docker
 import asyncio
 from typing import List, Optional, Dict, Any, Union
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
@@ -25,58 +24,31 @@ logger = logging.getLogger("agent.log_analyzer.agent")
 async def fetch_logs_node(state: LogAnalysisState):
     """
     [노드 1: 로그 수집]
-    Docker SDK에서 실시간 로그를 가져오거나, 없으면 DB(Persistence)에서 로그를 가져옵니다.
+    DB(Persistence)에서 아카이빙된 로그를 가져옵니다. (Docker 직접 접근 제거)
     """
-    container_name = state.get("container_name", "brickers-ai-container")
     target_job_id = state.get("job_id")
+    raw_logs = state.get("logs", "")
     
-    logger.info(f"--- [로그 분석기] 1단계: 로그 수집 시작 (Job: {target_job_id or 'Auto'}) ---")
+    logger.info(f"--- [로그 분석기] 1단계: 로그 수집 시작 (Job: {target_job_id or 'Unknown'}) ---")
     
-    raw_logs = ""
+    # 1. State에 이미 로그가 있으면 사용 (테스트용 등)
+    if raw_logs:
+        logger.info(f"✅ 입력된 로그 사용 ({len(raw_logs)} bytes)")
+        filtered_logs = raw_logs
     
-    # 1. 먼저 Docker에서 실시간 로그 시도
-    try:
-        client = docker.from_env()
-        container = client.containers.get(container_name)
-        raw_logs = container.logs(tail=2000).decode("utf-8", errors="replace")
-        logger.info(f"✅ Docker 실시간 로그 수집 성공 ({len(raw_logs)} bytes)")
-    except Exception as e:
-        logger.warning(f"⚠️ Docker 로그 수집 실패: {e}")
-        # Docker 실패 시 state에 이미 로그가 있는지 확인 (테스트용 등)
-        raw_logs = state.get("logs", "")
-
-    # 2. Job ID 추출 및 로그 필터링
-    if not target_job_id:
-        # 최근 실패한 Job 검색
-        failure_matches = re.findall(r"요청 실패! \| jobId=([a-f0-9-]+)", raw_logs)
-        if failure_matches:
-            target_job_id = failure_matches[-1]
-            logger.info(f"🕵️ 최근 실패한 Job 발견: {target_job_id}")
+    # 2. Job ID로 DB 아카이브 조회
+    elif target_job_id:
+        logger.info(f"🔍 DB 아카이브 조회 중... (Job: {target_job_id})")
+        archived = await get_archived_logs(target_job_id)
+        if archived:
+            filtered_logs = archived
+            logger.info(f"✅ DB에서 아카이브된 로그 로드 성공 ({len(filtered_logs.splitlines())}줄)")
         else:
-            start_matches = re.findall(r"요청 시작 \| jobId=([a-f0-9-]+)", raw_logs)
-            if start_matches:
-                target_job_id = start_matches[-1]
-                logger.info(f"ℹ️ 최근 시작된 Job 발견: {target_job_id}")
-
-    # 3. 필터링 및 DB Fallback
-    filtered_logs = ""
-    if target_job_id:
-        job_logs_list = [line for line in raw_logs.splitlines() if target_job_id in line]
-        
-        if len(job_logs_list) < 5: # 로그가 너무 적으면 DB 아카이브 확인
-            logger.info(f"🔍 실시간 로그에 [{target_job_id}] 정보가 부족함. DB 아카이브 조회 중...")
-            archived = await get_archived_logs(target_job_id)
-            if archived:
-                filtered_logs = archived
-                logger.info(f"✅ DB에서 아카이브된 로그 로드 성공 ({len(filtered_logs.splitlines())}줄)")
-            else:
-                filtered_logs = "\n".join(job_logs_list)
-        else:
-            filtered_logs = "\n".join(job_logs_list)
-            logger.info(f"📂 실시간 로그에서 [{target_job_id}] 관련 로그 {len(job_logs_list)}줄 필터링 완료.")
+            logger.warning(f"⚠️ DB에서 로그를 찾을 수 없습니다. (Job: {target_job_id})")
+            filtered_logs = "로그 데이터가 없습니다."
     else:
-        filtered_logs = raw_logs[-4000:]
-        logger.warning("⚠️ Job ID를 식별하지 못했습니다. 마지막 4000자만 분석합니다.")
+        logger.warning("⚠️ Job ID가 제공되지 않았습니다.")
+        filtered_logs = "분석할 로그 데이터가 없습니다."
 
     user_prompt = f"""
     [대상 Job ID: {target_job_id or "알 수 없음"}]
