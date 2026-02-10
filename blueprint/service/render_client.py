@@ -111,10 +111,17 @@ def _render_snapshot(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            print(f"[LDView] stderr: {result.stderr[:500]}")
-        return Path(output_path).exists() and Path(output_path).stat().st_size > 0
+            print(f"[LDView] exit={result.returncode} | {Path(ldr_path).name}")
+            if result.stderr:
+                print(f"[LDView] stderr: {result.stderr[:500]}")
+            if result.stdout:
+                print(f"[LDView] stdout: {result.stdout[:300]}")
+        exists = Path(output_path).exists() and Path(output_path).stat().st_size > 0
+        if not exists and result.returncode == 0:
+            print(f"[LDView] No output file despite exit=0 | {Path(ldr_path).name}")
+        return exists
     except subprocess.TimeoutExpired:
-        print(f"[LDView] Timeout rendering {ldr_path}")
+        print(f"[LDView] Timeout rendering {Path(ldr_path).name}")
         return False
     except FileNotFoundError:
         print(f"[LDView] Binary not found: {LDVIEW_BIN}")
@@ -187,6 +194,21 @@ def _render_all_steps_sync(
     return step_images
 
 
+def _make_single_part_ldr(part_id: str, color: int) -> str:
+    """개별 파츠를 위한 완전한 LDR 파일 생성"""
+    # part_id가 이미 소문자 + 확장자 제거된 상태
+    # LDView가 인식하려면 최소한의 LDraw MPD 헤더 필요
+    return (
+        f"0 FILE {part_id}_thumb.ldr\n"
+        f"0 {part_id}_thumb.ldr\n"
+        f"0 Name: {part_id}_thumb.ldr\n"
+        "0 Author: Brickers\n"
+        f"1 {color} 0 0 0 1 0 0 0 1 0 0 0 1 {part_id}.dat\n"
+        "0 STEP\n"
+        "0 NOFILE\n"
+    )
+
+
 def _render_part_thumbnails_sync(
     parts: List[Tuple[str, int]],
     width: int = 256,
@@ -196,14 +218,14 @@ def _render_part_thumbnails_sync(
     개별 파츠 썸네일 렌더링.
     Returns: {"partId_color": PNG bytes, ...}
     """
-    from typing import Dict as DictType
-
-    thumbnails: DictType[str, bytes] = {}
+    thumbnails: Dict[str, bytes] = {}
     if not parts:
         return thumbnails
 
     tmpdir = tempfile.mkdtemp(prefix="brickers_thumbs_")
     camera = (250, -350, 250)  # 45° quarter view
+    ok_count = 0
+    fail_count = 0
 
     try:
         for part_id, color in parts:
@@ -211,10 +233,7 @@ def _render_part_thumbnails_sync(
             if key in thumbnails:
                 continue
 
-            ldr_content = (
-                f"0 Part Thumbnail\n"
-                f"1 {color} 0 0 0 1 0 0 0 1 0 0 0 1 {part_id}.dat\n"
-            )
+            ldr_content = _make_single_part_ldr(part_id, color)
             ldr_file = os.path.join(tmpdir, f"{key}.ldr")
             png_file = os.path.join(tmpdir, f"{key}.png")
 
@@ -231,10 +250,13 @@ def _render_part_thumbnails_sync(
                 buf = BytesIO()
                 padded.save(buf, format="PNG")
                 thumbnails[key] = buf.getvalue()
-                print(f"  [Thumb] {key}: OK")
+                ok_count += 1
             else:
                 thumbnails[key] = b""
-                print(f"  [Thumb] {key}: FAILED")
+                fail_count += 1
+                print(f"  [Thumb] FAILED: {key} (part={part_id}.dat, color={color})")
+
+        print(f"[Thumb] Done: {ok_count} OK, {fail_count} FAILED out of {len(parts)} parts")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
