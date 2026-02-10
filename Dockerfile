@@ -55,6 +55,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     unzip \
     xauth \
+    libharfbuzz0b \
+    libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 # LDView AppImage → extract (Docker에서 FUSE 불가하므로 풀어서 사용)
