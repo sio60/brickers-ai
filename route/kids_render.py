@@ -360,6 +360,7 @@ async def process_kids_request_internal(
                     step_order="bottomup",
                     extend_catalog=True,
                     max_len=8,
+                    avoid_1x1=True, # 1x1 브릭 금지 로직 활성화
                 )
 
             result = await anyio.to_thread.run_sync(run_brickify)
