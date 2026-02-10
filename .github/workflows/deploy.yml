@@ -143,6 +143,10 @@ jobs:
             # --- SQS ---
             AWS_SQS_PDF_QUEUE_URL=${{ secrets.AWS_SQS_PDF_QUEUE_URL }}
             AWS_SQS_ENABLED=true
+            SQS_POLL_INTERVAL=5
+            SQS_MAX_MESSAGES=5
+            SQS_WAIT_TIME=10
+            SQS_VISIBILITY_TIMEOUT=600
 
             # --- Backend ---
             BACKEND_URL=${{ secrets.BACKEND_URL }}
