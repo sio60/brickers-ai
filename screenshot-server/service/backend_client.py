@@ -36,3 +36,23 @@ async def notify_screenshots_complete(job_id: str, screenshot_urls: Dict[str, st
         r.raise_for_status()
 
     _log(f"✅ Backend 알림 성공 | jobId={job_id} | status={r.status_code}")
+
+
+async def notify_gallery_screenshots_complete(gallery_post_id: str, screenshot_urls: Dict[str, str]) -> None:
+    """갤러리 포스트 screenshotUrls 업데이트 알림 전송 (백필용)"""
+    url = f"{BACKEND_URL}/api/gallery/{gallery_post_id}/screenshots"
+    headers = {}
+    if INTERNAL_API_TOKEN:
+        headers["X-Internal-Token"] = INTERNAL_API_TOKEN
+
+    _log(f"📤 Gallery 백필 알림 전송 | postId={gallery_post_id} | url={url}")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.patch(
+            url,
+            json={"screenshotUrls": screenshot_urls},
+            headers=headers,
+        )
+        r.raise_for_status()
+
+    _log(f"✅ Gallery 백필 알림 성공 | postId={gallery_post_id} | status={r.status_code}")

@@ -19,7 +19,7 @@ import httpx
 
 from service.render_client import render_6_views, RENDER_ENABLED
 from service.s3_client import USE_S3, S3_BUCKET, upload_bytes_to_s3
-from service.backend_client import notify_screenshots_complete
+from service.backend_client import notify_screenshots_complete, notify_gallery_screenshots_complete
 
 
 def _log(msg: str) -> None:
@@ -84,12 +84,19 @@ async def process_screenshot_message(body: Dict[str, Any]) -> None:
     2. 6면 렌더링 (LDView)
     3. S3 업로드 (6장)
     4. Backend 알림
+    source가 "gallery_backfill"이면 갤러리 포스트 직접 업데이트
     """
-    job_id = body["jobId"]
+    source = body.get("source", "job")
+    job_id = body.get("jobId", "")
+    gallery_post_id = body.get("galleryPostId", "")
     ldr_url = body["ldrUrl"]
     model_name = body.get("modelName", "model")
 
-    _log(f"📋 스크린샷 생성 시작 | jobId={job_id} | model={model_name}")
+    identifier = gallery_post_id if source == "gallery_backfill" else job_id
+    _log(f"📋 스크린샷 생성 시작 | source={source} | id={identifier} | model={model_name}")
+
+    # S3 key용 ID
+    s3_id = gallery_post_id if source == "gallery_backfill" else job_id
 
     # 1. LDR 다운로드
     _log(f"   [1/4] LDR 다운로드 중... | {ldr_url[:80]}")
@@ -118,7 +125,7 @@ async def process_screenshot_message(body: Dict[str, Any]) -> None:
             _log(f"   [3/4] {view_name}: 빈 이미지 스킵")
             continue
 
-        s3_key = f"{SCREENSHOT_S3_PREFIX}/{now.year:04d}/{now.month:02d}/{job_id}_{view_name}.png"
+        s3_key = f"{SCREENSHOT_S3_PREFIX}/{now.year:04d}/{now.month:02d}/{s3_id}_{view_name}.png"
         url = upload_bytes_to_s3(png_bytes, s3_key, "image/png")
         screenshot_urls[view_name] = url
         _log(f"   [3/4] {view_name}: 업로드 완료")
@@ -127,10 +134,13 @@ async def process_screenshot_message(body: Dict[str, Any]) -> None:
 
     # 4. Backend 알림
     _log("   [4/4] Backend 알림 전송 중...")
-    await notify_screenshots_complete(job_id, screenshot_urls)
+    if source == "gallery_backfill":
+        await notify_gallery_screenshots_complete(gallery_post_id, screenshot_urls)
+    else:
+        await notify_screenshots_complete(job_id, screenshot_urls)
     _log("   [4/4] Backend 알림 완료")
 
-    _log(f"✅ 스크린샷 생성 완료 | jobId={job_id} | views={list(screenshot_urls.keys())}")
+    _log(f"✅ 스크린샷 생성 완료 | source={source} | id={identifier} | views={list(screenshot_urls.keys())}")
 
 
 _POLL_COUNT = 0
