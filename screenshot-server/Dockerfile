@@ -1,5 +1,5 @@
 # ============================================
-# Brickers Blueprint PDF Server
+# Brickers Screenshot Server
 # LDView + LDraw + Python (AI 라이브러리 없음)
 # ============================================
 
@@ -13,7 +13,6 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
-    libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -26,12 +25,8 @@ FROM python:3.11.9-slim AS runtime
 
 WORKDIR /app
 
-# ✅ stdout 버퍼링 비활성화 (Docker 컨테이너에서 실시간 로그 출력)
-ENV PYTHONUNBUFFERED=1
-
-# 런타임 라이브러리, 폰트, LDView 의존성 설치
+# 런타임 라이브러리, LDView 의존성 설치
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    fonts-nanum \
     xvfb \
     libosmesa6 \
     libgl1-mesa-glx \
@@ -62,6 +57,7 @@ RUN mkdir -p /usr/share/ldraw && \
     rm /tmp/ldraw.zip
 
 ENV LDRAWDIR=/usr/share/ldraw
+ENV PYTHONUNBUFFERED=1
 
 # builder 스테이지에서 빌드된 wheel 복사 및 설치
 COPY --from=python-builder /build/wheels /tmp/wheels
@@ -72,6 +68,6 @@ RUN pip install --no-cache-dir --find-links=/tmp/wheels -r requirements.txt \
 # 소스코드 복사
 COPY . .
 
-EXPOSE 8001
+EXPOSE 8002
 
-CMD ["python", "-u", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["python", "-u", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8002"]

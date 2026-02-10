@@ -28,7 +28,6 @@ from service.kids_config import (
     KIDS_TOTAL_TIMEOUT_SEC,
     TRIPO_WAIT_TIMEOUT_SEC,
     DOWNLOAD_TIMEOUT_SEC,
-    MAX_CONCURRENT_TASKS,
     AGE_TO_BUDGET,
     budget_to_start_target,
     DEBUG,
@@ -50,7 +49,7 @@ from service.brickify_loader import (
 )
 
 # PDF Generation (SQS로 Blueprint 서버에 위임)
-from route.sqs_producer import send_pdf_request_message
+from route.sqs_producer import send_pdf_request_message, send_screenshot_request_message
 
 # Log Analysis
 from brick_engine.agent.log_analyzer.persistence import archive_job_logs
@@ -68,7 +67,7 @@ def log(msg: str, user_email: str = "System") -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     # 긴 이메일은 앞부분만 출력
     user_tag = f"[{user_email}]" if user_email else "[System]"
-    print(f"[{ts}] {user_tag} {msg}")
+    print(f"[{ts}] {user_tag} {msg}", flush=True)
 
 
 # --------------- helpers ---------------
@@ -409,7 +408,7 @@ async def process_kids_request_internal(
 
             _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
 
-            # 5-2) PDF 생성 요청 (Blueprint 서버로 SQS 위임)
+            # 5-2) PDF + Screenshot 생성 요청 (SQS로 위임)
             pdf_url = None
             await _sse("pdf", "조립 순서를 정리해서 설명서로 옮기고 있어요.")
             try:
@@ -421,6 +420,16 @@ async def process_kids_request_internal(
                 _log("📤 [STEP 5/5] PDF 생성 요청 전송 (brickers-blueprints-queue)")
             except Exception as pdf_err:
                 _log(f"⚠️ [STEP 5/5] PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
+
+            try:
+                await send_screenshot_request_message(
+                    job_id=job_id,
+                    ldr_url=ldr_url,
+                    model_name=final_subject or "Brickers Model",
+                )
+                _log("📤 [STEP 5/5] 스크린샷 생성 요청 전송 (brickers-screenshots-queue)")
+            except Exception as ss_err:
+                _log(f"⚠️ [STEP 5/5] 스크린샷 SQS 전송 실패 (파이프라인 계속): {ss_err}")
 
             await _sse("complete", "설계가 끝났어요. 결과를 한번 살펴볼까요?")
 
