@@ -39,6 +39,9 @@ FROM python:3.11.9-slim AS runtime
 
 WORKDIR /app
 
+# ✅ stdout 버퍼링 비활성화 (Docker 컨테이너에서 실시간 로그 출력)
+ENV PYTHONUNBUFFERED=1
+
 # 런타임 라이브러리
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libatlas-base-dev \
@@ -64,4 +67,5 @@ COPY . .
 EXPOSE 8000
 
 # uvicorn 실행
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# ✅ 프로덕션에서는 --reload 제거 (subprocess 파이프 버퍼링 방지)
+CMD ["python", "-u", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
