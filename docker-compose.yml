@@ -1,7 +1,6 @@
-# docker-compose.yml (최적화 버전)
+# docker-compose.yml - AI Server Only (port 8000)
 services:
   app:
-    # 로컬 빌드 사용 (또는 수동으로 빌드한 이미지)
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,6 +9,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     volumes:
       # ✅ 소스코드 마운트
       - ./route:/app/route
@@ -28,30 +29,9 @@ services:
       # ✅ Docker Socket (로그 수집용, Read-Only)
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      # ✅ 시간대 설정 (한국)
       - TZ=Asia/Seoul
-      - KIDS_TOTAL_TIMEOUT_SEC=840
-      - TRIPO_WAIT_TIMEOUT_SEC=780
-      - S3_PREFIX=uploads/ai-generated
-      # PYTHONUNBUFFERED: 로그 즉시 출력
       - PYTHONUNBUFFERED=1
-      # ✅ SQS 설정 (2개 Queue 분리)
-      - AWS_SQS_REQUEST_QUEUE_URL=${AWS_SQS_REQUEST_QUEUE_URL}
-      - AWS_SQS_RESULT_QUEUE_URL=${AWS_SQS_RESULT_QUEUE_URL}
-      - AWS_SQS_ENABLED=${AWS_SQS_ENABLED:-true}
-      - SQS_POLL_INTERVAL=${SQS_POLL_INTERVAL:-5}
-      - SQS_MAX_MESSAGES=${SQS_MAX_MESSAGES:-10}
-      - SQS_VISIBILITY_TIMEOUT=${SQS_VISIBILITY_TIMEOUT:-1800}
-      - SQS_WAIT_TIME=${SQS_WAIT_TIME:-10}
-      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-5}
-      # ✅ Backend 연동 (Stage 업데이트용)
-      - BACKEND_URL=${BACKEND_URL:-http://backend:8080}
-      # ✅ Co-Scientist Memory (RAG)
-      - ATLAS_VECTOR_INDEX_MEMORY=${ATLAS_VECTOR_INDEX_MEMORY:-co_scientist_memory_index}
-      - HF_EMBED_MODEL=${HF_EMBED_MODEL:-intfloat/multilingual-e5-small}
-      # ✅ Internal API Token (Backend 로그 전송 인증)
-      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - S3_PREFIX=uploads/ai-generated
 
-# ✅ Named Volume 정의
 volumes:
   hf_cache:

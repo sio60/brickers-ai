@@ -1,0 +1,16 @@
+# docker-compose.yml - Blueprint PDF Server Only (port 8001)
+services:
+  blueprint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brickers-blueprint:latest
+    container_name: brickers-blueprint
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
