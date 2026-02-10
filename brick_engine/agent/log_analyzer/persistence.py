@@ -4,6 +4,7 @@ import httpx
 import config
 from typing import Optional
 import datetime
+import anyio
 from .state import LogAnalysisState
 
 logger = logging.getLogger("agent.log_analyzer.persistence")
