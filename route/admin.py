@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
+
 # Logger configuration
 logger = logging.getLogger("api.admin") # Added logger setup
 
@@ -130,6 +131,32 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
                 "suggestion": "Log Agent 로직을 점검하세요."
              }
 
+        # --- [NEW] Auto-Archive Log to DB ---
+        job_id = result_state.get("job_id")
+        logs_content = result_state.get("logs", "")
+        
+        if job_id and logs_content:
+            try:
+                db = get_db()
+                if db is not None:
+                    collection = db["failed_job_logs"]
+                    doc = {
+                        "jobId": job_id,
+                        "logs": logs_content,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "container": request.container_name,
+                        "status": "FAILED", # Analysis run implies something to check, usually failure
+                        "analysis_summary": analysis_data.get("summary"),
+                        "root_cause": analysis_data.get("root_cause")
+                    }
+                    collection.replace_one({"jobId": job_id}, doc, upsert=True)
+                    logger.info(f"💾 [admin.py] Automatically archived logs for Job ID: {job_id}")
+                else:
+                    logger.warning("⚠️ [admin.py] DB connection unavailable, skipping auto-archive.")
+            except Exception as db_err:
+                logger.error(f"❌ [admin.py] Failed to auto-archive logs: {db_err}")
+        # ------------------------------------
+
         # 4. Return Structured Response
         return {
             "container": request.container_name,
@@ -137,7 +164,7 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
             "summary": analysis_data.get("summary", "분석 완료"),
             "root_cause": analysis_data.get("root_cause"),
             "suggestion": analysis_data.get("suggestion"),
-            "job_id": result_state.get("job_id")
+            "job_id": job_id
         }
 
     except Exception as e:
