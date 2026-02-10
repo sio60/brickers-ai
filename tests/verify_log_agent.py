@@ -16,7 +16,7 @@ except ImportError as e:
     # Fallback: Try project root if structure is different
     sys.path.append(str(project_root))
     try:
-        from brick_engine.agent.log_analyzer import app
+        from brick_engine.agent.log_agent import app
     except ImportError:
         print(f"Fatal: Could not import agent. Check sys.path: {sys.path}")
         sys.exit(1)

@@ -7,8 +7,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-from brick_engine.agent.log_analyzer.persistence import archive_failed_job_logs, get_archived_logs
-from brick_engine.agent.log_analyzer.agent import app
+from brick_engine.agent.log_agent import app
 
 async def test_real_docker_fetch():
     logging.basicConfig(level=logging.INFO)
