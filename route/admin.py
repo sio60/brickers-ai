@@ -59,6 +59,64 @@ class ArchiveLogRequest(BaseModel):
     client_timestamp: Optional[str] = None  # [NEW] Race Condition 방지용 timestamp
 
 
+class SystemLogRequest(BaseModel):
+    logs: List[str] # [CHANGE] str -> List[str] for $push
+    container_name: str = "brickers-ai-container"
+    timestamp: str
+    session_id: str # [NEW]
+
+# ... (middle parts omitted, keeping existing code) ...
+
+@router.post("/archive/system")
+async def archive_system_log(request: SystemLogRequest):
+    """
+    [NEW] Archive system-level logs to 'system_logs' collection.
+    Grouping: (session_id, date)
+    Action: $push to 'logs' array
+    """
+    try:
+        db = get_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database connection unavailable")
+        
+        collection = db["system_logs"]
+        
+        # Extract Date (YYYY-MM-DD) from timestamp or current time
+        try:
+            dt = datetime.fromisoformat(request.timestamp.replace("Z", "+00:00"))
+            date_str = dt.strftime("%Y-%m-%d")
+        except:
+            date_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+        # Query Key
+        filter_query = {
+            "session_id": request.session_id,
+            "date": date_str
+        }
+        
+        # Update Operation ($push with $each)
+        update_op = {
+            "$push": {
+                "logs": {"$each": request.logs}
+            },
+            "$setOnInsert": {
+                "container": request.container_name,
+                "created_at": datetime.utcnow(),
+                "session_id": request.session_id,
+                "date": date_str
+            },
+            "$set": {
+                "last_updated": datetime.utcnow()
+            }
+        }
+        
+        collection.update_one(filter_query, update_op, upsert=True)
+        return {"status": "success"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @router.get("/logs/{container_name}", response_model=LogResponse)
 def get_container_logs(
@@ -271,6 +329,7 @@ async def archive_log(request: ArchiveLogRequest):
     except Exception as e:
         logger.error(f"❌ [admin.py] Archive Failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Archive Failed: {str(e)}")
+
 
 
 @router.get("/archived/{job_id}", response_model=ArchivedLogResponse)
