@@ -205,7 +205,8 @@ TEST_HTML = """
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return TEST_HTML
+    """루트 접속 시 3D 뷰어 반환"""
+    return await viewer()
 
 
 @app.get("/api/status", tags=["info"], summary="서버 상태 확인")
