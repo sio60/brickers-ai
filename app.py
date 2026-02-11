@@ -114,6 +114,15 @@ async def startup():
         )
         app.state.chat_service = ChatService(http=app.state.openai_http, store=store)
 
+    # --- [NEW] Global log capture ---
+    try:
+        from service.log_context import GlobalLogCapture
+        glc = GlobalLogCapture() # 싱글톤이라 한번만 실행됨
+        glc.start_flusher() # Start Start Smart Batching Flusher
+        print("[FastAPI] ✅ Global Logging Enabled", flush=True)
+    except ImportError as e:
+        print(f"⚠️ [Warn] GlobalLogCapture failed: {e}", flush=True)
+
     # --- SQS Consumer 백그라운드 태스크 시작 ---
     asyncio.create_task(start_consumer())
     print("[FastAPI] ✅ SQS Consumer 백그라운드 태스크 시작", flush=True)

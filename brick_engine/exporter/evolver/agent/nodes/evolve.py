@@ -204,6 +204,14 @@ def handle_relocate(state: AgentState, proposal: Dict, action: Dict, before_floa
     occupied = _build_occupancy_set(state["model"], parts_db)
     moved_count = 0
 
+    NUDGE_OFFSETS = [
+        (0, 0),
+        (LDU_PER_STUD, 0), (-LDU_PER_STUD, 0),
+        (0, LDU_PER_STUD), (0, -LDU_PER_STUD),
+        (LDU_PER_STUD, LDU_PER_STUD), (-LDU_PER_STUD, -LDU_PER_STUD),
+        (LDU_PER_STUD, -LDU_PER_STUD), (-LDU_PER_STUD, LDU_PER_STUD),
+    ]
+
     for brick_id in mapping["target_brick_ids"]:
         transform = mapping.get("transform", {})
         if not transform.get("translation"):
@@ -215,31 +223,41 @@ def handle_relocate(state: AgentState, proposal: Dict, action: Dict, before_floa
             continue
 
         old_x, old_y, old_z = brick.position.x, brick.position.y, brick.position.z
-        new_x = old_x + t.get("x", 0)
+        base_x = old_x + t.get("x", 0)
         new_y = old_y + t.get("y", 0)
-        new_z = old_z + t.get("z", 0)
+        base_z = old_z + t.get("z", 0)
 
-        new_x, new_z = _snap_to_stud(new_x, new_z)
+        base_x, base_z = _snap_to_stud(base_x, base_z)
 
-        # 충돌 + 지지율 검사
-        can_place, reason = can_place_brick(
-            new_x, new_y, new_z, brick.part_id, parts_db, occupied,
-            support_ratio=DEFAULT_SUPPORT_RATIO
-        )
+        # nudge: 충돌 시 주변 ±1 stud 탐색
+        placed = False
+        for dx, dz in NUDGE_OFFSETS:
+            try_x = base_x + dx
+            try_z = base_z + dz
 
-        if can_place:
-            brick.position.x = new_x
-            brick.position.y = new_y
-            brick.position.z = new_z
-            moved_count += 1
-            # 파츠 이름 출력
+            can_place, reason = can_place_brick(
+                try_x, new_y, try_z, brick.part_id, parts_db, occupied,
+                support_ratio=DEFAULT_SUPPORT_RATIO
+            )
+
+            if can_place:
+                brick.position.x = try_x
+                brick.position.y = new_y
+                brick.position.z = try_z
+                moved_count += 1
+                part_info = parts_db.get(brick.part_id.lower(), {})
+                part_name = part_info.get("name", brick.part_id)
+                if dx != 0 or dz != 0:
+                    print(f"    이동됨 [{part_name}] ({int(old_x)}, {int(old_y)}, {int(old_z)}) -> ({int(try_x)}, {int(new_y)}, {int(try_z)}) (nudge)")
+                else:
+                    print(f"    이동됨 [{part_name}] ({int(old_x)}, {int(old_y)}, {int(old_z)}) -> ({int(try_x)}, {int(new_y)}, {int(try_z)})")
+                placed = True
+                break
+
+        if not placed:
             part_info = parts_db.get(brick.part_id.lower(), {})
             part_name = part_info.get("name", brick.part_id)
-            print(f"    이동됨 [{part_name}] ({int(old_x)}, {int(old_y)}, {int(old_z)}) -> ({int(new_x)}, {int(new_y)}, {int(new_z)})")
-        else:
-            part_info = parts_db.get(brick.part_id.lower(), {})
-            part_name = part_info.get("name", brick.part_id)
-            print(f"    스킵 [{part_name}]: {reason}")
+            print(f"    스킵 [{part_name}]: 주변에도 배치 불가")
 
     if moved_count > 0:
         print(f"    {moved_count}개 브릭 이동 완료")
@@ -344,6 +362,7 @@ def handle_rotate(state: AgentState, proposal: Dict, action: Dict, before_floati
 def _calculate_mirror_positions(reference_bricks: List[Dict], relationship: str, occupied: set) -> List[Dict]:
     """
     참조 브릭들의 좌표를 변환하여 새 위치 계산 (알고리즘)
+    충돌 시 주변 ±1~2 스터드 오프셋 탐색
 
     Args:
         reference_bricks: 참조 브릭 정보 [{"x": 20, "y": -48, "z": -80, "part_id": "3005", "color": 71}, ...]
@@ -354,6 +373,16 @@ def _calculate_mirror_positions(reference_bricks: List[Dict], relationship: str,
         새 위치 리스트 (충돌 없는 것만)
     """
     new_positions = []
+    # 주변 탐색 오프셋: 원래 위치 → ±1 스터드 → ±2 스터드
+    OFFSETS = [
+        (0, 0),
+        (LDU_PER_STUD, 0), (-LDU_PER_STUD, 0),
+        (0, LDU_PER_STUD), (0, -LDU_PER_STUD),
+        (LDU_PER_STUD, LDU_PER_STUD), (-LDU_PER_STUD, -LDU_PER_STUD),
+        (LDU_PER_STUD, -LDU_PER_STUD), (-LDU_PER_STUD, LDU_PER_STUD),
+        (2*LDU_PER_STUD, 0), (-2*LDU_PER_STUD, 0),
+        (0, 2*LDU_PER_STUD), (0, -2*LDU_PER_STUD),
+    ]
 
     for ref in reference_bricks:
         x, y, z = ref["x"], ref["y"], ref["z"]
@@ -373,19 +402,27 @@ def _calculate_mirror_positions(reference_bricks: List[Dict], relationship: str,
         snap_x, snap_z = _snap_to_stud(new_x, new_z)
         snap_y = int(round(y))
 
-        # 충돌 체크 (알고리즘)
-        pos_key = (snap_x, snap_y, snap_z)
-        if pos_key in occupied:
-            print(f"      스킵 ({snap_x}, {snap_y}, {snap_z}): 이미 점유됨")
-            continue
+        # 충돌 시 주변 위치 탐색
+        placed = False
+        for dx, dz in OFFSETS:
+            try_x = snap_x + dx
+            try_z = snap_z + dz
+            pos_key = (try_x, snap_y, try_z)
+            if pos_key not in occupied:
+                if dx != 0 or dz != 0:
+                    print(f"      ({snap_x}, {snap_y}, {snap_z}) 충돌 → ({try_x}, {snap_y}, {try_z})로 이동")
+                new_positions.append({
+                    "part_id": ref.get("part_id", "3005"),
+                    "x": try_x,
+                    "y": snap_y,
+                    "z": try_z,
+                    "color": ref.get("color", 15)
+                })
+                placed = True
+                break
 
-        new_positions.append({
-            "part_id": ref.get("part_id", "3005"),
-            "x": snap_x,
-            "y": snap_y,
-            "z": snap_z,
-            "color": ref.get("color", 15)
-        })
+        if not placed:
+            print(f"      스킵 ({snap_x}, {snap_y}, {snap_z}): 주변에도 빈 자리 없음")
 
     return new_positions
 
@@ -470,20 +507,39 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
     added_ids = []
     parts_db = get_config().parts_db
 
+    NUDGE_OFFSETS = [
+        (0, 0), (LDU_PER_STUD, 0), (-LDU_PER_STUD, 0),
+        (0, LDU_PER_STUD), (0, -LDU_PER_STUD),
+    ]
     for pos in new_positions:
-        # 최종 충돌 체크
-        if _check_collision_simple(state["model"], pos["x"], pos["y"], pos["z"],
-                                   pos["part_id"], parts_db, occupied):
-            print(f"      최종 스킵 ({pos['x']}, {pos['y']}, {pos['z']}): 충돌")
-            continue
+        placed = False
+        for dx, dz in NUDGE_OFFSETS:
+            try_x = pos["x"] + dx
+            try_z = pos["z"] + dz
+            if _check_collision_simple(state["model"], try_x, pos["y"], try_z,
+                                       pos["part_id"], parts_db, occupied):
+                continue
 
-        result = add_brick(state["model"], pos["part_id"], pos["x"], pos["y"], pos["z"], pos["color"])
-        if result["success"]:
-            added_ids.append(result["brick_id"])
-            occupied.add((pos["x"], pos["y"], pos["z"]))
-            part_info = parts_db.get(pos["part_id"].lower(), {})
-            part_name = part_info.get("name", pos["part_id"])
-            print(f"    추가: [{part_name}] ({pos['x']}, {pos['y']}, {pos['z']})")
+            result = add_brick(state["model"], pos["part_id"], try_x, pos["y"], try_z, pos["color"])
+            if result["success"]:
+                added_ids.append(result["brick_id"])
+                occupied.add((try_x, pos["y"], try_z))
+                part_data = parts_db.get(pos["part_id"].lower(), {})
+                p_height = part_data.get("height", BRICK_HEIGHT)
+                p_width = part_data.get("width", 1)
+                p_depth = part_data.get("depth", 1)
+                _mark_occupied(occupied, try_x, pos["y"], try_z, p_height, p_width, p_depth)
+                part_info = parts_db.get(pos["part_id"].lower(), {})
+                part_name = part_info.get("name", pos["part_id"])
+                if dx != 0 or dz != 0:
+                    print(f"    추가: [{part_name}] ({pos['x']}, {pos['y']}, {pos['z']}) → nudge ({try_x}, {pos['y']}, {try_z})")
+                else:
+                    print(f"    추가: [{part_name}] ({try_x}, {pos['y']}, {try_z})")
+                placed = True
+                break
+
+        if not placed:
+            print(f"      최종 스킵 ({pos['x']}, {pos['y']}, {pos['z']}): 주변에도 배치 불가")
 
     action["deleted_backups"] = deleted_backups
     action["added_ids"] = added_ids

@@ -59,6 +59,7 @@ def _call_vision_api(content: List[Dict], max_tokens: int = 1000) -> str:
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": content}],
             max_tokens=max_tokens,
+            temperature=0.0,
             timeout=API_TIMEOUT
         )
         return response.choices[0].message.content
@@ -169,7 +170,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=1500
+        max_tokens=1500,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content
@@ -225,7 +227,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=500
+        max_tokens=500,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content
@@ -305,7 +308,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=500
+        max_tokens=500,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content
@@ -410,7 +414,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=1000
+        max_tokens=1000,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content
@@ -496,7 +501,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=1000
+        max_tokens=1000,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content
@@ -605,7 +611,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=800
+        max_tokens=800,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content
@@ -672,7 +679,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=500
+        max_tokens=500,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content
@@ -778,7 +786,8 @@ Return only valid JSON."""}
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": content}],
-        max_tokens=800
+        max_tokens=800,
+        temperature=0.0
     )
 
     result_text = response.choices[0].message.content

@@ -12,7 +12,14 @@ import traceback
 from pathlib import Path
 from typing import Dict, Optional, Any
 from datetime import datetime
+import sys
+import io
 import asyncio
+from typing import TextIO
+
+from service.log_context import JobLogContext
+
+# [REMOVED] Local LogCapture Class (Replaced by GlobalLogCapture + JobLogContext)
 
 import anyio
 import httpx
@@ -171,26 +178,27 @@ async def process_kids_request_internal(
     age: str,
     budget: Optional[int] = None,
     subject: Optional[str] = None,
-    user_email: str = "unknown", # [추가]
+    user_email: str = "unknown",
+    external_log_buffer: Optional[list[str]] = None, # [NEW]
 ) -> Dict[str, Any]:
     """
     Kids 렌더링 내부 로직 (SQS Consumer에서 호출)
-    시그니처/리턴 100% 동일 유지
     """
     total_start = time.time()
     
-    # 내부 래퍼 로그 (이메일 자동 주입 + Job ID 태깅 for Log Persistence)
+    # 내부 래퍼 로그 (이메일 자동 주입 + Job ID 태깅)
     def _log(msg: str):
-        # Job ID가 포함되어야 persistence.py에서 필터링 가능
         log(f"[{job_id}] {msg}", user_email=user_email)
 
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
         raise RuntimeError("TRIPO_API_KEY is not set")
     
-    # [NEW] In-Memory Log Buffer (Docker API 의존 제거)
-    # 직접 생성한 로그 문자열을 리스트에 모아두었다가 전송 (가장 빠르고 안전함)
-    job_log_buffer: list[str] = []
+    # [NEW] In-Memory Log Buffer (Use external if provided)
+    if external_log_buffer is not None:
+        job_log_buffer = external_log_buffer
+    else:
+        job_log_buffer = []
 
     req_id = job_id
     out_req_dir = GENERATED_DIR / f"req_{req_id}"
@@ -201,13 +209,14 @@ async def process_kids_request_internal(
     out_brick_dir.mkdir(parents=True, exist_ok=True)
 
     # 내부 래퍼 로그 (이메일 자동 주입 + 버퍼링)
+    # [수정] LogCapture가 이미 stdout을 캡쳐하므로, 
+    # 여기서는 print()만 찍으면 Docker와 Buffer 양쪽으로 들어감.
+    # 단, log() 함수 자체가 print()를 호출하므로 중복 저장을 막기 위해
+    # log()는 그대로 두고, LogCapture가 알아서 캡쳐하게 둠.
     def _log(msg: str):
-        # 1. 콘솔 출력 (기존)
+        # 1. 콘솔 출력 -> LogCapture가 가로채서 Buffer에도 넣음
         log(f"[{job_id}] {msg}", user_email=user_email)
-        # 2. 메모리 버퍼 저장 (New) -> 나중에 DB로 보냄
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        job_log_buffer.append(f"[{ts}] {msg}")
-
+        
     # --- SSE 실시간 로그 전송용 (async) ---
     async def _sse(step: str, message: str = ""):
         """파이프라인 단계별 SSE 로그 전송 (async httpx)"""
@@ -222,230 +231,275 @@ async def process_kids_request_internal(
     _log("\u2550" * 70)
     
     # [NEW] Job Start 로그 아카이빙 (비동기) - 현재까지 쌓인 로그 전송
-    try:
-        # copy()를 보내서 비동기 실행 중에 원본 리스트가 바뀌어도 문제 없게 함
-        asyncio.create_task(archive_job_logs(job_id, list(job_log_buffer), status="RUNNING"))
-    except:
-        pass
+    # [NEW] Job Start 로그 아카이빙 (비동기)
+    # LogCapture 적용 전이라 수동 저장 (하지만 LogCapture 적용을 with문으로 옮길 예정)
+    
+    # [NEW] 비동기 아카이빙 헬퍼
+    async def _async_archive(status: str = "RUNNING"):
+        try:
+            # 버퍼 복사본 전달
+            await archive_job_logs(job_id, list(job_log_buffer), status=status)
+        except Exception as e:
+            print(f"⚠️ [LogArchive] Failed: {e}")
 
     try:
-        with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
-
-            # 0) S3에서 원본 이미지 다운로드
-            step_start = time.time()
-            _log("\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
-            await _sse("download", "이미지 수신 완료. 구조부터 살펴보겠습니다.")
-            img_bytes = await _download_from_s3(source_image_url)
-            raw_path = out_req_dir / "raw.png"
-            await _write_bytes_async(raw_path, img_bytes)
-            _log(f"\u2705 [STEP 0/5] \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
-
-            # 1) Gemini 보정
-            step_start = time.time()
-            _log("\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
-            await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
-            corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
-
-            final_subject = subject or ai_subject
-
-            corrected_path = out_req_dir / "corrected.png"
-            await _write_bytes_async(corrected_path, corrected_bytes)
-            corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
-            _log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
-
-            await update_job_suggested_tags(job_id, ai_tags)
-
-            # 2) Tripo 3D
-            step_start = time.time()
-            _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
-            await _sse("tripo", "2D 정보를 바탕으로 3D 형태를 잡아봅니다.")
-            await update_job_stage(job_id, "THREE_D_PREVIEW")
-
-            async with TripoClient(api_key=TRIPO_API_KEY) as client:
-                task_id = await client.image_to_model(image=str(corrected_path))
-                _log(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
-
-                with anyio.fail_after(TRIPO_WAIT_TIMEOUT_SEC):
-                    task = await client.wait_for_task(task_id, verbose=DEBUG)
-
-                if task.status != TaskStatus.SUCCESS:
-                    raise RuntimeError(f"Tripo task failed: status={task.status}")
-
-                _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
-                downloaded = await client.download_task_models(task, str(out_tripo_dir))
-                _log(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
-
-            tripo_elapsed = time.time() - step_start
-            _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
-
-            # 3-1) downloaded 정규화
-            fixed_downloaded: Dict[str, str] = {}
-            for model_type, path_or_url in (downloaded or {}).items():
-                if not path_or_url:
-                    continue
-                s = str(path_or_url)
-                if s.startswith(("http://", "https://")):
-                    ext_guess = ".glb" if ".glb" in s.lower() else ".bin"
-                    dst = out_tripo_dir / f"{model_type}{ext_guess}"
-                    await _download_http_to_file(s, dst)
-                    fixed_downloaded[model_type] = str(dst)
-                else:
-                    fixed_downloaded[model_type] = s
-
-            missing = []
-            for k, v in fixed_downloaded.items():
-                pv = Path(v)
-                if not pv.exists():
-                    missing.append((k, v, "NOT_EXISTS"))
-                elif pv.stat().st_size == 0:
-                    missing.append((k, v, "ZERO_SIZE"))
-            if missing:
-                raise RuntimeError(f"Downloaded files missing: {missing}")
-
-            # 3-2) URL map
-            files_url: Dict[str, str] = {}
-            for model_type, path_str in fixed_downloaded.items():
-                files_url[model_type] = to_generated_url(Path(path_str), out_dir=out_tripo_dir)
-
-            if not any(u.lower().endswith(".glb") for u in files_url.values()):
-                glb_fallback = find_glb_in_dir(out_tripo_dir)
-                if glb_fallback:
-                    files_url["glb"] = to_generated_url(glb_fallback, out_dir=out_tripo_dir)
-
-            if not files_url:
-                raise RuntimeError("No downloadable model files found in out_tripo_dir")
-
-            model_url = _pick_model_url(files_url)
-
-            # 3) GLB 확보
-            glb_path = pick_glb_from_downloaded(fixed_downloaded, out_tripo_dir)
-
-            if glb_path is None:
-                local = _local_generated_path_from_url(model_url)
-                if local and local.exists() and local.stat().st_size > 0:
-                    glb_path = local
-                else:
-                    if not model_url.startswith(("http://", "https://")):
-                        raise RuntimeError(f"Cannot resolve glb for brickify: {model_url}")
-                    glb_path = out_brick_dir / "input.glb"
-                    await _download_http_to_file(model_url, glb_path)
-
-            if not glb_path.exists() or glb_path.stat().st_size == 0:
-                raise RuntimeError(f"GLB missing/empty: {glb_path}")
-
-            _log(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
-
-            # 4) Brickify (CPU Intensive - Process Pool for True Parallelism)
-            step_start = time.time()
-            eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
-            # PRO 모드(5000개 수준) 시 복셀 제한 상향 (해상도 유지)
-            v_limit = 50000 if eff_budget >= 4000 else (20000 if eff_budget >= 1000 else 6000)
-            start_target = budget_to_start_target(eff_budget)
+        # [CHANGE] Global Context 사용
+        with JobLogContext(job_log_buffer):
+            # 초기 start 로그도 캡쳐됨
+            # _log 호출 시 -> stdout write -> GlobalLogCapture -> Tee.write -> job_log_buffer_var.get() -> buffer append
             
-            _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
-            await update_job_stage(job_id, "MODEL")
-            await _sse("brickify", "브릭 단위로 분해하면서 안정적인 조합을 탐색 중이에요.")
+            # Start Log 이미 위에서 찍혔으니 아카이빙 한번 실행
+            await _async_archive()
+            
+            with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
 
-            out_ldr = out_brick_dir / "result.ldr"
+                # 0) S3에서 원본 이미지 다운로드
+                step_start = time.time()
+                _log("\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
+                await _sse("download", "이미지 수신 완료. 구조부터 살펴보겠습니다.")
+                img_bytes = await _download_from_s3(source_image_url)
+                raw_path = out_req_dir / "raw.png"
+                await _write_bytes_async(raw_path, img_bytes)
+                _log(f"\u2705 [STEP 0/5] \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+            
+                # [NEW] Checkpoint Save
+                await _async_archive()
 
-            # Engine 로드 (캐시됨)
-            global _CONVERT_FN
-            if _CONVERT_FN is None:
-                _CONVERT_FN = load_engine_convert()
+                # 1) Gemini 보정
+                step_start = time.time()
+                _log("\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
+                await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
+                corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
 
-            # Brickify 실행 (CPU-heavy -> thread로 실행)
-            def run_brickify():
-                return _CONVERT_FN(
-                    str(glb_path),
-                    str(out_ldr),
-                    target=start_target,
-                    budget=eff_budget,
-                    min_target=5,
-                    shrink=0.6,
-                    search_iters=10,
-                    kind="brick",
-                    plates_per_voxel=3,
-                    interlock=True,
-                    max_area=20,
-                    solid_color=4,
-                    use_mesh_color=True,
-                    invert_y=False,
-                    smart_fix=True,
-                    span=4,
-                    max_new_voxels=v_limit,
-                    refine_iters=4,
-                    ensure_connected=True,
-                    min_embed=2,
-                    erosion_iters=1,
-                    fast_search=True,
-                    step_order="bottomup",
-                    extend_catalog=True,
-                    max_len=8,
-                    avoid_1x1=False,      # 1x1 허용 (디테일 사수)
-                    hollow=(eff_budget >= 1000), # 1000개 이상은 속 비우기 활성화
-                )
+                final_subject = subject or ai_subject
 
-            result = await anyio.to_thread.run_sync(run_brickify)
+                corrected_path = out_req_dir / "corrected.png"
+                await _write_bytes_async(corrected_path, corrected_bytes)
+                corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
+                _log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+                
+                # [NEW] Checkpoint Save
+                await _async_archive()
 
-            brickify_elapsed = time.time() - step_start
-            _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+                await update_job_suggested_tags(job_id, ai_tags)
 
-            if not out_ldr.exists() or out_ldr.stat().st_size == 0:
-                raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
+                # 2) Tripo 3D
+                step_start = time.time()
+                _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
+                await _sse("tripo", "2D 정보를 바탕으로 3D 형태를 잡아봅니다.")
+                await update_job_stage(job_id, "THREE_D_PREVIEW")
 
-            # 5) 결과 URL + BOM
-            step_start = time.time()
-            s3_mode = "ON" if USE_S3 else "OFF"
-            _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
-            await _sse("bom", "현재 설계를 기준으로 필요한 부품 수를 계산하고 있어요.")
-            ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
+                async with TripoClient(api_key=TRIPO_API_KEY) as client:
+                    task_id = await client.image_to_model(image=str(corrected_path))
+                    _log(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
 
-            _log("   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
-            bom_data = await anyio.to_thread.run_sync(generate_bom_from_ldr, out_ldr)
-            out_bom = out_brick_dir / "bom.json"
-            await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
-            bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
-            _log(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+                    # [CHANGE] Custom Async Polling (Non-blocking)
+                    # wait_for_task might use time.sleep(), blocking the event loop.
+                    # We implement our own loop with asyncio.sleep() to allow _auto_flush_logs to run.
+                    start_time = time.time()
+                    while True:
+                        if time.time() - start_time > TRIPO_WAIT_TIMEOUT_SEC:
+                            raise RuntimeError(f"Tripo task timed out after {TRIPO_WAIT_TIMEOUT_SEC}s")
 
-            _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
+                        # Check status
+                        task = await client.get_task(task_id)
+                        if task.status == TaskStatus.SUCCESS:
+                            break
+                        elif task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+                             raise RuntimeError(f"Tripo task failed: status={task.status}")
+                        
+                        # [CHANGE] Force log output every loop (2s) to ensure Real-time DB update.
+                        # Even if DEBUG=False, we want to show "Generating..." in the DB logs.
+                        # Only print if progress changed or every 10s? 
+                        # For now, print every time to debug the "no log" issue.
+                        progress = task.progress if hasattr(task, 'progress') else '?'
+                        _log(f"      [Tripo] Generating... ({int(time.time() - start_time)}s) | progress={progress}")
 
-            # 5-2) PDF + Screenshot 생성 요청 (SQS로 위임)
-            pdf_url = None
-            await _sse("pdf", "조립 순서를 정리해서 설명서로 옮기고 있어요.")
-            try:
-                await send_pdf_request_message(
-                    job_id=job_id,
-                    ldr_url=ldr_url,
-                    model_name=final_subject or "Brickers Model",
-                )
-                _log("📤 [STEP 5/5] PDF 생성 요청 전송 (brickers-blueprints-queue)")
-            except Exception as pdf_err:
-                _log(f"⚠️ [STEP 5/5] PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
+                        await asyncio.sleep(2.0) # Yield control to _auto_flush_logs
 
-            try:
-                await send_screenshot_request_message(
-                    job_id=job_id,
-                    ldr_url=ldr_url,
-                    model_name=final_subject or "Brickers Model",
-                )
-                _log("📤 [STEP 5/5] 스크린샷 생성 요청 전송 (brickers-screenshots-queue)")
-            except Exception as ss_err:
-                _log(f"⚠️ [STEP 5/5] 스크린샷 SQS 전송 실패 (파이프라인 계속): {ss_err}")
+                    _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
+                    downloaded = await client.download_task_models(task, str(out_tripo_dir))
+                    _log(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
 
-            await _sse("complete", "설계가 끝났어요. 결과를 한번 살펴볼까요?")
+                tripo_elapsed = time.time() - step_start
+                _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
 
-            total_elapsed = time.time() - total_start
-            _log("\u2550" * 70)
-            _log(f"\U0001f389 [AI-SERVER] \uc694\uccad \uc644\ub8cc! | jobId={job_id}")
-            _log(f"\u23f1\ufe0f  \ucd1d \uc18c\uc694\uc2dc\uac04: {total_elapsed:.2f}s ({total_elapsed/60:.1f}\ubd84)")
-            _log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
-            _log(f"   - Brickify: {brickify_elapsed:.2f}s")
-            _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
-            _log("\u2550" * 70)
+                # 3-1) downloaded 정규화
+                
+                # [NEW] Checkpoint Save
+                await _async_archive()
+                fixed_downloaded: Dict[str, str] = {}
+                for model_type, path_or_url in (downloaded or {}).items():
+                    if not path_or_url:
+                        continue
+                    s = str(path_or_url)
+                    if s.startswith(("http://", "https://")):
+                        ext_guess = ".glb" if ".glb" in s.lower() else ".bin"
+                        dst = out_tripo_dir / f"{model_type}{ext_guess}"
+                        await _download_http_to_file(s, dst)
+                        fixed_downloaded[model_type] = str(dst)
+                    else:
+                        fixed_downloaded[model_type] = s
+
+                missing = []
+                for k, v in fixed_downloaded.items():
+                    pv = Path(v)
+                    if not pv.exists():
+                        missing.append((k, v, "NOT_EXISTS"))
+                    elif pv.stat().st_size == 0:
+                        missing.append((k, v, "ZERO_SIZE"))
+                if missing:
+                    raise RuntimeError(f"Downloaded files missing: {missing}")
+
+                # 3-2) URL map
+                files_url: Dict[str, str] = {}
+                for model_type, path_str in fixed_downloaded.items():
+                    files_url[model_type] = to_generated_url(Path(path_str), out_dir=out_tripo_dir)
+
+                if not any(u.lower().endswith(".glb") for u in files_url.values()):
+                    glb_fallback = find_glb_in_dir(out_tripo_dir)
+                    if glb_fallback:
+                        files_url["glb"] = to_generated_url(glb_fallback, out_dir=out_tripo_dir)
+
+                if not files_url:
+                    raise RuntimeError("No downloadable model files found in out_tripo_dir")
+
+                model_url = _pick_model_url(files_url)
+
+                # 3) GLB 확보
+                glb_path = pick_glb_from_downloaded(fixed_downloaded, out_tripo_dir)
+
+                if glb_path is None:
+                    local = _local_generated_path_from_url(model_url)
+                    if local and local.exists() and local.stat().st_size > 0:
+                        glb_path = local
+                    else:
+                        if not model_url.startswith(("http://", "https://")):
+                            raise RuntimeError(f"Cannot resolve glb for brickify: {model_url}")
+                        glb_path = out_brick_dir / "input.glb"
+                        await _download_http_to_file(model_url, glb_path)
+
+                if not glb_path.exists() or glb_path.stat().st_size == 0:
+                    raise RuntimeError(f"GLB missing/empty: {glb_path}")
+
+                _log(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
+
+                # 4) Brickify (CPU Intensive - Process Pool for True Parallelism)
+                step_start = time.time()
+                eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
+                # PRO 모드(5000개 수준) 시 복셀 제한 상향 (해상도 유지)
+                v_limit = 50000 if eff_budget >= 4000 else (20000 if eff_budget >= 1000 else 6000)
+                start_target = budget_to_start_target(eff_budget)
+                
+                _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
+                await update_job_stage(job_id, "MODEL")
+                await _sse("brickify", "브릭 단위로 분해하면서 안정적인 조합을 탐색 중이에요.")
+
+                out_ldr = out_brick_dir / "result.ldr"
+
+                # Engine 로드 (캐시됨)
+                global _CONVERT_FN
+                if _CONVERT_FN is None:
+                    _CONVERT_FN = load_engine_convert()
+
+                # Brickify 실행 (CPU-heavy -> thread로 실행)
+                def run_brickify():
+                    return _CONVERT_FN(
+                        str(glb_path),
+                        str(out_ldr),
+                        target=start_target,
+                        budget=eff_budget,
+                        min_target=5,
+                        shrink=0.6,
+                        search_iters=10,        # 5→10 (확실한 예산 수렴)
+                        kind="brick",
+                        plates_per_voxel=3,
+                        interlock=True,
+                        max_area=20,
+                        solid_color=4,
+                        use_mesh_color=True,
+                        invert_y=False,
+                        smart_fix=True,
+                        span=4,
+                        max_new_voxels=v_limit,
+                        refine_iters=4,        # 8→4 (속도 개선)
+                        ensure_connected=True,
+                        min_embed=2,
+                        erosion_iters=1,
+                        fast_search=True,
+                        step_order="bottomup",
+                        extend_catalog=True,
+                        max_len=8,
+                        avoid_1x1=False,      # 1x1 허용 (디테일 사수)
+                        hollow=(eff_budget >= 1000), # 1000개 이상은 속 비우기 활성화
+                    )
+
+                result = await anyio.to_thread.run_sync(run_brickify)
+
+                brickify_elapsed = time.time() - step_start
+                _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+                
+                # [NEW] Checkpoint Save
+                await _async_archive()
+
+                if not out_ldr.exists() or out_ldr.stat().st_size == 0:
+                    raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
+
+                # 5) 결과 URL + BOM
+                step_start = time.time()
+                s3_mode = "ON" if USE_S3 else "OFF"
+                _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
+                await _sse("bom", "현재 설계를 기준으로 필요한 부품 수를 계산하고 있어요.")
+                ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
+
+                _log("   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
+                bom_data = await anyio.to_thread.run_sync(generate_bom_from_ldr, out_ldr)
+                out_bom = out_brick_dir / "bom.json"
+                await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
+                bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
+                _log(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+
+                _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
+
+                # 5-2) PDF + Screenshot 생성 요청 (SQS로 위임)
+                pdf_url = None
+                await _sse("pdf", "조립 순서를 정리해서 설명서로 옮기고 있어요.")
+                try:
+                    await send_pdf_request_message(
+                        job_id=job_id,
+                        ldr_url=ldr_url,
+                        model_name=final_subject or "Brickers Model",
+                    )
+                    _log("📤 [STEP 5/5] PDF 생성 요청 전송 (brickers-blueprints-queue)")
+                except Exception as pdf_err:
+                    _log(f"⚠️ [STEP 5/5] PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
+
+                try:
+                    await send_screenshot_request_message(
+                        job_id=job_id,
+                        ldr_url=ldr_url,
+                        model_name=final_subject or "Brickers Model",
+                    )
+                    _log("📤 [STEP 5/5] 스크린샷 생성 요청 전송 (brickers-screenshots-queue)")
+                except Exception as ss_err:
+                    _log(f"⚠️ [STEP 5/5] 스크린샷 SQS 전송 실패 (파이프라인 계속): {ss_err}")
+
+                await _sse("complete", "설계가 끝났어요. 결과를 한번 살펴볼까요?")
+
+                total_elapsed = time.time() - total_start
+                _log("\u2550" * 70)
+                _log(f"\U0001f389 [AI-SERVER] \uc694\uccad \uc644\ub8cc! | jobId={job_id}")
+                _log(f"\u23f1\ufe0f  \ucd1d \uc18c\uc694\uc2dc\uac04: {total_elapsed:.2f}s ({total_elapsed/60:.1f}\ubd84)")
+                _log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
+                _log(f"   - Brickify: {brickify_elapsed:.2f}s")
+                _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
+                _log("\u2550" * 70)
             
             # [NEW] Job Success 로그 아카이빙 (비동기) - In-Memory Log Buffer 전달
+            # [NEW] Job Success 로그 아카이빙 (비동기) - In-Memory Log Buffer 전달
             try:
-                asyncio.create_task(archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS"))
+                # 마지막 성공 상태 전송 (await로 확실히 보냄)
+                await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
             except:
                 pass
 
@@ -464,18 +518,22 @@ async def process_kids_request_internal(
     except Exception as e:
         total_elapsed = time.time() - total_start
         tb = traceback.format_exc()
+        
+        # LogCapture가 이미 Exception 출력도 잡았을 수 있지만,
+        # 명시적으로 찍어주는 것이 안전
         _log("\u2550" * 70)
         _log(f"\u274c [AI-SERVER] \uc694\uccad \uc2e4\ud328! | jobId={job_id} | \uc18c\uc694\uc2dc\uac04={total_elapsed:.2f}s")
         _log(f"\u274c \uc5d0\ub7ec: {str(e)}")
         _log("\u2550" * 70)
-        log(tb, user_email=user_email)
+        log(tb, user_email=user_email) # 이것도 캡쳐됨
+        
         _write_error_log(out_req_dir, tb)
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
         
-        # [NEW] 실패 로그를 DB에 영구 저장 (Log Persistence) - In-Memory Log Buffer 전달
+        # [NEW] 실패 로그 영구 저장 (await로 확실히 보냄)
         try:
-            asyncio.create_task(archive_job_logs(job_id, list(job_log_buffer), status="FAILED"))
+            await archive_job_logs(job_id, list(job_log_buffer), status="FAILED")
         except:
             pass
 

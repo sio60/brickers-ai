@@ -56,6 +56,65 @@ class ArchiveLogRequest(BaseModel):
     logs: str
     container_name: str = "brickers-ai-container"
     status: str = "FAILED"  # [추가] 상태 수신 (기본값: FAILED)
+    client_timestamp: Optional[str] = None  # [NEW] Race Condition 방지용 timestamp
+
+
+class SystemLogRequest(BaseModel):
+    logs: List[str] # [CHANGE] str -> List[str] for $push
+    container_name: str = "brickers-ai-container"
+    timestamp: str
+    session_id: str # [NEW]
+
+# ... (middle parts omitted, keeping existing code) ...
+
+@router.post("/archive/system")
+async def archive_system_log(request: SystemLogRequest):
+    """
+    [NEW] Archive system-level logs to 'system_logs' collection.
+    Grouping: (session_id, date)
+    Action: $push to 'logs' array
+    """
+    try:
+        db = get_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="Database connection unavailable")
+        
+        collection = db["system_logs"]
+        
+        # Extract Date (YYYY-MM-DD) from timestamp or current time
+        try:
+            dt = datetime.fromisoformat(request.timestamp.replace("Z", "+00:00"))
+            date_str = dt.strftime("%Y-%m-%d")
+        except:
+            date_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+        # Query Key
+        filter_query = {
+            "session_id": request.session_id,
+            "date": date_str
+        }
+        
+        # Update Operation ($push with $each)
+        update_op = {
+            "$push": {
+                "logs": {"$each": request.logs}
+            },
+            "$setOnInsert": {
+                "container": request.container_name,
+                "created_at": datetime.utcnow(),
+                "session_id": request.session_id,
+                "date": date_str
+            },
+            "$set": {
+                "last_updated": datetime.utcnow()
+            }
+        }
+        
+        collection.update_one(filter_query, update_op, upsert=True)
+        return {"status": "success"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
@@ -192,15 +251,44 @@ async def archive_log(request: ArchiveLogRequest):
             raise HTTPException(status_code=503, detail="Database connection unavailable")
             
         collection = db["failed_job_logs"]
-        doc = {
-            "jobId": request.job_id,
-            "logs": request.logs,
-            "timestamp": datetime.utcnow().isoformat(),
-            "container": request.container_name,
-            "status": request.status
-        }
-        collection.replace_one({"jobId": request.job_id}, doc, upsert=True)
-        logger.info(f"✅ [admin.py] Archived logs for {request.job_id}")
+        
+        # [NEW] Race Condition Check & Safe Update
+        # 1. 문서가 존재하는지 확인
+        existing_doc = collection.find_one({"jobId": request.job_id})
+        
+        should_update = True
+        if existing_doc and request.client_timestamp:
+            # 2. 기존 문서에 client_timestamp가 있고, 요청된 timestamp가 더 오래된 경우 업데이트 Skip
+            # [CHANGE] 단, 로그 길이가 더 길어졌다면 (내용이 추가되었다면) 타임스탬프가 조금 뒤집혀도 업데이트 허용
+            last_ts = existing_doc.get("client_timestamp")
+            last_logs = existing_doc.get("logs", "")
+            
+            is_newer_ts = (last_ts is None) or (request.client_timestamp >= last_ts)
+            is_more_logs = len(request.logs) > len(last_logs)
+
+            if not is_newer_ts and not is_more_logs:
+                logger.warning(f"⚠️ [admin.py] Skipping archival: Old request & No new content ({last_ts} > {request.client_timestamp})")
+                should_update = False
+        
+        if should_update:
+            # 3. Safe Update using $set (Preserves other fields like ai_analysis)
+            update_fields = {
+                "logs": request.logs,
+                "timestamp": datetime.utcnow().isoformat(),
+                "container": request.container_name,
+                "status": request.status
+            }
+            if request.client_timestamp:
+                update_fields["client_timestamp"] = request.client_timestamp
+                
+            collection.update_one(
+                {"jobId": request.job_id},
+                {"$set": update_fields},
+                upsert=True
+            )
+            logger.info(f"✅ [admin.py] Archived logs for {request.job_id} (Safe Update)")
+        else:
+            logger.info(f"⏭️ [admin.py] Skipped logs for {request.job_id} (Outdated)")
 
         # --- FAILED일 때 AI 분석 자동 실행 ---
         ai_analysis = None
@@ -247,6 +335,7 @@ async def archive_log(request: ArchiveLogRequest):
     except Exception as e:
         logger.error(f"❌ [admin.py] Archive Failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Archive Failed: {str(e)}")
+
 
 
 @router.get("/archived/{job_id}", response_model=ArchivedLogResponse)
