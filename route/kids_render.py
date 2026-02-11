@@ -293,11 +293,25 @@ async def process_kids_request_internal(
                     task_id = await client.image_to_model(image=str(corrected_path))
                     _log(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
 
-                    with anyio.fail_after(TRIPO_WAIT_TIMEOUT_SEC):
-                        task = await client.wait_for_task(task_id, verbose=DEBUG)
+                    # [CHANGE] Custom Async Polling (Non-blocking)
+                    # wait_for_task might use time.sleep(), blocking the event loop.
+                    # We implement our own loop with asyncio.sleep() to allow _auto_flush_logs to run.
+                    start_time = time.time()
+                    while True:
+                        if time.time() - start_time > TRIPO_WAIT_TIMEOUT_SEC:
+                            raise RuntimeError(f"Tripo task timed out after {TRIPO_WAIT_TIMEOUT_SEC}s")
 
-                    if task.status != TaskStatus.SUCCESS:
-                        raise RuntimeError(f"Tripo task failed: status={task.status}")
+                        # Check status
+                        task = await client.get_task(task_id)
+                        if task.status == TaskStatus.SUCCESS:
+                            break
+                        elif task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+                             raise RuntimeError(f"Tripo task failed: status={task.status}")
+                        
+                        if DEBUG:
+                            _log(f"      [Tripo] Generating... ({int(time.time() - start_time)}s) | progress={task.progress}")
+
+                        await asyncio.sleep(2.0) # Non-blocking sleep
 
                     _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
                     downloaded = await client.download_task_models(task, str(out_tripo_dir))
