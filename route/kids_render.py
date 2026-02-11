@@ -308,10 +308,14 @@ async def process_kids_request_internal(
                         elif task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
                              raise RuntimeError(f"Tripo task failed: status={task.status}")
                         
-                        if DEBUG:
-                            _log(f"      [Tripo] Generating... ({int(time.time() - start_time)}s) | progress={task.progress}")
+                        # [CHANGE] Force log output every loop (2s) to ensure Real-time DB update.
+                        # Even if DEBUG=False, we want to show "Generating..." in the DB logs.
+                        # Only print if progress changed or every 10s? 
+                        # For now, print every time to debug the "no log" issue.
+                        progress = task.progress if hasattr(task, 'progress') else '?'
+                        _log(f"      [Tripo] Generating... ({int(time.time() - start_time)}s) | progress={progress}")
 
-                        await asyncio.sleep(2.0) # Non-blocking sleep
+                        await asyncio.sleep(2.0) # Yield control to _auto_flush_logs
 
                     _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
                     downloaded = await client.download_task_models(task, str(out_tripo_dir))
