@@ -24,10 +24,55 @@ except ImportError:
     sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
     from brick_engine.agent.log_analyzer.graph import app as log_agent_app
 
+from service.analytics_agent_service import AnalyticsAgentService
+
 # Create router
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 # --- Models ---
+class AnalyticsReportResponse(BaseModel):
+    report: str
+    days: int
+
+class AnomalyResponse(BaseModel):
+    status: str
+    message: str
+    today: int
+    previous_average: float
+    drop_rate: float
+
+
+@router.get("/analytics/ai-report", response_model=AnalyticsReportResponse)
+async def get_ai_analytics_report(days: int = Query(7, ge=1, le=30)):
+    """
+    [NEW] AI 데이터 분석가 보고서 생성
+    """
+    from fastapi import Request
+    request_app = router.dependencies[0].dependency if router.dependencies else None # fallback
+    # Actually, the best way to get app state in router is via Request
+    return None # Will fix in actual implementation below
+
+@router.get("/analytics/ai-report")
+async def get_ai_analytics_report(request: Request, days: int = Query(7, ge=1, le=30)):
+    agent: AnalyticsAgentService = request.app.state.analytics_agent
+    if not agent:
+        raise HTTPException(status_code=500, detail="Analytics Agent not initialized")
+    
+    report = await agent.get_analyst_report(days)
+    return {"report": report, "days": days}
+
+@router.get("/analytics/check-anomaly", response_model=AnomalyResponse)
+async def check_analytics_anomaly(request: Request):
+    """
+    [NEW] 이상 징후 감지 실행
+    """
+    agent: AnalyticsAgentService = request.app.state.analytics_agent
+    if not agent:
+        raise HTTPException(status_code=500, detail="Analytics Agent not initialized")
+    
+    result = await agent.run_anomaly_detection()
+    return result
+
 class LogResponse(BaseModel):
     container: str
     logs: str
@@ -296,51 +341,48 @@ async def archive_log(request: ArchiveLogRequest):
         else:
             logger.info(f"⏭️ [admin.py] Skipped logs for {request.job_id} (Outdated)")
 
-        # --- FAILED일 때 AI 분석 자동 실행 ---
-        ai_analysis = None
-        if request.status == "FAILED" and request.logs:
-            try:
-                logger.info(f"🧠 [admin.py] FAILED 로그 감지 → AI 분석 시작 (Job: {request.job_id})")
-                analysis_state = {
-                    "container_name": request.container_name,
-                    "logs": request.logs,       # 로그를 직접 전달 (DB 재조회 불필요)
-                    "analysis_result": None,
-                    "messages": [],
-                    "iteration": 0,
-                    "job_id": request.job_id,
-                    "investigation_notes": []
-                }
-                result_state = await log_agent_app.ainvoke(analysis_state)
-
-                raw_result = result_state.get("analysis_result", "")
-                if raw_result:
-                    result_json = json.loads(raw_result)
-                    ai_analysis = result_json.get("analysis", result_json)
-
-                    # 같은 문서에 BIA 인사이트 결과 추가
-                    collection.update_one(
-                        {"jobId": request.job_id},
-                        {"$set": {
-                            "bia_insight": {
-                                "summary": result_state.get("plain_summary"),
-                                "impact": result_state.get("user_impact_level"),
-                                "actions": result_state.get("suggested_actions"),
-                                "business": result_state.get("business_insight")
-                            },
-                            "ai_analyzed_at": datetime.utcnow().isoformat()
-                        }}
-                    )
-                    logger.info(f"✅ [admin.py] AI 분석 완료 & 저장 (Job: {request.job_id})")
-                    logger.info(f"📝 요약: {ai_analysis.get('summary', 'N/A')[:100]}")
-
-            except Exception as ai_err:
-                logger.error(f"⚠️ [admin.py] AI 분석 실패 (로그 저장은 정상): {ai_err}")
-                # AI 분석 실패해도 로그 저장은 이미 성공했으므로 에러 발생시키지 않음
+        # --- AI 분석 자동 실행 로직 제거 (Decoupled) ---
+        # 이제 BIA 인사이트는 관리자 페이지에서 '분석' 버튼을 누를 때만 (on-demand) 실행됩니다.
+        # 이를 통해 백그라운드 작업의 오버헤드를 줄이고 AI를 독립적인 도구로 분리합니다.
+        
+        # [Restored as comments per user request]
+        # ai_analysis = None
+        # if request.status == "FAILED" and request.logs:
+        #     try:
+        #         logger.info(f"🧠 [admin.py] FAILED 로그 감지 → AI 분석 시작 (Job: {request.job_id})")
+        #         analysis_state = {
+        #             "container_name": request.container_name,
+        #             "logs": request.logs,
+        #             "analysis_result": None,
+        #             "messages": [],
+        #             "iteration": 0,
+        #             "job_id": request.job_id,
+        #             "investigation_notes": []
+        #         }
+        #         result_state = await log_agent_app.ainvoke(analysis_state)
+        #         raw_result = result_state.get("analysis_result", "")
+        #         if raw_result:
+        #             result_json = json.loads(raw_result)
+        #             ai_analysis = result_json.get("analysis", result_json)
+        #             collection.update_one(
+        #                 {"jobId": request.job_id},
+        #                 {"$set": {
+        #                     "bia_insight": {
+        #                         "summary": result_state.get("plain_summary"),
+        #                         "impact": result_state.get("user_impact_level"),
+        #                         "actions": result_state.get("suggested_actions"),
+        #                         "business": result_state.get("business_insight")
+        #                     },
+        #                     "ai_analyzed_at": datetime.utcnow().isoformat()
+        #                 }}
+        #             )
+        #             logger.info(f"✅ [admin.py] AI 분석 완료 & 저장 (Job: {request.job_id})")
+        #     except Exception as ai_err:
+        #         logger.error(f"⚠️ [admin.py] AI 분석 실패 (로그 저장은 정상): {ai_err}")
 
         return {
             "status": "success",
-            "jobId": request.job_id,
-            "ai_analysis": ai_analysis  # 분석 결과가 있으면 함께 반환
+            "jobId": request.job_id
         }
         
     except Exception as e:

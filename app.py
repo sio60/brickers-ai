@@ -114,6 +114,11 @@ async def startup():
         )
         app.state.chat_service = ChatService(http=app.state.openai_http, store=store)
 
+        # --- [NEW] Analytics Agent Service 초기화 ---
+        from service.analytics_agent_service import AnalyticsAgentService
+        app.state.analytics_agent = AnalyticsAgentService(http_client=app.state.openai_http)
+        print("[FastAPI] ✅ Analytics Agent Service Enabled", flush=True)
+
     # --- [NEW] Global log capture ---
     try:
         from service.log_context import GlobalLogCapture

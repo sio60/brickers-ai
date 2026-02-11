@@ -103,3 +103,55 @@ async def send_agent_log(job_id: str, step: str, message: str) -> None:
                 print(f"  [AgentLog] \u26a0\ufe0f HTTP {resp.status_code} | url={url} | body={resp.text[:100]}")
     except Exception as e:
         print(f"  [AgentLog] \u274c failed: {e} | url={url}")
+
+
+async def get_analytics_summary(days: int = 7) -> dict | None:
+    """백엔드로부터 GA4 요약 데이터(Users, Views, Sessions)를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/summary",
+                params={"days": days},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            print(f"  ⚠️ [BackendClient] Analytics Summary Error: {resp.status_code}")
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Analytics Summary Fail: {e}")
+    return None
+
+
+async def get_daily_users(days: int = 30) -> list | None:
+    """백엔드로부터 일별 활성 사용자(DAU) 트렌드를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/daily-users",
+                params={"days": days},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Daily Users Fail: {e}")
+    return None
+
+
+async def get_event_stats(event_name: str, days: int = 7) -> list | None:
+    """특정 이벤트의 발생 통계를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/event-stats",
+                params={"event": event_name, "days": days},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Event Stats Fail: {e}")
+    return None
