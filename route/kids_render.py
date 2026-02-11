@@ -384,59 +384,99 @@ async def process_kids_request_internal(
 
                 _log(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
-                # 4) Brickify (CPU Intensive - Process Pool for True Parallelism)
+                # 4) CoScientist Brickify (Generate → Debate → Evolve)
                 step_start = time.time()
                 eff_budget = int(budget) if budget is not None else int(AGE_TO_BUDGET.get(age.strip(), 100))
                 # PRO 모드(5000개 수준) 시 복셀 제한 상향 (해상도 유지)
                 v_limit = 50000 if eff_budget >= 4000 else (20000 if eff_budget >= 1000 else 6000)
                 start_target = budget_to_start_target(eff_budget)
-                
-                _log(f"🚀 [STEP 3/4] Brickify LDR 변환 시작... | budget={eff_budget} | target={start_target}")
+
+                _log(f"🚀 [STEP 3/4] CoScientist Brickify 시작... | budget={eff_budget} | target={start_target}")
                 await update_job_stage(job_id, "MODEL")
                 await _sse("brickify", "브릭 단위로 분해하면서 안정적인 조합을 탐색 중이에요.")
 
                 out_ldr = out_brick_dir / "result.ldr"
 
-                # Engine 로드 (캐시됨)
-                global _CONVERT_FN
-                if _CONVERT_FN is None:
-                    _CONVERT_FN = load_engine_convert()
+                # Brickify 파라미터 (regeneration_loop & fallback 공용)
+                brickify_params = dict(
+                    target=start_target,
+                    budget=eff_budget,
+                    min_target=5,
+                    shrink=0.6,
+                    search_iters=10,
+                    kind="brick",
+                    plates_per_voxel=3,
+                    interlock=True,
+                    max_area=20,
+                    solid_color=4,
+                    use_mesh_color=True,
+                    invert_y=False,
+                    smart_fix=True,
+                    span=4,
+                    max_new_voxels=v_limit,
+                    refine_iters=4,
+                    ensure_connected=True,
+                    min_embed=2,
+                    erosion_iters=1,
+                    fast_search=True,
+                    step_order="bottomup",
+                    extend_catalog=True,
+                    max_len=8,
+                    avoid_1x1=True,
+                )
 
-                # Brickify 실행 (CPU-heavy -> thread로 실행)
-                def run_brickify():
-                    return _CONVERT_FN(
-                        str(glb_path),
-                        str(out_ldr),
-                        target=start_target,
-                        budget=eff_budget,
-                        min_target=5,
-                        shrink=0.6,
-                        search_iters=10,        # 5→10 (확실한 예산 수렴)
-                        kind="brick",
-                        plates_per_voxel=3,
-                        interlock=True,
-                        max_area=20,
-                        solid_color=4,
-                        use_mesh_color=True,
-                        invert_y=False,
-                        smart_fix=True,
-                        span=4,
-                        max_new_voxels=v_limit,
-                        refine_iters=4,        # 8→4 (속도 개선)
-                        ensure_connected=True,
-                        min_embed=2,
-                        erosion_iters=1,
-                        fast_search=True,
-                        step_order="bottomup",
-                        extend_catalog=True,
-                        max_len=8,
-                        avoid_1x1=True, # 1x1 브릭 금지 로직 활성화
-                    )
+                # CoScientist regeneration_loop 시도 → 실패 시 단순 brickify fallback
+                used_coscientist = False
+                try:
+                    regen_loop_fn, gemini_cls = load_agent_modules()
+                    _log("🔬 [CoScientist] LLM 재생성 에이전트 활성화")
+                    await _sse("coscientist", "CoScientist가 구조를 검증하며 최적의 브릭 배치를 찾고 있어요.")
 
-                result = await anyio.to_thread.run_sync(run_brickify)
+                    # SSE 로그 콜백을 params에 주입
+                    regen_params = brickify_params.copy()
+                    regen_params["log_callback"] = make_agent_log_sender(job_id)
+
+                    def run_coscientist():
+                        return regen_loop_fn(
+                            glb_path=str(glb_path),
+                            output_ldr_path=str(out_ldr),
+                            subject_name=final_subject or "Unknown Object",
+                            llm_client=gemini_cls(),
+                            max_retries=1,
+                            acceptable_failure_ratio=0.1,
+                            params=regen_params,
+                        )
+
+                    final_state = await anyio.to_thread.run_sync(run_coscientist)
+
+                    # 결과 추출
+                    report = final_state.get('final_report', {})
+                    metrics = report.get('final_metrics', {})
+                    parts_count = metrics.get('total_bricks', 0)
+                    # LDR 파일에서 직접 카운트 (fallback)
+                    if parts_count == 0 and out_ldr.exists():
+                        ldr_text = out_ldr.read_text(encoding='utf-8')
+                        parts_count = sum(1 for line in ldr_text.splitlines() if line.startswith('1 '))
+                    result = {"parts": parts_count, "final_target": start_target}
+                    used_coscientist = True
+                    _log(f"🔬 [CoScientist] 완료 | 성공={report.get('success', '?')} | 시도={report.get('total_attempts', '?')}회")
+
+                except Exception as cos_err:
+                    _log(f"⚠️ [CoScientist] 실패, 단순 Brickify로 fallback: {cos_err}")
+
+                    # Fallback: 기존 단순 brickify
+                    global _CONVERT_FN
+                    if _CONVERT_FN is None:
+                        _CONVERT_FN = load_engine_convert()
+
+                    def run_brickify():
+                        return _CONVERT_FN(str(glb_path), str(out_ldr), **brickify_params)
+
+                    result = await anyio.to_thread.run_sync(run_brickify)
 
                 brickify_elapsed = time.time() - step_start
-                _log(f"\u2705 [STEP 3/4] Brickify \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+                engine_label = "CoScientist" if used_coscientist else "Brickify"
+                _log(f"\u2705 [STEP 3/4] {engine_label} \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
                 
                 # [NEW] Checkpoint Save
                 await _async_archive()
