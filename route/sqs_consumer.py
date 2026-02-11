@@ -213,7 +213,7 @@ async def _job_worker():
                     """
                     last_sent_count = 0
                     while True:
-                        await asyncio.sleep(2.0) # 2초마다 체크
+                        await asyncio.sleep(5.0) # 5초마다 체크 (부하 감소)
                         current_count = len(job_log_buffer)
                         if current_count > last_sent_count:
                             # 변경사항이 있을 때만 전송
