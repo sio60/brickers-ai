@@ -66,7 +66,8 @@ app.include_router(chat_router)             # ✅ 챗봇 (/api/v1/chat)
 # --- [Integrate] Brick Judge (Rust Viewer) ---
 import brick_judge.server as bj_server  # noqa: E402
 
-# 1. 뷰어 페이지 (HTML)
+# 1. 뷰어 페이지 (HTML) - 루트(/)와 /brick-judge/viewer 모두 대응
+app.add_api_route("/", bj_server.viewer, methods=["GET"], include_in_schema=False)
 app.add_api_route("/brick-judge/viewer", bj_server.viewer, methods=["GET"], include_in_schema=False)
 # 2. 뷰어용 API (HTML에서 호출하는 절대 경로 /api/verify 대응)
 app.add_api_route("/api/verify", bj_server.verify_ldr, methods=["POST"], tags=["viewer"])
