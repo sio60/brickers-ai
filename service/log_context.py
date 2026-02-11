@@ -41,38 +41,28 @@ class GlobalLogCapture:
         print(f"[GlobalLogCapture] System stdout/stderr hooked globally. SessionID={self.session_id}", flush=True)
 
     def start_flusher(self):
-        """앱 시작 시 호출 (Event Loop 필요)"""
-        if self._flush_task is None:
-            self._flush_task = asyncio.create_task(self._flush_loop())
-            print("[GlobalLogCapture] Background log flusher started.", flush=True)
+        """[DISABLED] Periodic flusher removed as per user request. (Legacy logic preserved below)"""
+        # if self._flush_task is None:
+        #     self._flush_task = asyncio.create_task(self._flush_loop())
+        #     print("[GlobalLogCapture] Background log flusher started.", flush=True)
+        pass
 
-    async def _flush_loop(self):
-        """Smart Batching Flush Loop"""
-        while True:
-            try:
-                # 1. 버퍼가 비었으면 긴 대기 (CPU 절약)
-                if not self._system_log_buffer:
-                    await asyncio.sleep(1.0) # 1초마다 체크 (가벼움)
-                    continue
+    # [Legacy: Smart Batching Flush Loop - Commented out]
+    # async def _flush_loop(self):
+    #     while True:
+    #         try:
+    #             if not self._system_log_buffer:
+    #                 await asyncio.sleep(1.0)
+    #                 continue
+    #             if len(self._system_log_buffer) < 100:
+    #                 await asyncio.sleep(300.0)
+    #             if self._system_log_buffer:
+    #                 chunk = self._system_log_buffer[:]
+    #                 self._system_log_buffer.clear()
+    #                 await archive_system_logs(chunk, session_id=self.session_id)
+    #         except Exception as e:
+    #             await asyncio.sleep(5.0)
 
-                # 2. 버퍼에 내용이 있으면:
-                #    - 양이 많으면(100줄 이상) -> 즉시 전송
-                #    - 양이 적으면 -> 좀 더 기다리며 모으기 (최대 5분=300초)
-                if len(self._system_log_buffer) < 100:
-                    await asyncio.sleep(300.0)
-
-                # 3. 전송 (Flush)
-                if self._system_log_buffer:
-                    # 복사본 뜨고 비우기
-                    chunk = self._system_log_buffer[:]
-                    self._system_log_buffer.clear() # 비우기
-                    
-                    # 전송 (세션 ID 포함)
-                    await archive_system_logs(chunk, session_id=self.session_id)
-                    
-            except Exception as e:
-                # 플러시 루프 죽지 않게 방어
-                await asyncio.sleep(5.0) # 에러 시 잠시 대기
 
     class _Tee(TextIO):
         def __init__(self, original: TextIO):

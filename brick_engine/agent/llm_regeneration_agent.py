@@ -634,9 +634,8 @@ class RegenerationGraph:
 
     def node_model(self, state: AgentState) -> Dict[str, Any]:
         """LLM이 상황을 분석하고 도구를 선택하는 노드"""
-        import time
-        # API Rate Limit (429) 방지를 위한 짧은 딜레이 (특히 Free Tier 사용 시)
-        time.sleep(2) 
+        # [Legacy: Rate Limit Delay - Commented out]
+        # import time; time.sleep(2) 
         
         print("\n[Co-Scientist] 상황 분석 중...")
         self._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")
