@@ -409,8 +409,9 @@ def _single_conversion(
         colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
         
         # 밝기 및 채도 보정 (AI 생성 모델의 어두운/탁한 텍스처 보정)
-        brightness = kwargs.get("color_brightness", 1.4)
-        saturation = kwargs.get("color_saturation", 1.5)
+        # 과도한 보정은 주황/갈색 등 중간톤 색상을 왜곡시킴
+        brightness = kwargs.get("color_brightness", 1.15)
+        saturation = kwargs.get("color_saturation", 1.2)
         
         if brightness != 1.0:
             colors_raw = np.clip(colors_raw * brightness, 0, 255)
