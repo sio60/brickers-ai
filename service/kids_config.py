@@ -54,7 +54,7 @@ def budget_to_start_target(eff_budget: int) -> int:
         return 20
     if eff_budget <= 200:
         return 25
-    if eff_budget >= 1000: # PRO/Extreme Detail 모드
-        return 80
+    if eff_budget >= 2000: # PRO 모드
+        return 100
     return 40
 
