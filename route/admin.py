@@ -17,12 +17,12 @@ from db import get_db
 logger = logging.getLogger("api.admin") # Added logger setup
 
 try:
-    from brick_engine.agent.log_analyzer.agent import app as log_agent_app
+    from brick_engine.agent.log_analyzer.graph import app as log_agent_app
 except ImportError:
     # Local dev path fallback if needed
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-    from brick_engine.agent.log_analyzer.agent import app as log_agent_app
+    from brick_engine.agent.log_analyzer.graph import app as log_agent_app
 
 # Create router
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -166,9 +166,9 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
             "container_name": request.container_name,
             "logs": "",
             "analysis_result": None,
-            "error_count": 0,
             "messages": [],
-            "iteration": 0
+            "iteration": 0,
+            "investigation_notes": []
         }
         
         # 2. Run Agent
@@ -299,10 +299,10 @@ async def archive_log(request: ArchiveLogRequest):
                     "container_name": request.container_name,
                     "logs": request.logs,       # 로그를 직접 전달 (DB 재조회 불필요)
                     "analysis_result": None,
-                    "error_count": 0,
                     "messages": [],
                     "iteration": 0,
-                    "job_id": request.job_id
+                    "job_id": request.job_id,
+                    "investigation_notes": []
                 }
                 result_state = await log_agent_app.ainvoke(analysis_state)
 
