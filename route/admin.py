@@ -332,6 +332,8 @@ async def archive_log(request: ArchiveLogRequest):
 
 
 
+@router.get("/archived/{job_id}", response_model=ArchivedLogResponse)
+async def get_archived_log(job_id: str):
     """
     Fetch archived logs from MongoDB.
     """
