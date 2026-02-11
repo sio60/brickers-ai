@@ -205,76 +205,76 @@ async def _job_worker():
                         await archive_job_logs(job_id, list(job_log_buffer), status="CANCELED") # [NEW]
                         continue
 
-                # [NEW] Auto-Flush Logic
-                async def _auto_flush_logs():
-                    """
-                    주기적으로 로그 버퍼를 DB에 전송 (Real-time UX)
-                    Tripo 생성 등 긴 작업 중에도 사용자가 로그를 볼 수 있게 함.
-                    """
-                    last_sent_count = 0
-                    while True:
-                        await asyncio.sleep(5.0) # 5초마다 체크 (부하 감소)
-                        current_count = len(job_log_buffer)
-                        if current_count > last_sent_count:
-                            # 변경사항이 있을 때만 전송
-                            # status="RUNNING"으로 중간 저장
-                            await archive_job_logs(job_id, list(job_log_buffer), status="RUNNING")
-                            last_sent_count = current_count
 
-                # Start Auto-Flush Task
-                flusher_task = asyncio.create_task(_auto_flush_logs())
+                # [Legacy: Auto-Flush Logic - Commented out as per user request]
+                # async def _auto_flush_logs():
+                #     """
+                #     주기적으로 로그 버퍼를 DB에 전송 (Real-time UX)
+                #     Tripo 생성 등 긴 작업 중에도 사용자가 로그를 볼 수 있게 함.
+                #     """
+                #     last_sent_count = 0
+                #     while True:
+                #         await asyncio.sleep(5.0) # 5초마다 체크 (부하 감소)
+                #         current_count = len(job_log_buffer)
+                #         if current_count > last_sent_count:
+                #             # 변경사항이 있을 때만 전송
+                #             await archive_job_logs(job_id, list(job_log_buffer), status="RUNNING")
+                #             last_sent_count = current_count
+                #
+                # # Start Auto-Flush Task
+                # flusher_task = asyncio.create_task(_auto_flush_logs())
 
-                try:
-                    # Kids 렌더링 실행 (순차 — 이 작업이 끝나야 다음 작업 시작)
-                    # [CHANGE] Pass external buffer
-                    result = await process_kids_request_internal(
-                        job_id=job_id,
-                        source_image_url=source_image_url,
-                        age=age,
-                        budget=budget,
-                        user_email=user_email,
-                        external_log_buffer=job_log_buffer, # [NEW]
-                    )
+                # Kids 렌더링 실행 (순차 — 이 작업이 끝나야 다음 작업 시작)
+                # [CHANGE] Pass external buffer
+                result = await process_kids_request_internal(
+                    job_id=job_id,
+                    source_image_url=source_image_url,
+                    age=age,
+                    budget=budget,
+                    user_email=user_email,
+                    external_log_buffer=job_log_buffer, # [NEW]
+                )
 
-                    log(f"✅ AI 렌더링 완료!", user_email=user_email)
-                    log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
-                    log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
-                    log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
-                    log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
+                log(f"✅ AI 렌더링 완료!", user_email=user_email)
+                log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
+                log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
+                log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
+                log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
 
-                    # RESULT 메시지 전송 (성공)
-                    log("📤 [Worker] RESULT 메시지 전송 중...")
-                    await send_result_message(
-                        job_id=job_id,
-                        success=True,
-                        corrected_url=result["correctedUrl"],
-                        glb_url=result["modelUrl"],
-                        ldr_url=result["ldrUrl"],
-                        bom_url=result["bomUrl"],
-                        pdf_url=result.get("pdfUrl", ""),
-                        parts=result["parts"],
-                        final_target=result["finalTarget"],
-                        tags=result.get("tags", []),
-                    )
+                # RESULT 메시지 전송 (성공)
+                log("📤 [Worker] RESULT 메시지 전송 중...")
+                await send_result_message(
+                    job_id=job_id,
+                    success=True,
+                    corrected_url=result["correctedUrl"],
+                    glb_url=result["modelUrl"],
+                    ldr_url=result["ldrUrl"],
+                    bom_url=result["bomUrl"],
+                    pdf_url=result.get("pdfUrl", ""),
+                    parts=result["parts"],
+                    final_target=result["finalTarget"],
+                    tags=result.get("tags", []),
+                )
 
-                    delete_message(receipt_handle)
-                    _TOTAL_REQUESTS_COMPLETED += 1
+                delete_message(receipt_handle)
+                _TOTAL_REQUESTS_COMPLETED += 1
 
-                    log(f"✅ [Worker] 처리 완료 | jobId={job_id} | "
-                        f"완료: {_TOTAL_REQUESTS_COMPLETED} | 실패: {_TOTAL_REQUESTS_FAILED}",
-                        user_email=user_email)
-                    log("=" * 60, user_email=user_email)
-                    
-                    # [NEW] Archive Final State (Success)
-                    await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
+                log(f"✅ [Worker] 처리 완료 | jobId={job_id} | "
+                    f"완료: {_TOTAL_REQUESTS_COMPLETED} | 실패: {_TOTAL_REQUESTS_FAILED}",
+                    user_email=user_email)
+                log("=" * 60, user_email=user_email)
+                
+                # [NEW] Archive Final State (Success)
+                await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
 
-                finally:
-                    # 작업 종료 시 플러셔 정리
-                    flusher_task.cancel()
-                    try:
-                        await flusher_task
-                    except asyncio.CancelledError:
-                        pass
+                # finally:
+                #     # 작업 종료 시 플러셔 정리
+                #     flusher_task.cancel()
+                #     try:
+                #         await flusher_task
+                #     except asyncio.CancelledError:
+                #         pass
+
 
             except json.JSONDecodeError as e:
                 log(f"❌ [Worker] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
