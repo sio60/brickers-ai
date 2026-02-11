@@ -12,3 +12,12 @@ class LogAnalysisState(TypedDict):
     error_count: int
     iteration: int # 루프 카운터
     job_id: Optional[str] # 특정 Job 추적용 추가
+    
+    # --- V2 Expansion ---
+    service_type: Optional[str] # "ai-server", "backend", "frontend"
+    language: Optional[str] # "python", "java", "typescript"
+    
+    error_context: Optional[Dict[str, Any]] # { "file": "...", "line": 10, "error": "RuntimeError" }
+    related_code: Optional[str] # 읽어온 코드 스니펫
+    db_context: Optional[str] # DB 조회 결과
+    solution_plan: Optional[str] # 제안된 해결책 (Markdown)

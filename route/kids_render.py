@@ -297,6 +297,7 @@ async def process_kids_request_internal(
                     # wait_for_task might use time.sleep(), blocking the event loop.
                     # We implement our own loop with asyncio.sleep() to allow _auto_flush_logs to run.
                     start_time = time.time()
+                    last_progress = 0 # [FIX] Initialize variable
                     while True:
                         if time.time() - start_time > TRIPO_WAIT_TIMEOUT_SEC:
                             raise RuntimeError(f"Tripo task timed out after {TRIPO_WAIT_TIMEOUT_SEC}s")
@@ -308,14 +309,17 @@ async def process_kids_request_internal(
                         elif task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
                              raise RuntimeError(f"Tripo task failed: status={task.status}")
                         
-                        # [CHANGE] Force log output every loop (2s) to ensure Real-time DB update.
-                        # Even if DEBUG=False, we want to show "Generating..." in the DB logs.
-                        # Only print if progress changed or every 10s? 
-                        # For now, print every time to debug the "no log" issue.
-                        progress = task.progress if hasattr(task, 'progress') else '?'
-                        _log(f"      [Tripo] Generating... ({int(time.time() - start_time)}s) | progress={progress}")
+                        # [CHANGE] Only log if progress changes or every 10s (Heartbeat)
+                        # This prevents spamming "Generating..." every 2 seconds.
+                        current_progress = task.progress if hasattr(task, 'progress') else '?'
+                        elapsed = time.time() - start_time
+                        
+                        # Log only on progress change or every 10s
+                        if current_progress != last_progress or (int(elapsed) % 10 == 0 and int(elapsed) > 0):
+                             _log(f"      [Tripo] Generating... ({int(elapsed)}s) | progress={current_progress}")
+                             last_progress = current_progress
 
-                        await asyncio.sleep(2.0) # Yield control to _auto_flush_logs
+                        await asyncio.sleep(5.0) # Yield control to _auto_flush_logs
 
                     _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
                     downloaded = await client.download_task_models(task, str(out_tripo_dir))
