@@ -26,7 +26,7 @@
 
         #viewer {
             flex: 1;
-            
+
             position: relative;
         }
 
@@ -1582,7 +1582,7 @@
 
         // Rust 백엔드 API 호출 (가속 물리 엔진)
         async function analyzeWithRust(ldrContent) {
-            const response = await fetch('/api/test/all', {
+            const response = await fetch('/api/judge', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ldr_content: ldrContent })
