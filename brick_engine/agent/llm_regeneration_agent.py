@@ -393,6 +393,12 @@ class RegenerationGraph:
             print(f"  📝 근거: {hypothesis_result.get('reasoning')}")
             print(f"  📊 난이도: {hypothesis_result.get('difficulty')}")
             
+            # ✅ AI의 실제 생각(Hypothesis)을 프론트로 전달
+            obs = hypothesis_result.get("observation", "")
+            hypo = hypothesis_result.get("hypothesis", "")
+            if obs or hypo:
+                self._log("HYPOTHESIZE", f"분석 결과: {obs} {hypo}")
+
             return {
                 "current_hypothesis": hypothesis_result,
                 # 다음 단계는 strategy (구체적 도구 선택)
@@ -778,7 +784,16 @@ class RegenerationGraph:
             
             # 응답 확인
             if response.tool_calls:
+                tc = response.tool_calls[0]
+                tool_name = tc['name']
                 print(f"  🔨 도구 선택: {[tc['name'] for tc in response.tool_calls]}")
+                
+                # ✅ 도구 선택 이유(AI의 판단)를 프론트로 전달
+                if tool_name == "RemoveBricks":
+                    self._log("MODEL", "구조가 거의 완성되었습니다! 불안정한 브릭들만 핀셋으로 도려낼게요.")
+                elif tool_name == "TuneParameters":
+                    self._log("MODEL", "현재 파라미터로는 한계가 있네요. 새로운 관점에서 설계를 다시 시도해 보겠습니다.")
+
                 return {"messages": [response], "next_action": "tool"}
             else:
                 # 도구를 선택하지 않은 경우 (끝났다고 판단)
