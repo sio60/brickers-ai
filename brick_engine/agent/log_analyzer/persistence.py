@@ -12,6 +12,7 @@ ADMIN_API_BASE = f"{config.API_PUBLIC_BASE_URL}/api/admin"
 
 
 
+
 async def archive_job_logs(job_id: str, logs: list[str], status: str = "FAILED", container_name: str = "brickers-ai-container"):
     """
     Apply in-memory log persistence (No Docker API).
@@ -21,6 +22,11 @@ async def archive_job_logs(job_id: str, logs: list[str], status: str = "FAILED",
     if container_name == "brickers-ai-container" and "HOSTNAME" in os.environ:
          # Docker container ID usually in HOSTNAME
         container_name = os.environ["HOSTNAME"]
+
+    # [NEW] Client Timestamp (for race condition handling)
+    # Use localized timestamp if possible, or UTC
+    from datetime import datetime, timezone
+    client_timestamp = datetime.now(timezone.utc).isoformat()
 
     logger.info(f"📦 [로그 아카이브] Job ID [{job_id}] ({status}) 로그 백업 시작 ({len(logs)} lines)...")
     
@@ -35,7 +41,8 @@ async def archive_job_logs(job_id: str, logs: list[str], status: str = "FAILED",
                     "job_id": job_id,
                     "logs": full_log_text,
                     "container_name": container_name,
-                    "status": status  # [수정] status 전송 활성화
+                    "status": status,
+                    "client_timestamp": client_timestamp  # [NEW]
                 },
                 timeout=10.0
             )

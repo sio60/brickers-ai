@@ -56,6 +56,7 @@ class ArchiveLogRequest(BaseModel):
     logs: str
     container_name: str = "brickers-ai-container"
     status: str = "FAILED"  # [추가] 상태 수신 (기본값: FAILED)
+    client_timestamp: Optional[str] = None  # [NEW] Race Condition 방지용 timestamp
 
 
 
@@ -192,15 +193,38 @@ async def archive_log(request: ArchiveLogRequest):
             raise HTTPException(status_code=503, detail="Database connection unavailable")
             
         collection = db["failed_job_logs"]
-        doc = {
-            "jobId": request.job_id,
-            "logs": request.logs,
-            "timestamp": datetime.utcnow().isoformat(),
-            "container": request.container_name,
-            "status": request.status
-        }
-        collection.replace_one({"jobId": request.job_id}, doc, upsert=True)
-        logger.info(f"✅ [admin.py] Archived logs for {request.job_id}")
+        
+        # [NEW] Race Condition Check & Safe Update
+        # 1. 문서가 존재하는지 확인
+        existing_doc = collection.find_one({"jobId": request.job_id})
+        
+        should_update = True
+        if existing_doc and request.client_timestamp:
+            # 2. 기존 문서에 client_timestamp가 있고, 요청된 timestamp가 더 오래된 경우 업데이트 Skip
+            last_ts = existing_doc.get("client_timestamp")
+            if last_ts and request.client_timestamp < last_ts:
+                logger.warning(f"⚠️ [admin.py] Skipping archival: Recent update exists ({last_ts} > {request.client_timestamp})")
+                should_update = False
+        
+        if should_update:
+            # 3. Safe Update using $set (Preserves other fields like ai_analysis)
+            update_fields = {
+                "logs": request.logs,
+                "timestamp": datetime.utcnow().isoformat(),
+                "container": request.container_name,
+                "status": request.status
+            }
+            if request.client_timestamp:
+                update_fields["client_timestamp"] = request.client_timestamp
+                
+            collection.update_one(
+                {"jobId": request.job_id},
+                {"$set": update_fields},
+                upsert=True
+            )
+            logger.info(f"✅ [admin.py] Archived logs for {request.job_id} (Safe Update)")
+        else:
+            logger.info(f"⏭️ [admin.py] Skipped logs for {request.job_id} (Outdated)")
 
         # --- FAILED일 때 AI 분석 자동 실행 ---
         ai_analysis = None
