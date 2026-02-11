@@ -178,26 +178,27 @@ async def process_kids_request_internal(
     age: str,
     budget: Optional[int] = None,
     subject: Optional[str] = None,
-    user_email: str = "unknown", # [추가]
+    user_email: str = "unknown",
+    external_log_buffer: Optional[list[str]] = None, # [NEW]
 ) -> Dict[str, Any]:
     """
     Kids 렌더링 내부 로직 (SQS Consumer에서 호출)
-    시그니처/리턴 100% 동일 유지
     """
     total_start = time.time()
     
-    # 내부 래퍼 로그 (이메일 자동 주입 + Job ID 태깅 for Log Persistence)
+    # 내부 래퍼 로그 (이메일 자동 주입 + Job ID 태깅)
     def _log(msg: str):
-        # Job ID가 포함되어야 persistence.py에서 필터링 가능
         log(f"[{job_id}] {msg}", user_email=user_email)
 
     TRIPO_API_KEY = os.environ.get("TRIPO_API_KEY", "")
     if not TRIPO_API_KEY:
         raise RuntimeError("TRIPO_API_KEY is not set")
     
-    # [NEW] In-Memory Log Buffer (Docker API 의존 제거)
-    # 직접 생성한 로그 문자열을 리스트에 모아두었다가 전송 (가장 빠르고 안전함)
-    job_log_buffer: list[str] = []
+    # [NEW] In-Memory Log Buffer (Use external if provided)
+    if external_log_buffer is not None:
+        job_log_buffer = external_log_buffer
+    else:
+        job_log_buffer = []
 
     req_id = job_id
     out_req_dir = GENERATED_DIR / f"req_{req_id}"
