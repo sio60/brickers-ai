@@ -269,10 +269,13 @@ async def simple_summary_node(state: LogAnalysisState):
 
 
 # ============================================================
-# NODE 5: generate_report — 리포트 생성
+# NODE 5: generate_insight — 관리자용 인사이트 생성
 # ============================================================
 async def generate_report_node(state: LogAnalysisState):
-    logger.info("--- [Node 5: generate_report] 리포트 생성 시작 ---")
+    """
+    기존의 기술 리포트 대신, 관리자용 BIA 인사이트를 생성합니다.
+    """
+    logger.info("--- [Node 5: generate_insight] 어드민 인사이트 생성 시작 ---")
     error_ctx = state.get("error_context", {})
     notes = state.get("investigation_notes", [])
     logs = state.get("logs", "")[-3000:]
@@ -280,11 +283,22 @@ async def generate_report_node(state: LogAnalysisState):
     prompt = f"[에러 정보]\n{json.dumps(error_ctx)}\n\n[조사 기록]\n{chr(10).join(notes)}\n\n[원본 로그]\n{logs}"
     
     try:
+        from service.nano_banana import GeminiClient
         llm = GeminiClient()
-        response = await asyncio.to_thread(llm.generate_json, prompt, REPORT_SYSTEM_PROMPT)
-        return {"analysis_result": json.dumps(response, ensure_ascii=False)}
+        # INSIGHT_SYSTEM_PROMPT 사용 (비개발자 관리자 타겟)
+        response = await asyncio.to_thread(llm.generate_json, prompt, INSIGHT_SYSTEM_PROMPT)
+        
+        # 상태에 개별 인사이트 필드 저장
+        return {
+            "analysis_result": json.dumps(response, ensure_ascii=False),
+            "plain_summary": response.get("plain_summary"),
+            "user_impact_level": response.get("user_impact_level"),
+            "suggested_actions": response.get("suggested_actions"),
+            "business_insight": response.get("business_insight")
+        }
     except Exception as e:
-        return {"analysis_result": json.dumps({"summary": f"Report failed: {e}"})}
+        logger.error(f"❌ [generate_insight] AI 응답 생성 실패: {e}")
+        return {"analysis_result": json.dumps({"plain_summary": f"인사이트를 생성하지 못했습니다: {e}"})}
 
 
 # ============================================================

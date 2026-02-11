@@ -37,5 +37,11 @@ class LogAnalysisState(TypedDict):
     report_retry_count: int                  # validate_report에서 재시도 카운트 (max 2)
     
     # ── 최종 출력 ──
-    analysis_result: Optional[str]           # 최종 분석 리포트 (JSON)
+    analysis_result: Optional[str]           # JSON 리포트 (통합)
+    
+    # ── [NEW] BIA 어드민 인사이트 필드 ──
+    plain_summary: Optional[str]             # 비전문가 관리자용 한글 요약
+    user_impact_level: Optional[str]        # critical | high | medium | low
+    suggested_actions: Optional[List[str]]  # 관리자 행동 가이드
+    business_insight: Optional[str]          # 비즈니스/트렌드 소견
 

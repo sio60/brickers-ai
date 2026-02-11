@@ -39,10 +39,11 @@ class AnalysisRequest(BaseModel):
 class AnalysisResponse(BaseModel):
     container: str
     is_error: bool
-    summary: str
-    root_cause: Optional[str] = None
-    suggestion: Optional[str] = None
-    job_id: Optional[str] = None # 분석된 Job ID 반환
+    plain_summary: str           # [NEW] 관리자용 한글 요약
+    user_impact_level: str       # [NEW] critical | high | low
+    suggested_actions: List[str] # [NEW] 권장 조치 목록
+    business_insight: Optional[str] = None
+    job_id: Optional[str] = None
 
 class ArchivedLogResponse(BaseModel):
     job_id: str
@@ -211,9 +212,13 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
                         "logs": logs_content,
                         "timestamp": datetime.utcnow().isoformat(),
                         "container": request.container_name,
-                        "status": "FAILED", # Analysis run implies something to check, usually failure
-                        "analysis_summary": analysis_data.get("summary"),
-                        "root_cause": analysis_data.get("root_cause")
+                        "status": "FAILED",
+                        "bia_insight": {
+                            "summary": result_state.get("plain_summary"),
+                            "impact": result_state.get("user_impact_level"),
+                            "actions": result_state.get("suggested_actions"),
+                            "business": result_state.get("business_insight")
+                        }
                     }
                     collection.replace_one({"jobId": job_id}, doc, upsert=True)
                     logger.info(f"💾 [admin.py] Automatically archived logs for Job ID: {job_id}")
@@ -226,10 +231,11 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
         # 4. Return Structured Response
         return {
             "container": request.container_name,
-            "is_error": analysis_data.get("error_found", False),
-            "summary": analysis_data.get("summary", "분석 완료"),
-            "root_cause": analysis_data.get("root_cause"),
-            "suggestion": analysis_data.get("suggestion"),
+            "is_error": True,
+            "plain_summary": result_state.get("plain_summary") or "분석 완료",
+            "user_impact_level": result_state.get("user_impact_level") or "low",
+            "suggested_actions": result_state.get("suggested_actions") or [],
+            "business_insight": result_state.get("business_insight"),
             "job_id": job_id
         }
 
@@ -311,11 +317,16 @@ async def archive_log(request: ArchiveLogRequest):
                     result_json = json.loads(raw_result)
                     ai_analysis = result_json.get("analysis", result_json)
 
-                    # 같은 문서에 AI 분석 결과 추가
+                    # 같은 문서에 BIA 인사이트 결과 추가
                     collection.update_one(
                         {"jobId": request.job_id},
                         {"$set": {
-                            "ai_analysis": ai_analysis,
+                            "bia_insight": {
+                                "summary": result_state.get("plain_summary"),
+                                "impact": result_state.get("user_impact_level"),
+                                "actions": result_state.get("suggested_actions"),
+                                "business": result_state.get("business_insight")
+                            },
                             "ai_analyzed_at": datetime.utcnow().isoformat()
                         }}
                     )
