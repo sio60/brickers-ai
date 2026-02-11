@@ -203,9 +203,10 @@ TEST_HTML = """
 """
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/brick-judge/viewer", response_class=HTMLResponse, include_in_schema=False)
 async def index():
-    """루트 접속 시 3D 뷰어 반환"""
+    """루트 및 Nginx 프록시 경로 대응"""
     return await viewer()
 
 

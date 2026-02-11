@@ -58,7 +58,7 @@ from service.brickify_loader import (
 # PDF Generation (SQS로 Blueprint 서버에 위임)
 from route.sqs_producer import send_pdf_request_message, send_screenshot_request_message
 
-# Log Analysis
+# from brick_engine.agent.log_analyzer.persistence import archive_job_logs # [DECOUPLED]
 from brick_engine.agent.log_analyzer.persistence import archive_job_logs
 
 # Re-export for app.py / sqs_consumer.py
@@ -230,26 +230,19 @@ async def process_kids_request_internal(
     _log(f"\u2699\ufe0f  S3 \ubaa8\ub4dc: {s3_label} | bucket={S3_BUCKET or 'N/A'}")
     _log("\u2550" * 70)
     
-    # [NEW] Job Start 로그 아카이빙 (비동기) - 현재까지 쌓인 로그 전송
-    # [NEW] Job Start 로그 아카이빙 (비동기)
-    # LogCapture 적용 전이라 수동 저장 (하지만 LogCapture 적용을 with문으로 옮길 예정)
-    
-    # [NEW] 비동기 아카이빙 헬퍼
-    async def _async_archive(status: str = "RUNNING"):
-        try:
-            # 버퍼 복사본 전달
-            await archive_job_logs(job_id, list(job_log_buffer), status=status)
-        except Exception as e:
-            print(f"⚠️ [LogArchive] Failed: {e}")
+    # [DECOUPLED] Manual archives removed. SQS Consumer handles auto-flushing.
+    # [Restored as comments per user request]
+    # async def _async_archive(status: str = "RUNNING"):
+    #     try:
+    #         await archive_job_logs(job_id, list(job_log_buffer), status=status)
+    #     except Exception as e:
+    #         print(f"⚠️ [LogArchive] Failed: {e}")
 
     try:
         # [CHANGE] Global Context 사용
         with JobLogContext(job_log_buffer):
             # 초기 start 로그도 캡쳐됨
-            # _log 호출 시 -> stdout write -> GlobalLogCapture -> Tee.write -> job_log_buffer_var.get() -> buffer append
-            
-            # Start Log 이미 위에서 찍혔으니 아카이빙 한번 실행
-            await _async_archive()
+            # await _async_archive() # [Restored comment]
             
             with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
 
@@ -261,9 +254,8 @@ async def process_kids_request_internal(
                 raw_path = out_req_dir / "raw.png"
                 await _write_bytes_async(raw_path, img_bytes)
                 _log(f"\u2705 [STEP 0/5] \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+                # await _async_archive() # [Restored comment]
             
-                # [NEW] Checkpoint Save
-                await _async_archive()
 
                 # 1) Gemini 보정
                 step_start = time.time()
@@ -277,9 +269,8 @@ async def process_kids_request_internal(
                 await _write_bytes_async(corrected_path, corrected_bytes)
                 corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
                 _log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+                # await _async_archive() # [Restored comment]
                 
-                # [NEW] Checkpoint Save
-                await _async_archive()
 
                 await update_job_suggested_tags(job_id, ai_tags)
 
@@ -297,6 +288,7 @@ async def process_kids_request_internal(
                     # wait_for_task might use time.sleep(), blocking the event loop.
                     # We implement our own loop with asyncio.sleep() to allow _auto_flush_logs to run.
                     start_time = time.time()
+                    last_progress = 0 # [FIX] Initialize variable
                     while True:
                         if time.time() - start_time > TRIPO_WAIT_TIMEOUT_SEC:
                             raise RuntimeError(f"Tripo task timed out after {TRIPO_WAIT_TIMEOUT_SEC}s")
@@ -308,14 +300,17 @@ async def process_kids_request_internal(
                         elif task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
                              raise RuntimeError(f"Tripo task failed: status={task.status}")
                         
-                        # [CHANGE] Force log output every loop (2s) to ensure Real-time DB update.
-                        # Even if DEBUG=False, we want to show "Generating..." in the DB logs.
-                        # Only print if progress changed or every 10s? 
-                        # For now, print every time to debug the "no log" issue.
-                        progress = task.progress if hasattr(task, 'progress') else '?'
-                        _log(f"      [Tripo] Generating... ({int(time.time() - start_time)}s) | progress={progress}")
+                        # [CHANGE] Only log if progress changes or every 10s (Heartbeat)
+                        # This prevents spamming "Generating..." every 2 seconds.
+                        current_progress = task.progress if hasattr(task, 'progress') else '?'
+                        elapsed = time.time() - start_time
+                        
+                        # Log only on progress change or every 10s
+                        if current_progress != last_progress or (int(elapsed) % 10 == 0 and int(elapsed) > 0):
+                             _log(f"      [Tripo] Generating... ({int(elapsed)}s) | progress={current_progress}")
+                             last_progress = current_progress
 
-                        await asyncio.sleep(2.0) # Yield control to _auto_flush_logs
+                        await asyncio.sleep(5.0) # Yield control to _auto_flush_logs
 
                     _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
                     downloaded = await client.download_task_models(task, str(out_tripo_dir))
@@ -323,11 +318,10 @@ async def process_kids_request_internal(
 
                 tripo_elapsed = time.time() - step_start
                 _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
+                # await _async_archive() # [Restored comment]
 
                 # 3-1) downloaded 정규화
                 
-                # [NEW] Checkpoint Save
-                await _async_archive()
                 fixed_downloaded: Dict[str, str] = {}
                 for model_type, path_or_url in (downloaded or {}).items():
                     if not path_or_url:
@@ -477,9 +471,8 @@ async def process_kids_request_internal(
                 brickify_elapsed = time.time() - step_start
                 engine_label = "CoScientist" if used_coscientist else "Brickify"
                 _log(f"\u2705 [STEP 3/4] {engine_label} \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+                # await _async_archive() # [Restored comment]
                 
-                # [NEW] Checkpoint Save
-                await _async_archive()
 
                 if not out_ldr.exists() or out_ldr.stat().st_size == 0:
                     raise RuntimeError(f"LDR output missing/empty: {out_ldr}")
@@ -534,13 +527,12 @@ async def process_kids_request_internal(
                 _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
                 _log("\u2550" * 70)
             
-            # [NEW] Job Success 로그 아카이빙 (비동기) - In-Memory Log Buffer 전달
-            # [NEW] Job Success 로그 아카이빙 (비동기) - In-Memory Log Buffer 전달
-            try:
-                # 마지막 성공 상태 전송 (await로 확실히 보냄)
-                await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
-            except:
-                pass
+
+            # [Restored comment]
+            # try:
+            #     await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
+            # except:
+            #     pass
 
             return {
                 "correctedUrl": corrected_url,
@@ -570,11 +562,12 @@ async def process_kids_request_internal(
         _write_error_log(out_tripo_dir, tb)
         _write_error_log(out_brick_dir, tb)
         
-        # [NEW] 실패 로그 영구 저장 (await로 확실히 보냄)
-        try:
-            await archive_job_logs(job_id, list(job_log_buffer), status="FAILED")
-        except:
-            pass
+
+        # [Restored comment]
+        # try:
+        #     await archive_job_logs(job_id, list(job_log_buffer), status="FAILED")
+        # except:
+        #     pass
 
         raise RuntimeError(str(e)) from e
 
