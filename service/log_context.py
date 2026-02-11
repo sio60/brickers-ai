@@ -57,9 +57,9 @@ class GlobalLogCapture:
 
                 # 2. 버퍼에 내용이 있으면:
                 #    - 양이 많으면(100줄 이상) -> 즉시 전송
-                #    - 양이 적으면 -> 좀 더 기다리며 모으기 (최대 5초)
+                #    - 양이 적으면 -> 좀 더 기다리며 모으기 (최대 5분=300초)
                 if len(self._system_log_buffer) < 100:
-                    await asyncio.sleep(5.0)
+                    await asyncio.sleep(300.0)
 
                 # 3. 전송 (Flush)
                 if self._system_log_buffer:
