@@ -58,8 +58,8 @@ ISSUE_COLORS = {
     "isolated": "#FFCC00",
 }
 
-# 3D 뷰어 HTML 경로
-VIEWER_PATH = Path(__file__).parent.parent / "demo" / "brick_judge_viewer.html"
+# 3D 뷰어 HTML 경로 (패키지 내부로 이동)
+VIEWER_PATH = Path(__file__).parent / "brick_judge_viewer.html"
 
 
 # ============================================
@@ -205,7 +205,8 @@ TEST_HTML = """
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return TEST_HTML
+    """루트 접속 시 3D 뷰어 반환"""
+    return await viewer()
 
 
 @app.get("/api/status", tags=["info"], summary="서버 상태 확인")
