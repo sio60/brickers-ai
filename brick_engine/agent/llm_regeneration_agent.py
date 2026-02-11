@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List, Literal, TypedDict, Union
 from dataclasses import dataclass, field, asdict
 import json
+import time
 
 # LangGraph & LangChain imports
 try:
@@ -635,7 +636,7 @@ class RegenerationGraph:
     def node_model(self, state: AgentState) -> Dict[str, Any]:
         """LLM이 상황을 분석하고 도구를 선택하는 노드"""
         # [Legacy: Rate Limit Delay - Commented out]
-        # import time; time.sleep(2) 
+        # time.sleep(2) 
         
         print("\n[Co-Scientist] 상황 분석 중...")
         self._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")
