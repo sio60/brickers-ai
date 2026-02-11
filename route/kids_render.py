@@ -430,7 +430,8 @@ async def process_kids_request_internal(
                         step_order="bottomup",
                         extend_catalog=True,
                         max_len=8,
-                        avoid_1x1=True, # 1x1 브릭 금지 로직 활성화
+                        avoid_1x1=False,      # 1x1 허용 (디테일 사수)
+                        hollow=(eff_budget >= 1000), # 1000개 이상은 속 비우기 활성화
                     )
 
                 result = await anyio.to_thread.run_sync(run_brickify)
