@@ -18,6 +18,8 @@ from typing import Dict, Any
 from route.kids_render import process_kids_request_internal
 from route.sqs_producer import send_result_message
 from service.backend_client import check_job_canceled
+from service.log_context import JobLogContext
+from brick_engine.agent.log_analyzer.persistence import archive_job_logs
 
 
 def log(msg: str, user_email: str = "System") -> None:
@@ -176,66 +178,75 @@ async def _job_worker():
             try:
                 body = json.loads(message["Body"])
                 user_email = body.get("userEmail", "unknown")
+                job_id = body.get("jobId", "unknown")
 
-                log(f"📨 [Worker] 처리 시작 | jobId={body.get('jobId')}", user_email=user_email)
-                log(f"   - type: {body.get('type')}", user_email=user_email)
+                # [NEW] Job Log Context Start (Capture logs from here)
+                job_log_buffer = []
+                with JobLogContext(job_log_buffer):
+                    log(f"📨 [Worker] 처리 시작 | jobId={job_id}", user_email=user_email)
+                    log(f"   - type: {body.get('type')}", user_email=user_email)
 
-                # REQUEST 타입만 처리
-                if body.get("type") != "REQUEST":
-                    log(f"⚠️ [Worker] RESULT 타입 무시", user_email=user_email)
+                    # REQUEST 타입만 처리
+                    if body.get("type") != "REQUEST":
+                        log(f"⚠️ [Worker] RESULT 타입 무시", user_email=user_email)
+                        delete_message(receipt_handle)
+                        job_queue.task_done()
+                        continue
+
+                    source_image_url = body.get("sourceImageUrl")
+                    age = body.get("age", "6-7")
+                    budget = body.get("budget")
+
+                    # 취소 여부 확인 (처리 시작 전)
+                    if await check_job_canceled(job_id):
+                        log(f"🚫 [Worker] 취소된 작업 스킵 | jobId={job_id}", user_email=user_email)
+                        delete_message(receipt_handle)
+                        job_queue.task_done()
+                        await archive_job_logs(job_id, list(job_log_buffer), status="CANCELED") # [NEW]
+                        continue
+
+                    # Kids 렌더링 실행 (순차 — 이 작업이 끝나야 다음 작업 시작)
+                    # [CHANGE] Pass external buffer
+                    result = await process_kids_request_internal(
+                        job_id=job_id,
+                        source_image_url=source_image_url,
+                        age=age,
+                        budget=budget,
+                        user_email=user_email,
+                        external_log_buffer=job_log_buffer, # [NEW]
+                    )
+
+                    log(f"✅ AI 렌더링 완료!", user_email=user_email)
+                    log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
+                    log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
+                    log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
+                    log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
+
+                    # RESULT 메시지 전송 (성공)
+                    log("📤 [Worker] RESULT 메시지 전송 중...")
+                    await send_result_message(
+                        job_id=job_id,
+                        success=True,
+                        corrected_url=result["correctedUrl"],
+                        glb_url=result["modelUrl"],
+                        ldr_url=result["ldrUrl"],
+                        bom_url=result["bomUrl"],
+                        pdf_url=result.get("pdfUrl", ""),
+                        parts=result["parts"],
+                        final_target=result["finalTarget"],
+                        tags=result.get("tags", []),
+                    )
+
                     delete_message(receipt_handle)
-                    job_queue.task_done()
-                    continue
+                    _TOTAL_REQUESTS_COMPLETED += 1
 
-                job_id = body.get("jobId")
-                source_image_url = body.get("sourceImageUrl")
-                age = body.get("age", "6-7")
-                budget = body.get("budget")
-
-                # 취소 여부 확인 (처리 시작 전)
-                if await check_job_canceled(job_id):
-                    log(f"🚫 [Worker] 취소된 작업 스킵 | jobId={job_id}", user_email=user_email)
-                    delete_message(receipt_handle)
-                    job_queue.task_done()
-                    continue
-
-                # Kids 렌더링 실행 (순차 — 이 작업이 끝나야 다음 작업 시작)
-                result = await process_kids_request_internal(
-                    job_id=job_id,
-                    source_image_url=source_image_url,
-                    age=age,
-                    budget=budget,
-                    user_email=user_email,
-                )
-
-                log(f"✅ AI 렌더링 완료!", user_email=user_email)
-                log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
-                log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
-                log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
-                log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
-
-                # RESULT 메시지 전송 (성공)
-                log("📤 [Worker] RESULT 메시지 전송 중...")
-                await send_result_message(
-                    job_id=job_id,
-                    success=True,
-                    corrected_url=result["correctedUrl"],
-                    glb_url=result["modelUrl"],
-                    ldr_url=result["ldrUrl"],
-                    bom_url=result["bomUrl"],
-                    pdf_url=result.get("pdfUrl", ""),
-                    parts=result["parts"],
-                    final_target=result["finalTarget"],
-                    tags=result.get("tags", []),
-                )
-
-                delete_message(receipt_handle)
-                _TOTAL_REQUESTS_COMPLETED += 1
-
-                log(f"✅ [Worker] 처리 완료 | jobId={job_id} | "
-                    f"완료: {_TOTAL_REQUESTS_COMPLETED} | 실패: {_TOTAL_REQUESTS_FAILED}",
-                    user_email=user_email)
-                log("=" * 60, user_email=user_email)
+                    log(f"✅ [Worker] 처리 완료 | jobId={job_id} | "
+                        f"완료: {_TOTAL_REQUESTS_COMPLETED} | 실패: {_TOTAL_REQUESTS_FAILED}",
+                        user_email=user_email)
+                    log("=" * 60, user_email=user_email)
+                    
+                    # [NEW] Archive Final State (Success)
+                    await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
 
             except json.JSONDecodeError as e:
                 log(f"❌ [Worker] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
@@ -244,21 +255,51 @@ async def _job_worker():
 
             except Exception as e:
                 u_email = locals().get("user_email", "unknown")
-                log(f"❌ [Worker] 처리 실패 | error={str(e)}", user_email=u_email)
+                job_id = locals().get("job_id", "unknown")
+                
+                # Check if context was active? 
+                # If exception happened inside context, logs are in buffer.
+                # If before context, buffer might not exist.
+                # But here buffer init is very early.
+                
+                # If job_log_buffer exists in locals():
+                j_buf = locals().get("job_log_buffer", [])
+                
+                # Re-enter context if needed? No, context exited on exception.
+                # But we can still use buffer.
+                
+                # Temporarily re-hook logging to buffer for error logging??
+                # Or just append manually?
+                # Actually GlobalLogCapture hooks ALL stdout/stderr.
+                # But since we exited the context block (due to exception), 
+                # future logs won't go to buffer unless we re-enter.
+                
+                # Let's re-enter context for error logging if buffer exists
+                if 'job_log_buffer' in locals():
+                    with JobLogContext(j_buf):
+                        log(f"❌ [Worker] 처리 실패 | error={str(e)}", user_email=u_email)
 
-                # RESULT 메시지 전송 (실패)
-                try:
-                    job_id = json.loads(message["Body"]).get("jobId", "unknown")
-                    await send_result_message(
-                        job_id=job_id,
-                        success=False,
-                        error_message=str(e),
-                    )
-                except Exception as send_error:
-                    log(f"❌ [Worker] 결과 전송 실패 | error={str(send_error)}", user_email=u_email)
+                        # RESULT 메시지 전송 (실패)
+                        try:
+                            # job_id is already set
+                            await send_result_message(
+                                job_id=job_id,
+                                success=False,
+                                error_message=str(e),
+                            )
+                        except Exception as send_error:
+                            log(f"❌ [Worker] 결과 전송 실패 | error={str(send_error)}", user_email=u_email)
 
-                delete_message(receipt_handle)
-                _TOTAL_REQUESTS_FAILED += 1
+                        delete_message(receipt_handle)
+                        _TOTAL_REQUESTS_FAILED += 1
+                        
+                        # [NEW] Archive Final State (Failed)
+                        await archive_job_logs(job_id, list(j_buf), status="FAILED")
+                else:
+                    # Fallback system logging
+                    log(f"❌ [Worker] 처리 실패 (No Context) | error={str(e)}", user_email=u_email)
+                    delete_message(receipt_handle)
+                    _TOTAL_REQUESTS_FAILED += 1
 
             finally:
                 job_queue.task_done()
