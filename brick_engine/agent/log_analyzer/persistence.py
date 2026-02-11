@@ -72,6 +72,39 @@ async def get_archived_logs(job_id: str) -> Optional[str]:
             else:
                 logger.warning(f"⚠️ [로그 아카이브] 로그 조회 실패 ({job_id}): {response.status_code}")
                 return None
+
     except Exception as e:
         logger.error(f"❌ [로그 아카이브] 조회 중 에러 발생: {str(e)}")
         return None
+
+
+async def archive_system_logs(logs: list[str], session_id: str = "unknown", container_name: str = "brickers-ai-container"):
+    """
+    [NEW] 시스템 로그(Job ID 없는 전역 로그)를 아카이빙 (Fire-and-forget)
+    """
+    if not logs:
+        return
+        
+    full_log_text = "\n".join(logs) # 그냥 문자열로 보내지만, 받는 쪽(admin)에서 리스트로 잘라서 $push 할 예정
+    from datetime import datetime
+    timestamp = datetime.utcnow().isoformat()
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            # /archive/system 엔드포인트 호출
+            response = await client.post(
+                f"{ADMIN_API_BASE}/archive/system",
+                json={
+                    "logs": logs, # [Fix] 리스트 자체를 보냄 ($push 위해)
+                    "container_name": container_name,
+                    "timestamp": timestamp,
+                    "session_id": session_id # [NEW]
+                },
+                timeout=5.0
+            ) 
+            # 성공 여부 체크만 하고 에러 발생 시 무시 (무한 루프 방지)
+            if response.status_code != 200:
+                pass
+    except Exception:
+        # 시스템 로그 전송 실패 자체가 또 로그를 남기면 무한 루프 위험이 있으므로 조용히 넘어감
+        pass

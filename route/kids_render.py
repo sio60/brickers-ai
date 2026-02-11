@@ -17,51 +17,9 @@ import io
 import asyncio
 from typing import TextIO
 
-# [NEW] Log Capture Class
-class LogCapture:
-    """
-    stdout/stderr를 가로채서:
-    1. 원래의 stdout/stderr로 내보내고 (Docker 로그용)
-    2. 내부 버퍼에도 저장 (DB 전송용)
-    """
-    def __init__(self, buffer: list[str]):
-        self.buffer = buffer
-        self.original_stdout = sys.stdout
-        self.original_stderr = sys.stderr
+from service.log_context import JobLogContext
 
-    def __enter__(self):
-        sys.stdout = self._Tee(self.original_stdout, self.buffer)
-        sys.stderr = self._Tee(self.original_stderr, self.buffer)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        sys.stdout = self.original_stdout
-        sys.stderr = self.original_stderr
-
-    class _Tee(TextIO):
-        def __init__(self, original: TextIO, buffer: list[str]):
-            self.original = original
-            self._log_buffer = buffer  # [Fix] buffer 이름 충돌 방지
-
-        def write(self, message):
-            self.original.write(message)
-            self.original.flush() # Docker 즉시 출력 보장
-            if message.strip(): # 공백 라인 제외하고 버퍼링
-                 # 타임스탬프 추가 (옵션, 여기서 추가하거나 나중에 합칠 때)
-                 # 여기서는 원본 메시지 그대로 저장 (이미 log()함수에서 ts를 붙이기도 하므로)
-                 # 다만 print()로 찍히는 외부 라이브러리 로그는 ts가 없으므로, 필요시 붙일 수 있음.
-                 # 복잡도를 낮추기 위해 raw string 저장. 
-                self._log_buffer.append(message.rstrip())
-
-        def flush(self):
-            self.original.flush()
-            
-        # 필수 메서드 구현 (TextIO 호환)
-        def isatty(self): return self.original.isatty()
-        def fileno(self): return self.original.fileno()
-        def close(self): pass 
-        def closed(self): return False
-        def encoding(self): return self.original.encoding
+# [REMOVED] Local LogCapture Class (Replaced by GlobalLogCapture + JobLogContext)
 
 import anyio
 import httpx
@@ -284,10 +242,10 @@ async def process_kids_request_internal(
             print(f"⚠️ [LogArchive] Failed: {e}")
 
     try:
-        # [CHANGE] 전체 로직을 LogCapture로 감쌈
-        with LogCapture(job_log_buffer):
+        # [CHANGE] Global Context 사용
+        with JobLogContext(job_log_buffer):
             # 초기 start 로그도 캡쳐됨
-            # _log 호출 시 -> stdout write -> Tee.write -> buffer append
+            # _log 호출 시 -> stdout write -> GlobalLogCapture -> Tee.write -> job_log_buffer_var.get() -> buffer append
             
             # Start Log 이미 위에서 찍혔으니 아카이빙 한번 실행
             await _async_archive()
