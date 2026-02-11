@@ -155,3 +155,20 @@ async def get_event_stats(event_name: str, days: int = 7) -> list | None:
     except Exception as e:
         print(f"  ⚠️ [BackendClient] Event Stats Fail: {e}")
     return None
+
+
+async def get_user_activity(user_id: str, days: int = 30) -> list | None:
+    """특정 유저의 상호작용(이벤트 발생 내역)을 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/user-activity",
+                params={"userId": user_id, "days": days},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] User Activity Fail: {e}")
+    return None
