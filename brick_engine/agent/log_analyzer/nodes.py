@@ -43,6 +43,7 @@ from .prompts import (
     REPORT_SYSTEM_PROMPT,
     SIMPLE_SUMMARY_SYSTEM_PROMPT,
     SIMPLE_SUMMARY_USER_TEMPLATE,
+    INSIGHT_SYSTEM_PROMPT,
 )
 from ..llm_clients import GeminiClient
 

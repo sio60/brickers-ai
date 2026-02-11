@@ -7,7 +7,7 @@ import json
 import docker
 import logging # Added import logging
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from db import get_db
@@ -47,7 +47,6 @@ async def get_ai_analytics_report(days: int = Query(7, ge=1, le=30)):
     """
     [NEW] AI 데이터 분석가 보고서 생성
     """
-    from fastapi import Request
     request_app = router.dependencies[0].dependency if router.dependencies else None # fallback
     # Actually, the best way to get app state in router is via Request
     return None # Will fix in actual implementation below
