@@ -529,19 +529,14 @@ def convert_glb_to_ldr(
     if flipz180: Rz[0,0]=-1; Rz[1,1]=-1
     combined.apply_transform(Rz @ Ry @ Rx)
 
-    # 3. Budget-Seeking Loop (Binary Search for optimal target)
-    low_target = 5.0
-    high_target = float(target)
-    curr_target = high_target
-    
+    # 3. Budget-Seeking Loop
+    curr_target = float(target)
     final_optimized = []
-    best_count = 0
     
-    # search_iters 만큼 반복하여 예산에 근접한 최적의 target을 찾음
     for i in range(search_iters):
         print(f"\n[Engine] SEARCH ITERATION {i+1}/{search_iters}")
-        print(f"[Engine] Range: [{low_target:.1f}, {high_target:.1f}] -> Testing: {int(curr_target)}")
-        _log("brickify", f"가장 정밀한 설계를 엔진이 계산하고 있어요. ({i+1}/{search_iters})")
+        print(f"[Engine] Current Target Studs: {int(curr_target)}")
+        _log("brickify", f"가설을 바탕으로 브릭을 쌓아보는 중이에요. ({i+1}/{search_iters})")
         
         parts_count, optimized = _single_conversion(
             combined=combined,
@@ -562,40 +557,25 @@ def convert_glb_to_ldr(
             **kwargs
         )
         
-        if parts_count < 0 or parts_count > budget:
-            # 예산 초과: 범위를 아래로 좁힘
-            if parts_count < 0:
-                print(f"[Engine] Iter {i+1}: VOXEL_THRESHOLD EXCEEDED")
-            else:
-                print(f"[Engine] Iter {i+1}: {parts_count} bricks (EXCEEDED {budget})")
-            
-            high_target = curr_target
+        if parts_count < 0:
+            print(f"[Engine] Iter {i+1} Result: VOXEL_THRESHOLD EXCEEDED")
         else:
-            # 예산 충족: 더 높은 품질을 시도해보기 위해 범위를 위로 좁힘
-            print(f"[Engine] Iter {i+1}: {parts_count} bricks (OK, Budget: {budget})")
             final_optimized = optimized
-            best_count = parts_count
-            low_target = curr_target
+            print(f"[Engine] Iter {i+1} Result: {parts_count} bricks (Budget: {budget})")
             
-            # 충분히 예산에 근접했다면 (예: 예산의 95% 이상) 조기 종료 가능
-            if parts_count >= budget * 0.95:
-                print(f"[Engine] Close enough to budget ({parts_count}/{budget}).")
+            if parts_count <= budget:
+                print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
+                _log("brickify", f"구조적으로 안정적이에요. 총 {parts_count}개의 브릭으로 구성됐어요.")
                 break
         
-        # 다음 시도 target 계산 (이진 탐색)
-        curr_target = (low_target + high_target) / 2.0
-        
-        # Target 변화폭이 너무 작으면 종료
-        if abs(high_target - low_target) < 1.0:
-            break
-
-    if not final_optimized:
-        print(f"[Engine] CRITICAL: Could not meet budget even at min target. Using last attempt.")
-        # if we never hit a success, we might have no final_optimized. 
-        # In that case, we fall back to whatever was the last 'successful' if any, 
-        # but the loop logic above ensures final_optimized is only set on success.
-    else:
-        print(f"[Engine] Final Selected: {best_count} bricks at ~{int(low_target)} target studs.")
+        if i < search_iters - 1:
+            curr_target *= shrink
+            if curr_target < 5:
+                curr_target = 5
+            print(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
+            _log("brickify", "부품 수가 목표보다 많네요. 핵심 형태는 유지하면서 단순화하는 방향으로 다시 시도해 볼게요.")
+        else:
+            print(f"[Engine] WARNING: Failed to meet budget after {search_iters} iters.")
 
     # 4. Write LDR
     if not final_optimized:
