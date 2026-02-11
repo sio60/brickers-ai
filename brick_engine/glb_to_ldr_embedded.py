@@ -69,6 +69,7 @@ LDRAW_COLORS: Dict[int, Tuple[int, int, int, str]] = {
     320: (120, 27, 33, "Dark Red"),
     378: (163, 193, 173, "Sand Green"),
     484: (179, 62, 0, "Dark Orange"),
+    46: (242, 115, 0, "Flame Yellowish Orange"),
 }
 
 _COLOR_IDS = list(LDRAW_COLORS.keys())
@@ -86,199 +87,83 @@ def match_ldraw_color(rgb: Tuple[float, float, float]) -> int:
 
 
 # =============================================================================
-# 부유 브릭 결합 보정 (BFS 연결성 분석 + 심지 박기)
+# 부유 브릭 심지 박기 (구조 보정)
 # =============================================================================
-from collections import deque
-
-_NEIGHBORS_6 = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
-
-
-def _find_stable_set(voxel_map: Dict[Tuple[int,int,int], int]) -> set:
-    """BFS로 바닥(y=0)에서 연결된 모든 안정 복셀을 찾는다."""
-    ground = {pos for pos in voxel_map if pos[1] == 0}
-    if not ground:
-        min_y = min(pos[1] for pos in voxel_map)
-        ground = {pos for pos in voxel_map if pos[1] == min_y}
-
-    stable = set(ground)
-    queue = deque(ground)
-    while queue:
-        pos = queue.popleft()
-        for dx, dy, dz in _NEIGHBORS_6:
-            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
-            if npos in voxel_map and npos not in stable:
-                stable.add(npos)
-                queue.append(npos)
-    return stable
-
-
-def _find_components(positions: set) -> List[set]:
-    """6-연결 기준으로 연결 컴포넌트를 그룹화한다."""
-    visited: set = set()
-    components: List[set] = []
-    for pos in positions:
-        if pos in visited:
-            continue
-        comp: set = set()
-        queue = deque([pos])
-        while queue:
-            p = queue.popleft()
-            if p in visited:
-                continue
-            visited.add(p)
-            comp.add(p)
-            for dx, dy, dz in _NEIGHBORS_6:
-                npos = (p[0]+dx, p[1]+dy, p[2]+dz)
-                if npos in positions and npos not in visited:
-                    queue.append(npos)
-        components.append(comp)
-    return components
-
-
-def _bridge_component_to_stable(
-    comp: set,
-    stable: set,
-    voxel_map: Dict[Tuple[int,int,int], int],
-    max_dist: int,
-) -> List[Tuple[int,int,int]]:
+def embed_floating_parts(vox: List[Dict[str, Any]], max_iters: int = 3) -> List[Dict[str, Any]]:
     """
-    떠 있는 컴포넌트에서 안정 구조까지 BFS 최단 경로를 찾고,
-    경로 위의 브릿지 복셀 목록을 반환한다.
-    """
-    # BFS: 컴포넌트 표면에서 바깥으로 확장
-    parent: Dict[Tuple[int,int,int], Optional[Tuple[int,int,int]]] = {}
-    depth: Dict[Tuple[int,int,int], int] = {}
-    queue: deque = deque()
-
-    # 컴포넌트의 모든 복셀을 시작점으로 (depth=0)
-    for pos in comp:
-        depth[pos] = 0
-        parent[pos] = None
-
-    # 컴포넌트 경계에서 1-hop 이웃 중 이미 stable인게 있으면 바로 연결
-    for pos in comp:
-        for dx, dy, dz in _NEIGHBORS_6:
-            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
-            if npos in stable:
-                return []  # 이미 인접, 브릿지 불필요
-
-    # 컴포넌트 경계에서 바깥으로 BFS 확장
-    for pos in comp:
-        for dx, dy, dz in _NEIGHBORS_6:
-            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
-            if npos not in comp and npos not in depth and npos[1] >= 0:
-                depth[npos] = 1
-                parent[npos] = pos
-                queue.append(npos)
-
-    target: Optional[Tuple[int,int,int]] = None
-    while queue:
-        pos = queue.popleft()
-        d = depth[pos]
-
-        # stable에 도달하면 종료
-        if pos in stable:
-            target = pos
-            break
-
-        if d >= max_dist:
-            continue
-
-        for dx, dy, dz in _NEIGHBORS_6:
-            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
-            if npos in stable:
-                parent[npos] = pos
-                target = npos
-                break
-            if npos in depth or npos in comp or npos[1] < 0:
-                continue
-            depth[npos] = d + 1
-            parent[npos] = pos
-            queue.append(npos)
-
-        if target is not None:
-            break
-
-    if target is None:
-        return []
-
-    # 경로 역추적 — 컴포넌트/stable에 이미 속한 복셀은 제외
-    bridge: List[Tuple[int,int,int]] = []
-    p: Optional[Tuple[int,int,int]] = target
-    while p is not None:
-        if p not in comp and p not in stable and p not in voxel_map:
-            bridge.append(p)
-        p = parent[p]
-    return bridge
-
-
-def embed_floating_parts(
-    vox: List[Dict[str, Any]],
-    max_bridge_short: int = 2,
-    max_bridge_long: int = 6,
-) -> List[Dict[str, Any]]:
-    """
-    공중에 떠 있는 복셀을 안정 구조에 접합한다.
-
-    전략 (2단계):
-      1) 인접 결합 (Adjacent Merging) — 거리 ≤ max_bridge_short
-         짧은 브릿지로 가까운 빈 칸을 채워서 연결
-      2) 내부 심지 박기 (Internal Anchoring) — 거리 ≤ max_bridge_long
-         더 먼 곳까지 BFS 경로를 탐색하여 연결
+    공중에 떠 있는 복셀을 인접한 안정적인 복셀과 연결
+    - 바닥(y=0)에 있거나
+    - 아래에 복셀이 있으면 안정적
     """
     if not vox:
         return []
-
+    
     voxel_map = {(v["x"], v["y"], v["z"]): int(v["color"]) for v in vox}
-
-    for max_dist in (max_bridge_short, max_bridge_long):
-        stable = _find_stable_set(voxel_map)
-        floating = set(voxel_map.keys()) - stable
-
-        if not floating:
+    new_colors = dict(voxel_map)
+    
+    neighbors_horizontal = [(1,0,0), (-1,0,0), (0,0,1), (0,0,-1)]
+    neighbors_all = []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                if dx == 0 and dy == 0 and dz == 0:
+                    continue
+                neighbors_all.append((dx, dy, dz))
+    
+    for _ in range(max_iters):
+        updates: Dict[Tuple[int,int,int], int] = {}
+        
+        for pos, color in list(new_colors.items()):
+            x, y, z = pos
+            
+            # 안정성 체크
+            is_stable = False
+            if y == 0:
+                is_stable = True
+            elif (x, y-1, z) in new_colors:
+                is_stable = True
+            elif (x, y+1, z) in new_colors:
+                is_stable = True
+            
+            if is_stable:
+                continue
+            
+            # 불안정한 복셀 → 인접한 안정적인 복셀 찾기
+            best_anchor: Optional[Tuple[int,int,int]] = None
+            
+            # 수평 이웃 먼저 확인
+            for dx, dy, dz in neighbors_horizontal:
+                npos = (x+dx, y+dy, z+dz)
+                if npos in new_colors:
+                    nx, ny, nz = npos
+                    if ny == 0 or (nx, ny-1, nz) in new_colors or (nx, ny+1, nz) in new_colors:
+                        best_anchor = npos
+                        break
+            
+            # 없으면 모든 이웃 확인
+            if not best_anchor:
+                for dx, dy, dz in neighbors_all:
+                    npos = (x+dx, y+dy, z+dz)
+                    if npos in new_colors:
+                        best_anchor = npos
+                        break
+            
+            if best_anchor:
+                my_color = new_colors[pos]
+                
+                # 앵커 복셀과 현재 복셀 사이에 브릿지 복셀 추가
+                ax, ay, az = best_anchor
+                dist = abs(x-ax) + abs(y-ay) + abs(z-az)
+                if dist > 1:
+                    bridge = (ax, y, z)
+                    if bridge not in new_colors:
+                        updates[bridge] = my_color
+        
+        if not updates:
             break
-
-        components = _find_components(floating)
-        # 큰 컴포넌트부터 처리 (중요한 부분 우선)
-        components.sort(key=len, reverse=True)
-
-        for comp in components:
-            bridge = _bridge_component_to_stable(
-                comp, stable, voxel_map, max_dist
-            )
-            if bridge:
-                # 브릿지 색상: 인접한 기존 복셀의 최빈 색상 사용
-                neighbor_colors = []
-                for bpos in bridge:
-                    for dx, dy, dz in _NEIGHBORS_6:
-                        npos = (bpos[0]+dx, bpos[1]+dy, bpos[2]+dz)
-                        if npos in voxel_map:
-                            neighbor_colors.append(voxel_map[npos])
-                if neighbor_colors:
-                    vals, counts = np.unique(neighbor_colors, return_counts=True)
-                    bridge_color = int(vals[np.argmax(counts)])
-                else:
-                    # fallback: 컴포넌트의 최빈 색
-                    comp_colors = [voxel_map[p] for p in comp]
-                    vals, counts = np.unique(comp_colors, return_counts=True)
-                    bridge_color = int(vals[np.argmax(counts)])
-
-                for bpos in bridge:
-                    voxel_map[bpos] = bridge_color
-
-                # 연결된 컴포넌트를 stable로 편입
-                stable.update(comp)
-                stable.update(bridge)
-
-    # 최종 상태 로그
-    final_stable = _find_stable_set(voxel_map)
-    still_floating = set(voxel_map.keys()) - final_stable
-    if still_floating:
-        print(f"      [Warning] {len(still_floating)} voxels still floating after fix")
-    else:
-        print(f"      [OK] All voxels connected to ground")
-
-    return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in voxel_map.items()]
+        new_colors.update(updates)
+    
+    return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in new_colors.items()]
 
 
 # =============================================================================
@@ -330,10 +215,8 @@ def _single_conversion(
     use_mesh_color: bool,
     step_order: str,
     glb_path: str,
-    color_smooth: int = 1,
-    avoid_1x1: bool = False,
-    log_fn: Optional[Any] = None,
     smart_fix: bool = True,
+    color_smooth: int = 1,
     **kwargs: Any
 ) -> Tuple[int, List[Dict]]:
     """
@@ -388,7 +271,7 @@ def _single_conversion(
                 combined, out_ldr_path, target, kind, plates_per_voxel,
                 interlock, max_area, solid_color, use_mesh_color, step_order, glb_path,
                 smart_fix=smart_fix, color_smooth=color_smooth,
-                pitch=new_pitch, log_fn=log_fn, **kwargs
+                pitch=new_pitch, **kwargs
             )
         else:
             print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
@@ -409,9 +292,8 @@ def _single_conversion(
         colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
         
         # 밝기 및 채도 보정 (AI 생성 모델의 어두운/탁한 텍스처 보정)
-        # 과도한 보정은 주황/갈색 등 중간톤 색상을 왜곡시킴
-        brightness = kwargs.get("color_brightness", 1.15)
-        saturation = kwargs.get("color_saturation", 1.2)
+        brightness = kwargs.get("color_brightness", 1.4)
+        saturation = kwargs.get("color_saturation", 1.5)
         
         if brightness != 1.0:
             colors_raw = np.clip(colors_raw * brightness, 0, 255)
@@ -443,8 +325,6 @@ def _single_conversion(
     # 부유 브릭 보정
     if smart_fix:
         print(f"      [Step] Embedding floating parts...")
-        if log_fn:
-            log_fn("brickify", "공중에 뜬 부분이 있으면 인접 브릭에 결합하고, 내부 심지를 박아 보강하고 있어요.")
         bricks_data = embed_floating_parts(bricks_data)
 
     # Optimize (Greedy Packing)
@@ -455,8 +335,7 @@ def _single_conversion(
         kind=kind,
         plates_per_voxel=plates_per_voxel,
         interlock=interlock,
-        max_area=max_area,
-        avoid_1x1=avoid_1x1
+        max_area=max_area
     )
     o_end = time.time()
     print(f"      [Step] Optimization Done: {o_end - o_start:.2f}s")
@@ -483,7 +362,6 @@ def convert_glb_to_ldr(
     use_mesh_color: bool = True,
     invert_y: bool = False,
     smart_fix: bool = True,
-    avoid_1x1: bool = False,
     step_order: str = "bottomup",
     color_smooth: int = 1,
     **kwargs: Any
@@ -499,7 +377,6 @@ def convert_glb_to_ldr(
     """
     # SSE log callback
     _log_cb = kwargs.pop("log_callback", None)
-
     def _log(step: str, message: str):
         if _log_cb:
             try:
@@ -510,7 +387,7 @@ def convert_glb_to_ldr(
     print(f"[Engine] Starting conversion: {glb_path} -> {out_ldr_path}")
     print(f"[Engine] Target: {target} studs, Budget: {budget} bricks")
 
-    _log("brickify", "여러 설계 중에서 가장 균형 잡힌 안을 찾고 있어요.")
+    _log("brickify", "브릭으로 어떻게 만들지 고민하고 있어요...")
 
     # 1. Load meshes
     scene = trimesh.load(glb_path, force='scene')
@@ -530,19 +407,14 @@ def convert_glb_to_ldr(
     if flipz180: Rz[0,0]=-1; Rz[1,1]=-1
     combined.apply_transform(Rz @ Ry @ Rx)
 
-    # 3. Budget-Seeking Loop (Binary Search for optimal target)
-    low_target = 5.0
-    high_target = float(target)
-    curr_target = high_target
-    
+    # 3. Budget-Seeking Loop
+    curr_target = float(target)
     final_optimized = []
-    best_count = 0
     
-    # search_iters 만큼 반복하여 예산에 근접한 최적의 target을 찾음
     for i in range(search_iters):
         print(f"\n[Engine] SEARCH ITERATION {i+1}/{search_iters}")
-        print(f"[Engine] Range: [{low_target:.1f}, {high_target:.1f}] -> Testing: {int(curr_target)}")
-        _log("brickify", f"가장 정밀한 설계를 엔진이 계산하고 있어요. ({i+1}/{search_iters})")
+        print(f"[Engine] Current Target Studs: {int(curr_target)}")
+        _log("brickify", f"브릭을 하나씩 쌓아보고 있어요... ({i+1}/{search_iters})")
         
         parts_count, optimized = _single_conversion(
             combined=combined,
@@ -558,51 +430,34 @@ def convert_glb_to_ldr(
             glb_path=glb_path,
             smart_fix=smart_fix,
             color_smooth=color_smooth,
-            avoid_1x1=avoid_1x1,
-            log_fn=_log,
             **kwargs
         )
         
-        if parts_count < 0 or parts_count > budget:
-            # 예산 초과: 범위를 아래로 좁힘
-            if parts_count < 0:
-                print(f"[Engine] Iter {i+1}: VOXEL_THRESHOLD EXCEEDED")
-            else:
-                print(f"[Engine] Iter {i+1}: {parts_count} bricks (EXCEEDED {budget})")
-            
-            high_target = curr_target
+        if parts_count < 0:
+            print(f"[Engine] Iter {i+1} Result: VOXEL_THRESHOLD EXCEEDED")
         else:
-            # 예산 충족: 더 높은 품질을 시도해보기 위해 범위를 위로 좁힘
-            print(f"[Engine] Iter {i+1}: {parts_count} bricks (OK, Budget: {budget})")
             final_optimized = optimized
-            best_count = parts_count
-            low_target = curr_target
+            print(f"[Engine] Iter {i+1} Result: {parts_count} bricks (Budget: {budget})")
             
-            # 충분히 예산에 근접했다면 (예: 예산의 95% 이상) 조기 종료 가능
-            if parts_count >= budget * 0.95:
-                print(f"[Engine] Close enough to budget ({parts_count}/{budget}).")
+            if parts_count <= budget:
+                print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
+                _log("brickify", f"딱 맞게 {parts_count}개로 쌓았어요!")
                 break
         
-        # 다음 시도 target 계산 (이진 탐색)
-        curr_target = (low_target + high_target) / 2.0
-        
-        # Target 변화폭이 너무 작으면 종료
-        if abs(high_target - low_target) < 1.0:
-            break
-
-    if not final_optimized:
-        print(f"[Engine] CRITICAL: Could not meet budget even at min target. Using last attempt.")
-        # if we never hit a success, we might have no final_optimized. 
-        # In that case, we fall back to whatever was the last 'successful' if any, 
-        # but the loop logic above ensures final_optimized is only set on success.
-    else:
-        print(f"[Engine] Final Selected: {best_count} bricks at ~{int(low_target)} target studs.")
+        if i < search_iters - 1:
+            curr_target *= shrink
+            if curr_target < 5:
+                curr_target = 5
+            print(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
+            _log("brickify", "브릭이 좀 많네요, 다시 고민해볼게요...")
+        else:
+            print(f"[Engine] WARNING: Failed to meet budget after {search_iters} iters.")
 
     # 4. Write LDR
     if not final_optimized:
         raise RuntimeError("Failed to generate any bricks")
 
-    _log("brickify", "조립 순서를 재정렬해서 더 자연스럽게 만들고 있어요.")
+    _log("brickify", "조립 순서를 고민하고 있어요...")
 
     write_ldr(
         out_ldr_path,
@@ -611,7 +466,7 @@ def convert_glb_to_ldr(
         title=Path(glb_path).stem
     )
 
-    _log("brickify", "완성되었어요. 브릭 설계를 마무리할게요.")
+    _log("brickify", "브릭 설계가 끝났어요!")
 
     return {
         "parts": len(final_optimized),
