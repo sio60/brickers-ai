@@ -259,9 +259,15 @@ async def archive_log(request: ArchiveLogRequest):
         should_update = True
         if existing_doc and request.client_timestamp:
             # 2. 기존 문서에 client_timestamp가 있고, 요청된 timestamp가 더 오래된 경우 업데이트 Skip
+            # [CHANGE] 단, 로그 길이가 더 길어졌다면 (내용이 추가되었다면) 타임스탬프가 조금 뒤집혀도 업데이트 허용
             last_ts = existing_doc.get("client_timestamp")
-            if last_ts and request.client_timestamp < last_ts:
-                logger.warning(f"⚠️ [admin.py] Skipping archival: Recent update exists ({last_ts} > {request.client_timestamp})")
+            last_logs = existing_doc.get("logs", "")
+            
+            is_newer_ts = (last_ts is None) or (request.client_timestamp >= last_ts)
+            is_more_logs = len(request.logs) > len(last_logs)
+
+            if not is_newer_ts and not is_more_logs:
+                logger.warning(f"⚠️ [admin.py] Skipping archival: Old request & No new content ({last_ts} > {request.client_timestamp})")
                 should_update = False
         
         if should_update:
