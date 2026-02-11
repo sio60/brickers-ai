@@ -25,7 +25,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile.brickjudge
           platforms: linux/amd64
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/brickers-ai:latest

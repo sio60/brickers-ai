@@ -1,0 +1,42 @@
+# ============================================
+# Stage 1: Rust Builder
+# ============================================
+FROM rust:1.80-slim-bookworm AS rust-builder
+
+WORKDIR /build/rust
+RUN apt-get update && apt-get install -y python3 python3-pip python3-venv
+
+# Rust 소스 복사
+COPY brick_judge/rust /build/rust
+
+# Maturin 설치 및 빌드
+RUN pip3 install --break-system-packages maturin
+RUN maturin build --release --out /build/wheels
+
+# ============================================
+# Stage 2: Runtime
+# ============================================
+FROM python:3.11.9-slim AS runtime
+
+WORKDIR /app
+
+# 런타임 라이브러리 (최소화)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libatlas-base-dev \
+    libgfortran5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# brick_judge 관련 파일만 복사
+COPY brick_judge/ /app/brick_judge/
+COPY demo/ /app/demo/
+
+# 빌드된 Rust wheel 복사 및 설치
+COPY --from=rust-builder /build/wheels /tmp/wheels
+RUN pip install --no-cache-dir fastapi uvicorn pydantic python-multipart jinja2 \
+    && pip install --no-cache-dir /tmp/wheels/brick_judge_rs*.whl \
+    && rm -rf /tmp/wheels
+
+EXPOSE 8000
+
+# brick_judge 전용 서버 실행
+CMD ["python", "-m", "uvicorn", "brick_judge.server:app", "--host", "0.0.0.0", "--port", "8000"]
