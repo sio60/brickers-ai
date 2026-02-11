@@ -57,8 +57,15 @@ def _generate_multiple_proposals_llm(state: AgentState, base_context: str) -> li
     """LLM으로 여러 제안 생성 (Structured Output - 파싱 에러 없음)"""
     prompt = f"""{base_context}
 
-2-3개의 서로 다른 접근 방식으로 제안을 생성해줘.
-각 제안은 다른 전략을 사용해야 해:
+2-3개의 서로 다른 제안을 생성해줘.
+
+⚠️ 핵심 규칙: 각 제안은 반드시 모델의 서로 다른 위치/부품을 대상으로 해야 해.
+- 같은 위치(예: "왼쪽 다리")에 대해 여러 제안 금지
+- 이미 다룬 위치는 다른 제안에서 반복하지 말 것
+- 예시 (좋음): 1번=왼쪽 다리 수정, 2번=꼬리 재배치, 3번=오른쪽 날개 회전
+- 예시 (나쁨): 1번=왼쪽 다리 이동, 2번=왼쪽 다리 회전, 3번=왼쪽 다리 삭제
+
+접근 방식은 각각 다르게:
 1. conservative: 최소 변경, 낮은 위험
 2. moderate: 균형 잡힌 접근
 3. aggressive: 큰 변경, 더 나은 결과 가능성
@@ -121,7 +128,10 @@ def _generate_for_strategy(state: AgentState, strategy: str, target) -> list:
         vision_problems = state.get('vision_problems', [])
         vision_analysis = "\n".join([f"- {p.get('location')}: {p.get('issue')}" for p in vision_problems[:5]]) if vision_problems else "문제 없음"
         memory = state.get('memory', {})
-        memory_text = f"실패: {memory.get('failed_approaches', [])[-3:]}\n성공: {memory.get('successful_patterns', [])[-3:]}"
+        lessons = memory.get('lessons', [])[-3:]
+        lessons_text = "\n".join(lessons) if lessons else "없음"
+        success_text = str(memory.get('successful_patterns', [])[-3:]) if memory.get('successful_patterns') else "없음"
+        memory_text = f"이전 교훈 (더 나은 제안을 위한 참고):\n{lessons_text}\n성공 패턴: {success_text}"
 
         context = GENERATE_PROMPT.format(
             supervisor_decision=supervisor_decision,

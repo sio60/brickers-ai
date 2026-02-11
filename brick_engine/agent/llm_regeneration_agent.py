@@ -87,11 +87,11 @@ def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활�
 # ============================================================================
 
 DEFAULT_PARAMS = {
-    "target": 25,              # 목표 스터드 크기 (25로 고정)
-    "min_target": 25,          # 최소 스터드 크기 (이 값 이하로 줄어들지 않음 - 고정 효과)
-    "budget": 800,             # 최대 브릭 수 (Kids L1 기준)
-    "shrink": 0.8,             # 축소 비율 (0.8로 강화)
-    "search_iters": 12,        # 이진 탐색 반복 횟수 (12회로 증가)
+    "target": 25,              # 목표 스터드 크기
+    "min_target": 5,           # 최소 스터드 크기 (25 -> 5로 완화)
+    "budget": 200,             # 최대 브릭 수 (Kids 기본)
+    "shrink": 0.6,             # 축소 비율 (0.8 -> 0.6)
+    "search_iters": 10,        # 이진 탐색 반복 횟수
     "flipx180": False,         # X축 180도 회전
     "flipy180": False,         # Y축 180도 회전
     "flipz180": False,         # Z축 180도 회전
@@ -543,7 +543,7 @@ class RegenerationGraph:
                 print(f"  요약: {summary_text}")
             
             # 현재 메트릭 저장
-            budget = state['params'].get('budget', 500)
+            budget = state['params'].get('budget', 200)
             current_metrics = {
                 "failure_ratio": feedback.failure_ratio,
                 "small_brick_ratio": small_brick_ratio,

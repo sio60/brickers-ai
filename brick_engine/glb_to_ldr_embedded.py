@@ -86,88 +86,199 @@ def match_ldraw_color(rgb: Tuple[float, float, float]) -> int:
 
 
 # =============================================================================
-# 부유 브릭 심지 박기 (구조 보정)
+# 부유 브릭 결합 보정 (BFS 연결성 분석 + 심지 박기)
 # =============================================================================
+from collections import deque
+
+_NEIGHBORS_6 = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
 
 
-# =============================================================================
-# 부유 브릭 심지 박기 (구조 보정)
-# =============================================================================
-def embed_floating_parts(vox: List[Dict[str, Any]], max_iters: int = 3) -> List[Dict[str, Any]]:
+def _find_stable_set(voxel_map: Dict[Tuple[int,int,int], int]) -> set:
+    """BFS로 바닥(y=0)에서 연결된 모든 안정 복셀을 찾는다."""
+    ground = {pos for pos in voxel_map if pos[1] == 0}
+    if not ground:
+        min_y = min(pos[1] for pos in voxel_map)
+        ground = {pos for pos in voxel_map if pos[1] == min_y}
+
+    stable = set(ground)
+    queue = deque(ground)
+    while queue:
+        pos = queue.popleft()
+        for dx, dy, dz in _NEIGHBORS_6:
+            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
+            if npos in voxel_map and npos not in stable:
+                stable.add(npos)
+                queue.append(npos)
+    return stable
+
+
+def _find_components(positions: set) -> List[set]:
+    """6-연결 기준으로 연결 컴포넌트를 그룹화한다."""
+    visited: set = set()
+    components: List[set] = []
+    for pos in positions:
+        if pos in visited:
+            continue
+        comp: set = set()
+        queue = deque([pos])
+        while queue:
+            p = queue.popleft()
+            if p in visited:
+                continue
+            visited.add(p)
+            comp.add(p)
+            for dx, dy, dz in _NEIGHBORS_6:
+                npos = (p[0]+dx, p[1]+dy, p[2]+dz)
+                if npos in positions and npos not in visited:
+                    queue.append(npos)
+        components.append(comp)
+    return components
+
+
+def _bridge_component_to_stable(
+    comp: set,
+    stable: set,
+    voxel_map: Dict[Tuple[int,int,int], int],
+    max_dist: int,
+) -> List[Tuple[int,int,int]]:
     """
-    공중에 떠 있는 복셀을 인접한 안정적인 복셀과 연결
-    - 바닥(y=0)에 있거나
-    - 아래에 복셀이 있으면 안정적
+    떠 있는 컴포넌트에서 안정 구조까지 BFS 최단 경로를 찾고,
+    경로 위의 브릿지 복셀 목록을 반환한다.
+    """
+    # BFS: 컴포넌트 표면에서 바깥으로 확장
+    parent: Dict[Tuple[int,int,int], Optional[Tuple[int,int,int]]] = {}
+    depth: Dict[Tuple[int,int,int], int] = {}
+    queue: deque = deque()
+
+    # 컴포넌트의 모든 복셀을 시작점으로 (depth=0)
+    for pos in comp:
+        depth[pos] = 0
+        parent[pos] = None
+
+    # 컴포넌트 경계에서 1-hop 이웃 중 이미 stable인게 있으면 바로 연결
+    for pos in comp:
+        for dx, dy, dz in _NEIGHBORS_6:
+            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
+            if npos in stable:
+                return []  # 이미 인접, 브릿지 불필요
+
+    # 컴포넌트 경계에서 바깥으로 BFS 확장
+    for pos in comp:
+        for dx, dy, dz in _NEIGHBORS_6:
+            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
+            if npos not in comp and npos not in depth and npos[1] >= 0:
+                depth[npos] = 1
+                parent[npos] = pos
+                queue.append(npos)
+
+    target: Optional[Tuple[int,int,int]] = None
+    while queue:
+        pos = queue.popleft()
+        d = depth[pos]
+
+        # stable에 도달하면 종료
+        if pos in stable:
+            target = pos
+            break
+
+        if d >= max_dist:
+            continue
+
+        for dx, dy, dz in _NEIGHBORS_6:
+            npos = (pos[0]+dx, pos[1]+dy, pos[2]+dz)
+            if npos in stable:
+                parent[npos] = pos
+                target = npos
+                break
+            if npos in depth or npos in comp or npos[1] < 0:
+                continue
+            depth[npos] = d + 1
+            parent[npos] = pos
+            queue.append(npos)
+
+        if target is not None:
+            break
+
+    if target is None:
+        return []
+
+    # 경로 역추적 — 컴포넌트/stable에 이미 속한 복셀은 제외
+    bridge: List[Tuple[int,int,int]] = []
+    p: Optional[Tuple[int,int,int]] = target
+    while p is not None:
+        if p not in comp and p not in stable and p not in voxel_map:
+            bridge.append(p)
+        p = parent[p]
+    return bridge
+
+
+def embed_floating_parts(
+    vox: List[Dict[str, Any]],
+    max_bridge_short: int = 2,
+    max_bridge_long: int = 6,
+) -> List[Dict[str, Any]]:
+    """
+    공중에 떠 있는 복셀을 안정 구조에 접합한다.
+
+    전략 (2단계):
+      1) 인접 결합 (Adjacent Merging) — 거리 ≤ max_bridge_short
+         짧은 브릿지로 가까운 빈 칸을 채워서 연결
+      2) 내부 심지 박기 (Internal Anchoring) — 거리 ≤ max_bridge_long
+         더 먼 곳까지 BFS 경로를 탐색하여 연결
     """
     if not vox:
         return []
-    
+
     voxel_map = {(v["x"], v["y"], v["z"]): int(v["color"]) for v in vox}
-    new_colors = dict(voxel_map)
-    
-    neighbors_horizontal = [(1,0,0), (-1,0,0), (0,0,1), (0,0,-1)]
-    neighbors_all = []
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            for dz in (-1, 0, 1):
-                if dx == 0 and dy == 0 and dz == 0:
-                    continue
-                neighbors_all.append((dx, dy, dz))
-    
-    for _ in range(max_iters):
-        updates: Dict[Tuple[int,int,int], int] = {}
-        
-        for pos, color in list(new_colors.items()):
-            x, y, z = pos
-            
-            # 안정성 체크
-            is_stable = False
-            if y == 0:
-                is_stable = True
-            elif (x, y-1, z) in new_colors:
-                is_stable = True
-            elif (x, y+1, z) in new_colors:
-                is_stable = True
-            
-            if is_stable:
-                continue
-            
-            # 불안정한 복셀 → 인접한 안정적인 복셀 찾기
-            best_anchor: Optional[Tuple[int,int,int]] = None
-            
-            # 수평 이웃 먼저 확인
-            for dx, dy, dz in neighbors_horizontal:
-                npos = (x+dx, y+dy, z+dz)
-                if npos in new_colors:
-                    nx, ny, nz = npos
-                    if ny == 0 or (nx, ny-1, nz) in new_colors or (nx, ny+1, nz) in new_colors:
-                        best_anchor = npos
-                        break
-            
-            # 없으면 모든 이웃 확인
-            if not best_anchor:
-                for dx, dy, dz in neighbors_all:
-                    npos = (x+dx, y+dy, z+dz)
-                    if npos in new_colors:
-                        best_anchor = npos
-                        break
-            
-            if best_anchor:
-                my_color = new_colors[pos]
-                
-                # 앵커 복셀과 현재 복셀 사이에 브릿지 복셀 추가
-                ax, ay, az = best_anchor
-                dist = abs(x-ax) + abs(y-ay) + abs(z-az)
-                if dist > 1:
-                    bridge = (ax, y, z)
-                    if bridge not in new_colors:
-                        updates[bridge] = my_color
-        
-        if not updates:
+
+    for max_dist in (max_bridge_short, max_bridge_long):
+        stable = _find_stable_set(voxel_map)
+        floating = set(voxel_map.keys()) - stable
+
+        if not floating:
             break
-        new_colors.update(updates)
-    
-    return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in new_colors.items()]
+
+        components = _find_components(floating)
+        # 큰 컴포넌트부터 처리 (중요한 부분 우선)
+        components.sort(key=len, reverse=True)
+
+        for comp in components:
+            bridge = _bridge_component_to_stable(
+                comp, stable, voxel_map, max_dist
+            )
+            if bridge:
+                # 브릿지 색상: 인접한 기존 복셀의 최빈 색상 사용
+                neighbor_colors = []
+                for bpos in bridge:
+                    for dx, dy, dz in _NEIGHBORS_6:
+                        npos = (bpos[0]+dx, bpos[1]+dy, bpos[2]+dz)
+                        if npos in voxel_map:
+                            neighbor_colors.append(voxel_map[npos])
+                if neighbor_colors:
+                    vals, counts = np.unique(neighbor_colors, return_counts=True)
+                    bridge_color = int(vals[np.argmax(counts)])
+                else:
+                    # fallback: 컴포넌트의 최빈 색
+                    comp_colors = [voxel_map[p] for p in comp]
+                    vals, counts = np.unique(comp_colors, return_counts=True)
+                    bridge_color = int(vals[np.argmax(counts)])
+
+                for bpos in bridge:
+                    voxel_map[bpos] = bridge_color
+
+                # 연결된 컴포넌트를 stable로 편입
+                stable.update(comp)
+                stable.update(bridge)
+
+    # 최종 상태 로그
+    final_stable = _find_stable_set(voxel_map)
+    still_floating = set(voxel_map.keys()) - final_stable
+    if still_floating:
+        print(f"      [Warning] {len(still_floating)} voxels still floating after fix")
+    else:
+        print(f"      [OK] All voxels connected to ground")
+
+    return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in voxel_map.items()]
 
 
 # =============================================================================
@@ -332,7 +443,7 @@ def _single_conversion(
     if smart_fix:
         print(f"      [Step] Embedding floating parts...")
         if log_fn:
-            log_fn("brickify", "공중에 뜬 부분이 있으면 무너지기 쉬워요. 기둥을 세우고 내부 지지대를 보강하고 있어요.")
+            log_fn("brickify", "공중에 뜬 부분이 있으면 인접 브릭에 결합하고, 내부 심지를 박아 보강하고 있어요.")
         bricks_data = embed_floating_parts(bricks_data)
 
     # Optimize (Greedy Packing)
