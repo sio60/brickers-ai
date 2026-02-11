@@ -41,7 +41,7 @@ class LogCapture:
     class _Tee(TextIO):
         def __init__(self, original: TextIO, buffer: list[str]):
             self.original = original
-            self.buffer = buffer
+            self._log_buffer = buffer  # [Fix] buffer 이름 충돌 방지
 
         def write(self, message):
             self.original.write(message)
@@ -51,7 +51,7 @@ class LogCapture:
                  # 여기서는 원본 메시지 그대로 저장 (이미 log()함수에서 ts를 붙이기도 하므로)
                  # 다만 print()로 찍히는 외부 라이브러리 로그는 ts가 없으므로, 필요시 붙일 수 있음.
                  # 복잡도를 낮추기 위해 raw string 저장. 
-                self.buffer.append(message.rstrip())
+                self._log_buffer.append(message.rstrip())
 
         def flush(self):
             self.original.flush()
