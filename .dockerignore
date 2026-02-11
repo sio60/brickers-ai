@@ -20,6 +20,6 @@ README.md
 ruff.toml
 tests/
 scripts/
-demo/
+# demo/ (경량 이미지의 뷰어 HTML을 위해 필요하므로 주석 처리에서 제거)
 assets/
 blueprint/
