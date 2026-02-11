@@ -205,6 +205,26 @@ async def _job_worker():
                         await archive_job_logs(job_id, list(job_log_buffer), status="CANCELED") # [NEW]
                         continue
 
+                # [NEW] Auto-Flush Logic
+                async def _auto_flush_logs():
+                    """
+                    주기적으로 로그 버퍼를 DB에 전송 (Real-time UX)
+                    Tripo 생성 등 긴 작업 중에도 사용자가 로그를 볼 수 있게 함.
+                    """
+                    last_sent_count = 0
+                    while True:
+                        await asyncio.sleep(2.0) # 2초마다 체크
+                        current_count = len(job_log_buffer)
+                        if current_count > last_sent_count:
+                            # 변경사항이 있을 때만 전송
+                            # status="RUNNING"으로 중간 저장
+                            await archive_job_logs(job_id, list(job_log_buffer), status="RUNNING")
+                            last_sent_count = current_count
+
+                # Start Auto-Flush Task
+                flusher_task = asyncio.create_task(_auto_flush_logs())
+
+                try:
                     # Kids 렌더링 실행 (순차 — 이 작업이 끝나야 다음 작업 시작)
                     # [CHANGE] Pass external buffer
                     result = await process_kids_request_internal(
@@ -247,6 +267,14 @@ async def _job_worker():
                     
                     # [NEW] Archive Final State (Success)
                     await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
+
+                finally:
+                    # 작업 종료 시 플러셔 정리
+                    flusher_task.cancel()
+                    try:
+                        await flusher_task
+                    except asyncio.CancelledError:
+                        pass
 
             except json.JSONDecodeError as e:
                 log(f"❌ [Worker] JSON 파싱 실패 | messageId={message_id} | error={str(e)}")
