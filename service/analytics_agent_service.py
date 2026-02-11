@@ -98,3 +98,31 @@ Data:
         except Exception as e:
             log.error(f"LLM call failed in AnalyticsAgent: {e}")
             return f"보고서 생성 중 오류가 발생했습니다: {str(e)}"
+
+    async def get_personalized_quality_advice(self, user_id: str) -> str:
+        """
+        AI 에이전트 기반 데이터 품질 향상 제안 기능.
+        유저의 과거 행동 패턴을 분석하여 고품질 결과물을 위한 맞춤형 팁을 제공합니다.
+        """
+        activity = await backend_client.get_user_activity(user_id, days=30)
+        
+        if not activity:
+            return "유저의 활동 데이터가 부족하여 맞춤 제안을 생성할 수 없습니다."
+
+        # 활동 내역 요약 (예: 어떤 이벤트를 많이 했는지)
+        context = f"User {user_id} Activity (Last 30 days):\n{activity}"
+        
+        prompt = f"""
+You are the 'Brickers Quality Pro Agent'. 
+Analyze the following user activity data and provide a personalized advice to improve their 'Bricker Creation' quality.
+Focus on helping them choose better prompts, themes, or settings based on their past successful/failed patterns.
+
+Rules:
+- If they have many 'generate_success' but low 'download', suggest how to make the results more 'printable' or 'useful'.
+- If they have many 'generate_fail', analyze potential issues and give prompt engineering tips.
+- Tone: Friendly, expert-like, and proactive. Use Korean.
+
+User Data:
+{context}
+"""
+        return await self._call_llm(prompt)
