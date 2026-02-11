@@ -26,9 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgfortran5 \
     && rm -rf /var/lib/apt/lists/*
 
-# brick_judge 관련 파일만 복사
+# brick_judge 관련 파일만 복사 (HTML 뷰어 포함)
 COPY brick_judge/ /app/brick_judge/
-COPY demo/ /app/demo/
 
 # 빌드된 Rust wheel 복사 및 설치
 COPY --from=rust-builder /build/wheels /tmp/wheels
