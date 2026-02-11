@@ -284,11 +284,22 @@ def embed_floating_parts(
 # =============================================================================
 # 색상 스무딩 (노이즈 제거)
 # =============================================================================
-def smooth_colors(vox: List[Dict[str, Any]], passes: int = 1) -> List[Dict[str, Any]]:
-    """인접 복셀의 색상을 참조하여 노이즈 색상 제거"""
+def smooth_colors(
+    vox: List[Dict[str, Any]], 
+    passes: int = 1,
+    protect_top: float = 0.0
+) -> List[Dict[str, Any]]:
+    """인접 복셀의 색상을 참조하여 노이즈 색상 제거 (protect_top 비율만큼 상단 보호)"""
     if passes <= 0 or not vox:
         return vox
     
+    # 상단 보호 임계값 계산
+    threshold_y = -float('inf')
+    if protect_top > 0:
+        max_y = max(v["y"] for v in vox)
+        min_y = min(v["y"] for v in vox)
+        threshold_y = max_y - (max_y - min_y) * protect_top
+
     voxel_map = {(v["x"], v["y"], v["z"]): v["color"] for v in vox}
     
     neighbors = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
@@ -296,6 +307,10 @@ def smooth_colors(vox: List[Dict[str, Any]], passes: int = 1) -> List[Dict[str, 
     for _ in range(passes):
         new_map = dict(voxel_map)
         for (x, y, z), color in voxel_map.items():
+            # 상단 보존 영역이면 패스
+            if y >= threshold_y:
+                continue
+
             neighbor_colors = []
             for dx, dy, dz in neighbors:
                 npos = (x+dx, y+dy, z+dz)
@@ -316,6 +331,46 @@ def smooth_colors(vox: List[Dict[str, Any]], passes: int = 1) -> List[Dict[str, 
 
 
 # =============================================================================
+# 내부를 비우고 껍데기만 남기기 (성벽 쌓듯이)
+# =============================================================================
+def make_hollow(
+    vox: List[Dict[str, Any]],
+    thickness: int = 2
+) -> List[Dict[str, Any]]:
+    """
+    내부를 비우되 'thickness' 만큼의 두께를 가진 껍데기를 남긴다.
+    thickness=1: 6-이웃 중 하나라도 비어있으면 남김 (매우 얇음, 1x1 발생 많음)
+    thickness=2: 반경 1 이내에 빈 공간이 있으면 남김 (버거움 방지, 결합력 강화)
+    """
+    if not vox:
+        return []
+
+    voxel_map = {(v["x"], v["y"], v["z"]) for v in vox}
+    
+    # 껍데기 판별: 특정 반경(thickness-1) 내에 빈 공간이 하나라도 있으면 표면(껍데기)
+    radius = thickness - 1
+    surface_voxels = []
+    
+    for v in vox:
+        x, y, z = v["x"], v["y"], v["z"]
+        is_inner_core = True
+        
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                for dz in range(-radius, radius + 1):
+                    if (x+dx, y+dy, z+dz) not in voxel_map:
+                        is_inner_core = False
+                        break
+                if not is_inner_core: break
+            if not is_inner_core: break
+        
+        if not is_inner_core:
+            surface_voxels.append(v)
+            
+    return surface_voxels
+
+
+# =============================================================================
 # 메인 변환 함수
 # =============================================================================
 def _single_conversion(
@@ -332,6 +387,8 @@ def _single_conversion(
     glb_path: str,
     color_smooth: int = 1,
     avoid_1x1: bool = False,
+    hollow: bool = False,
+    hollow_thickness: int = 2,
     log_fn: Optional[Any] = None,
     smart_fix: bool = True,
     **kwargs: Any
@@ -376,68 +433,108 @@ def _single_conversion(
     
     # Voxel threshold check (메모리 보호용)
     # Kids 모드에서 t3.small 서버 기준 6,000개가 넘으면 최적화가 너무 느려짐
-    voxel_threshold = kwargs.get("max_new_voxels", 6000) 
+    # 하지만 Hollow 모드에서는 표면만 남기므로 최적화 부담이 적어 훨씬 더 높은 해상도를 허용함
+    base_threshold = kwargs.get("max_new_voxels", 6000)
+    voxel_threshold = base_threshold * 10 if hollow else base_threshold
     max_pitch = kwargs.get("max_pitch", 3.0)
     
     if len(indices) > voxel_threshold:
         if pitch < max_pitch:
-            new_pitch = pitch + 0.5
+            new_pitch = pitch + 0.1
             print(f"      [Warning] Voxels ({len(indices)}) > threshold ({voxel_threshold})")
             print(f"      [Retry] Lowering resolution: pitch {pitch} -> {new_pitch}")
             return _single_conversion(
                 combined, out_ldr_path, target, kind, plates_per_voxel,
                 interlock, max_area, solid_color, use_mesh_color, step_order, glb_path,
                 smart_fix=smart_fix, color_smooth=color_smooth,
-                pitch=new_pitch, log_fn=log_fn, **kwargs
+                pitch=new_pitch, log_fn=log_fn, hollow=hollow, 
+                hollow_thickness=hollow_thickness, **kwargs
             )
         else:
             print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
             return -1, []
 
-    # Color sampling (KDTree를 사용하여 속도 최적화)
-    print(f"      [Step] Color Sampling...")
+    # Color sampling (Extreme: 27-point grid with Feature Priority)
+    print(f"      [Step] Color Sampling (Extreme 27-point)...")
     c_start = time.time()
     centers = vg.points
+    indices = vg.sparse_indices
+    
+    # 상단 40% (얼굴) 보호 구역 계산
+    max_y_idx = np.max(indices[:, 1])
+    min_y_idx = np.min(indices[:, 1])
+    head_threshold = max_y_idx - (max_y_idx - min_y_idx) * 0.4
+
     if use_mesh_color:
-        # Texture/Visual을 Color로 변환 (한 번만 수행)
         if hasattr(mesh.visual, 'to_color'):
             mesh.visual = mesh.visual.to_color()
-        
-        # Triangle center 대신 Vertex 기반으로 샘플링 (외곽면 색상을 더 잘 잡음)
         v_tree = KDTree(mesh.vertices)
-        _, v_indices = v_tree.query(centers)
-        colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
         
-        # 밝기 및 채도 보정 (AI 생성 모델의 어두운/탁한 텍스처 보정)
-        brightness = kwargs.get("color_brightness", 1.4)
-        saturation = kwargs.get("color_saturation", 1.5)
+        # 27점 가중치 샘플링 (3x3x3 격자)
+        # 중심부와 주요 축 방향에 더 높은 가중치를 부여함
+        offsets = [-0.35, 0, 0.35]
+        grid = [[dx * pitch, dy * pitch, dz * pitch] for dx in offsets for dy in offsets for dz in offsets]
         
-        if brightness != 1.0:
-            colors_raw = np.clip(colors_raw * brightness, 0, 255)
+        # 가중치 맵 생성 (중심: 3, 축: 2, 대각선: 1)
+        weights = []
+        for d in grid:
+            dist_sq = sum(v**2 for v in d)
+            if dist_sq == 0: weights.append(3.0) # 중심
+            elif dist_sq <= (0.35 * pitch)**2 + 1e-6: weights.append(2.0) # 축방향
+            else: weights.append(1.0) # 대각선
             
-        if saturation != 1.0:
-            avg = np.mean(colors_raw, axis=-1, keepdims=True)
-            colors_raw = np.clip(avg + (colors_raw - avg) * saturation, 0, 255)
+        FEATURE_COLORS = {0, 6, 8, 70, 72, 85, 320}
+        
+        final_colors = []
+        for i, center in enumerate(centers):
+            y_idx = indices[i, 1]
+            is_head = y_idx >= head_threshold
+            
+            # 모든 샘플의 색상 ID와 해당 지점의 가중치 수집
+            sample_weighted_counts = {}
+            feature_weighted_counts = {}
+            
+            for d, w in zip(grid, weights):
+                _, v_idx = v_tree.query(center + d)
+                rgb = tuple(mesh.visual.vertex_colors[v_idx][:3])
+                sid = match_ldraw_color(rgb)
+                
+                sample_weighted_counts[sid] = sample_weighted_counts.get(sid, 0.0) + w
+                if sid in FEATURE_COLORS:
+                    feature_weighted_counts[sid] = feature_weighted_counts.get(sid, 0.0) + w
+            
+            # 일반적인 최빈값 (가중치 적용)
+            most_common = max(sample_weighted_counts, key=sample_weighted_counts.get)
+            
+            # [Feature Priority] 얼굴 영역에서는 특징 색상의 가중치 합이 
+            # 일정 수준(전체의 약 15% 이상)을 넘으면 우선시함
+            if is_head and feature_weighted_counts:
+                best_feature = max(feature_weighted_counts, key=feature_weighted_counts.get)
+                # 가중치 합이 5.0 이상이면 채택 (노이즈 방지턱 상향)
+                if feature_weighted_counts[best_feature] >= 5.0:
+                    most_common = best_feature
+            
+            final_colors.append(int(most_common))
+        colors_final = np.array(final_colors)
     else:
-        colors_raw = np.tile([200, 200, 200], (len(centers), 1))
+        colors_final = np.full(len(centers), solid_color)
     c_end = time.time()
     print(f"      [Step] Color Sampling Done: {c_end - c_start:.2f}s")
 
     # Build voxel list
     bricks_data = []
     for i in range(len(indices)):
-        c_id = solid_color if not use_mesh_color else match_ldraw_color(tuple(colors_raw[i]))
         bricks_data.append({
             "x": int(indices[i][0]),
             "y": int(indices[i][1]),
             "z": int(indices[i][2]),
-            "color": c_id
+            "color": int(colors_final[i])
         })
 
-    # 색상 스무딩
+    # 색상 스무딩 (상단 40% 보호)
     if color_smooth > 0:
-        print(f"      [Step] Smoothing colors ({color_smooth} passes)...")
-        bricks_data = smooth_colors(bricks_data, passes=color_smooth)
+        print(f"      [Step] Smoothing colors ({color_smooth} passes, Head Protect: 40%)...")
+        bricks_data = smooth_colors(bricks_data, passes=color_smooth, protect_top=0.4)
     
     # 부유 브릭 보정
     if smart_fix:
@@ -445,6 +542,13 @@ def _single_conversion(
         if log_fn:
             log_fn("brickify", "공중에 뜬 부분이 있으면 인접 브릭에 결합하고, 내부 심지를 박아 보강하고 있어요.")
         bricks_data = embed_floating_parts(bricks_data)
+
+    # 내부 비우기 (Hollow) - 성벽 쌓기 모드
+    if hollow:
+        print(f"      [Step] Hollowing out internal voxels...")
+        if log_fn:
+            log_fn("brickify", "성벽을 쌓듯이 내부를 비우고 튼튼한 외벽만 남기고 있어요.")
+        bricks_data = make_hollow(bricks_data, thickness=hollow_thickness)
 
     # Optimize (Greedy Packing)
     print(f"      [Step] Optimization (Greedy Packing) starting...")
@@ -483,6 +587,8 @@ def convert_glb_to_ldr(
     invert_y: bool = False,
     smart_fix: bool = True,
     avoid_1x1: bool = False,
+    hollow: bool = True,
+    hollow_thickness: int = 2,
     step_order: str = "bottomup",
     color_smooth: int = 1,
     **kwargs: Any
@@ -553,6 +659,8 @@ def convert_glb_to_ldr(
             smart_fix=smart_fix,
             color_smooth=color_smooth,
             avoid_1x1=avoid_1x1,
+            hollow=hollow,
+            hollow_thickness=hollow_thickness,
             log_fn=_log,
             **kwargs
         )
@@ -616,14 +724,23 @@ if __name__ == "__main__":
     parser.add_argument("--out", default="output.ldr")
     parser.add_argument("--target", type=int, default=60)
     parser.add_argument("--budget", type=int, default=100)
+    parser.add_argument("--solid-color", type=int, default=4)
     parser.add_argument("--smart-fix", action="store_true", default=True)
     parser.add_argument("--color-smooth", type=int, default=1)
+    parser.add_argument("--avoid-1x1", action="store_true", default=False)
+    parser.add_argument("--no-hollow", action="store_false", dest="hollow", help="Generate solid model (fill interior)")
+    parser.add_argument("--hollow-thickness", type=int, default=2)
+    parser.set_defaults(hollow=True, avoid_1x1=False)
     args = parser.parse_args()
     
     convert_glb_to_ldr(
         args.glb, args.out, 
         target=args.target, 
         budget=args.budget,
+        solid_color=args.solid_color,
         smart_fix=args.smart_fix,
-        color_smooth=args.color_smooth
+        color_smooth=args.color_smooth,
+        avoid_1x1=args.avoid_1x1,
+        hollow=args.hollow,
+        hollow_thickness=args.hollow_thickness
     )
