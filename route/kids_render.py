@@ -362,7 +362,7 @@ async def process_kids_request_internal(
                     budget=eff_budget,
                     min_target=5,
                     shrink=0.6,
-                    search_iters=10,        # 5→10 (확실한 예산 수렴)
+                    search_iters=10,
                     kind="brick",
                     plates_per_voxel=3,
                     interlock=True,
@@ -373,7 +373,7 @@ async def process_kids_request_internal(
                     smart_fix=True,
                     span=4,
                     max_new_voxels=v_limit,
-                    refine_iters=4,        # 8→4 (속도 개선)
+                    refine_iters=4,
                     ensure_connected=True,
                     min_embed=2,
                     erosion_iters=1,
@@ -381,7 +381,8 @@ async def process_kids_request_internal(
                     step_order="bottomup",
                     extend_catalog=True,
                     max_len=8,
-                    avoid_1x1=True, # 1x1 브릭 금지 로직 활성화
+                    avoid_1x1=False,      # 1x1 허용 (디테일 사수)
+                    hollow=(eff_budget >= 1000), # 1000개 이상은 속 비우기 활성화
                 )
 
             result = await anyio.to_thread.run_sync(run_brickify)
