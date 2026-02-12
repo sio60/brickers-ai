@@ -225,6 +225,39 @@ def get_color_mapping_from_theme(original_colors: List[int], theme_name: str) ->
     return mapping
 
 
+def _find_nearest_opaque(color_code: int) -> int:
+    """투명/미지원 색상 코드를 가장 가까운 불투명 색상으로 매핑"""
+    # 잘 알려진 투명 색상 → 불투명 대체 매핑
+    TRANSPARENT_TO_OPAQUE = {
+        33: 1,    # Trans_Dark_Blue → Blue
+        34: 2,    # Trans_Green → Green
+        35: 10,   # Trans_Bright_Green → Bright Green
+        36: 4,    # Trans_Red → Red
+        37: 5,    # Trans_Dark_Pink → Dark Pink
+        38: 25,   # Trans_Neon_Orange → Orange
+        39: 9,    # Trans_Very_Light_Blue → Light Blue
+        40: 0,    # Trans_Black → Black
+        41: 73,   # Trans_Medium_Blue → Medium Blue
+        42: 17,   # Trans_Neon_Green → Light Green
+        43: 9,    # Trans_Light_Blue → Light Blue
+        44: 85,   # Trans_Bright_Reddish_Lilac → Dark Purple
+        45: 13,   # Trans_Pink → Pink
+        46: 14,   # Trans_Yellow → Yellow
+        47: 15,   # Trans_Clear → White
+        52: 22,   # Trans_Purple → Purple
+        54: 14,   # Trans_Neon_Yellow → Yellow
+        57: 25,   # Trans_Orange → Orange
+    }
+
+    if color_code in TRANSPARENT_TO_OPAQUE:
+        return TRANSPARENT_TO_OPAQUE[color_code]
+
+    # 매핑에 없으면 가장 가까운 코드 찾기 (거리 기반)
+    valid_codes = sorted(LDRAW_COLORS.keys())
+    closest = min(valid_codes, key=lambda c: abs(c - color_code))
+    return closest
+
+
 def get_color_mapping_from_llm(model_analysis: Dict, prompt: str) -> Dict[int, int]:
     """LLM에게 색상 매핑 요청"""
 
@@ -268,6 +301,7 @@ IMPORTANT:
 - mapping의 key는 문자열, value는 숫자
 - 모든 원본 색상에 대해 매핑 제공
 - 비슷한 역할의 색상끼리 매핑 (주색상→주색상, 보조색상→보조색상)
+- ONLY use color codes from the "Available LDraw Colors" list above. Do NOT use any other codes (especially transparent codes 33-57).
 """
 
     response = llm.invoke([HumanMessage(content=llm_prompt)])
@@ -282,7 +316,19 @@ IMPORTANT:
         result = json.loads(content)
 
         # 문자열 키를 정수로 변환
-        mapping = {int(k): int(v) for k, v in result["mapping"].items()}
+        raw_mapping = {int(k): int(v) for k, v in result["mapping"].items()}
+
+        # 유효한 불투명 색상 코드만 허용 (투명 코드 33-57 등 방지)
+        valid_codes = set(LDRAW_COLORS.keys())
+        mapping = {}
+        for orig, new in raw_mapping.items():
+            if new in valid_codes:
+                mapping[orig] = new
+            else:
+                # 유효하지 않은 코드 → 가장 가까운 불투명 색상으로 대체
+                fallback = _find_nearest_opaque(new)
+                print(f"[WARN] 색상 코드 {new}은 투명/미지원 → {fallback} ({LDRAW_COLORS[fallback]['name']})로 대체")
+                mapping[orig] = fallback
 
         print(f"\n[LLM] 테마: {result.get('theme_name', 'N/A')}")
         print(f"[LLM] 설명: {result.get('description', 'N/A')}")

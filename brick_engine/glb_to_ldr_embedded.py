@@ -69,7 +69,6 @@ LDRAW_COLORS: Dict[int, Tuple[int, int, int, str]] = {
     320: (120, 27, 33, "Dark Red"),
     378: (163, 193, 173, "Sand Green"),
     484: (179, 62, 0, "Dark Orange"),
-    46: (242, 115, 0, "Flame Yellowish Orange"),
 }
 
 _COLOR_IDS = list(LDRAW_COLORS.keys())
@@ -292,9 +291,9 @@ def _single_conversion(
         colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
         
         # 밝기 및 채도 보정 (AI 생성 모델의 어두운/탁한 텍스처 보정)
-        # 과도한 보정(1.4/1.5)은 주황/갈색을 파란색으로 왜곡시킴 -> 1.15/1.2로 완화
-        brightness = kwargs.get("color_brightness", 1.15)
-        saturation = kwargs.get("color_saturation", 1.2)
+        # 과도한 보정(1.4/1.5)은 주황/갈색을 파란색으로 왜곡시킴 -> 1.05/1.05로 완화
+        brightness = kwargs.get("color_brightness", 1.05)
+        saturation = kwargs.get("color_saturation", 1.05)
         
         if brightness != 1.0:
             colors_raw = np.clip(colors_raw * brightness, 0, 255)
