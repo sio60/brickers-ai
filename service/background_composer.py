@@ -28,6 +28,15 @@ Do NOT include the subject itself in the background, only the environment.
 No text, no borders.
 """
 
+def _sanitize_text(s: str) -> str:
+    """
+    Remove invalid surrogate codepoints or non-UTF-8 encodable chars that break JSON encoding.
+    Drops problematic chars instead of failing the request.
+    """
+    if not s:
+        return ""
+    return s.encode("utf-8", "ignore").decode("utf-8", "ignore")
+
 def _generate_background_sync(subject: str) -> bytes:
     """Gemini를 사용하여 배경 이미지 생성 (Sync)"""
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
@@ -37,7 +46,8 @@ def _generate_background_sync(subject: str) -> bytes:
     client = genai.Client(api_key=gemini_key)
     model = os.environ.get("NANO_BANANA_MODEL", "gemini-2.5-flash-image")
 
-    prompt = PROMPT_TEMPLATE.format(subject=subject)
+    safe_subject = _sanitize_text(subject)
+    prompt = PROMPT_TEMPLATE.format(subject=safe_subject or "lego creation")
 
     # Safety settings: allow everything to prevent false positives
     safety_settings = [
