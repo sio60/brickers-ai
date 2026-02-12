@@ -27,7 +27,11 @@ except ImportError:
 from service.analytics_agent_service import AnalyticsAgentService
 
 # Create router
-router = APIRouter(tags=["admin"])
+router = APIRouter(prefix="/ai-admin", tags=["admin"])
+
+@router.get("/ping")
+def ping_admin():
+    return {"status": "ai_admin_ok"}
 
 # --- Models ---
 class AnalyticsReportResponse(BaseModel):
