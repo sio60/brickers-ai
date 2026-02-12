@@ -97,6 +97,16 @@ def _generate_background_sync(subject: str) -> bytes:
                 except Exception:
                     # Fallback: treat as utf-8 bytes
                     data = data.encode("utf-8", errors="ignore")
+            elif isinstance(data, bytes):
+                 # Check if it is valid image data
+                 if not _looks_like_image(data):
+                     # If not, try to decode as base64 (Gemini returns base64 bytes sometimes)
+                     try:
+                         decoded = base64.b64decode(data)
+                         if _looks_like_image(decoded):
+                             data = decoded
+                     except Exception:
+                         pass
 
             # If mime is present and not image, skip
             if mime and not mime.startswith("image/"):
