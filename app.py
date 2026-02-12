@@ -60,7 +60,7 @@ app.mount(
 app.include_router(kids_render.router)      # Kids Mode
 app.include_router(color_variant.router)    # Color Variant
 # instructions_pdf.router moved to blueprint server (port 8001)
-app.include_router(admin.router, prefix="/ai-admin")            # ✅ [NEW] Admin/Logs
+app.include_router(admin.router)            # ✅ [NEW] Admin/Logs
 app.include_router(chat_router)             # ✅ 챗봇 (/api/v1/chat)
 
 # --- [Integrate] Brick Judge (Rust Viewer) ---
