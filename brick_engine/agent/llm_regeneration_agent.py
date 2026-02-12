@@ -80,7 +80,39 @@ except ImportError:
 # Legacy functions (하위 호환성을 위해 남겨두거나 삭제 가능)
 def get_memory_collection(): return memory_manager.collection_exps if memory_manager else None
 def load_memory_from_db(model_id: str): return {} # Legacy 로드 비활성화 (RAG로 대체)
-def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활성화
+def save_memory_to_db(model_id: str, memory: Dict):
+    """학습 데이터를 MongoDB에 저장"""
+    try:
+        import os
+        from pymongo import MongoClient
+        from datetime import datetime
+
+        mongo_uri = os.getenv("MONGODB_URI")
+        if not mongo_uri:
+            print("  [Memory] MONGODB_URI not set, skip save")
+            return
+
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=3000)
+        col = client["brickers"]["regeneration_memory"]
+
+        doc = {
+            "model_id": model_id,
+            "failed_approaches": memory.get("failed_approaches", []),
+            "successful_patterns": memory.get("successful_patterns", []),
+            "lessons": memory.get("lessons", []),
+            "consecutive_failures": memory.get("consecutive_failures", 0),
+            "updated_at": datetime.utcnow(),
+        }
+
+        col.update_one(
+            {"model_id": model_id},
+            {"$set": doc},
+            upsert=True,
+        )
+        print(f"  [Memory] Saved to DB: {model_id} (lessons={len(doc['lessons'])})")
+
+    except Exception as e:
+        print(f"  [Memory] DB save failed: {e}")
 
 
 # ============================================================================
@@ -974,33 +1006,32 @@ class RegenerationGraph:
         overall_improved = failure_improved or floating_improved
         
         # 도구별 결과 분석 및 기록
-        # 2. 결과 분석 및 통합 로그 저장 (Unified Log)
+        # 2. 결과 분석 및 학습 데이터 저장
+        current_hypothesis = state.get('current_hypothesis', {})
+        hyp_text = current_hypothesis.get('hypothesis', 'No hypothesis')
+
+        if overall_improved:
+            lesson = f"✅ {last_tool} 성공: {hyp_text} (Gained Improvement)"
+            memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
+            memory["consecutive_failures"] = 0
+            print(f"  {lesson}")
+        else:
+            lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
+            memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
+            memory["consecutive_failures"] += 1
+            print(f"  {lesson}")
+
+        memory["lessons"].append(lesson)
+
+        # 리스트 관리
+        memory["lessons"] = memory["lessons"][-10:]
+        memory["failed_approaches"] = memory["failed_approaches"][-5:]
+        memory["successful_patterns"] = memory["successful_patterns"][-5:]
+
+        # 통합 로그 저장 (memory_manager 있을 때만)
         if memory_manager:
             try:
-                # 관찰 (Observation)
                 observation = f"ratio={prev_small_ratio:.2f}, floating={prev_floating}, failure={prev_failure:.2f}"
-                
-                current_hypothesis = state.get('current_hypothesis', {})
-                hyp_text = current_hypothesis.get('hypothesis', 'No hypothesis')
-
-                # 간단한 성공/실패 판정 및 메시지
-                if overall_improved:
-                    lesson = f"✅ {last_tool} 성공: {hyp_text} (Gained Improvement)"
-                    memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
-                    memory["consecutive_failures"] = 0
-                    print(f"  {lesson}")
-                else:
-                    lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
-                    memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
-                    memory["consecutive_failures"] += 1
-                    print(f"  {lesson}")
-                
-                memory["lessons"].append(lesson)
-                
-                # 리스트 관리
-                memory["lessons"] = memory["lessons"][-10:]
-                memory["failed_approaches"] = memory["failed_approaches"][-5:]
-                memory["successful_patterns"] = memory["successful_patterns"][-5:]
 
                 memory_manager.log_experiment(
                     session_id=state.get('session_id', 'unknown_session'),
@@ -1319,6 +1350,20 @@ def regeneration_loop(
                     print(f"   - 권장사항: {feedback_report.get('final_recommendation', '')}")
         except Exception as e:
             print(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
+
+    # 학습 데이터 DB 저장
+    try:
+        model_id = Path(glb_path).name
+        mem = final_state.get("memory", {})
+        report_data = final_state.get("final_report", {})
+        mem["final_report"] = {
+            "success": report_data.get("success", False),
+            "total_attempts": report_data.get("total_attempts", final_state.get("attempts", 0)),
+            "final_metrics": report_data.get("final_metrics", {}),
+        }
+        save_memory_to_db(model_id, mem)
+    except Exception as e:
+        print(f"⚠️ [Memory] 저장 중 오류: {e}")
 
     _log("COMPLETE", "설계가 완료됐어요. 다음 단계로 넘어가도 좋아요.")
 
