@@ -30,14 +30,12 @@ from chat.service import ChatService
 # ============================================================================
 app = FastAPI(title="Brickers AI API", version="0.2.0")
 
-# ✅ [DEBUG] 모든 요청 경로 로깅 미들웨어
+# ✅ [DEBUG] 모든 요청을 강제로 찍어보는 미들웨어 (강력한 버전)
 @app.middleware("http")
-async def log_requests(request, call_next):
-    path = request.url.path
-    query = request.url.query
-    print(f"[AI-SERVER] Incoming Request: {request.method} {path} (Query: {query})", flush=True)
+async def debug_middleware(request, call_next):
+    print(f"\n>>>> [DEBUG_IN] {request.method} {request.url.path} <<<<", flush=True)
     response = await call_next(request)
-    print(f"[AI-SERVER] Response Status: {response.status_code} for {path}", flush=True)
+    print(f">>>> [DEBUG_OUT] {response.status_code} for {request.url.path} <<<<\n", flush=True)
     return response
 
 # ============================================================================
@@ -87,6 +85,15 @@ app.add_api_route("/api/verify", bj_server.verify_ldr, methods=["POST"], tags=["
 app.add_api_route("/api/judge", bj_server.judge_ldr, methods=["POST"], tags=["judge"])
 # 4. 정보 API
 app.add_api_route("/api/info", bj_server.info, methods=["GET"], tags=["info"])
+
+# 5. [DEBUG] 앱에 직접 등록하는 테스트 경로
+@app.get("/ai-admin/final-debug")
+def final_debug_test():
+    return {"status": "ok", "source": "direct_app_route", "timestamp": str(datetime.now())}
+
+@app.get("/final-debug")
+def final_debug_no_prefix():
+    return {"status": "ok", "source": "no_prefix_direct_app_route"}
 
 
 # ============================================================================
