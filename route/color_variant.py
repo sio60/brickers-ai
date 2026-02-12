@@ -114,19 +114,14 @@ async def apply_color_variant(req: ColorVariantRequest):
         try:
             # 3. color_variant 실행
             from color_variant import (
-                load_parts_db,
                 analyze_model_colors,
                 get_color_mapping_from_theme,
                 get_color_mapping_from_llm,
-                apply_color_mapping,
                 COLOR_THEMES
             )
-            from ldr_converter import ldr_to_brick_model, model_to_ldr, STEP_MODE_LAYER
+            from ldr_converter import ldr_to_brick_model
 
-            # 파츠 DB 로드
-            parts_db = load_parts_db()
-
-            # 모델 로드
+            # 모델 로드 (색상 분석용)
             model = ldr_to_brick_model(temp_input)
             print(f"[ColorVariant] Model loaded: {len(model.bricks)} bricks")
 
@@ -141,23 +136,34 @@ async def apply_color_variant(req: ColorVariantRequest):
             theme_name = req.theme.lower().strip()
 
             if theme_name in COLOR_THEMES:
-                # 프리셋 테마
                 mapping = get_color_mapping_from_theme(original_codes, theme_name)
                 applied_theme = theme_name
             else:
-                # LLM 자유 프롬프트
                 mapping = get_color_mapping_from_llm(analysis, req.theme)
                 applied_theme = f"custom: {req.theme}"
 
             if not mapping:
                 raise HTTPException(status_code=500, detail="색상 매핑 생성 실패")
 
-            # 색상 적용
-            changed = apply_color_mapping(model, mapping)
+            # 색상 적용 - LDR 텍스트에서 직접 색상 코드 교체
+            # (parts_db 불필요 + STEP 마커/주석 완벽 보존)
+            str_mapping = {str(k): str(v) for k, v in mapping.items()}
+            changed = 0
+            new_lines = []
+            for line in ldr_text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith('1 '):
+                    parts = stripped.split()
+                    if len(parts) >= 15 and parts[1] in str_mapping:
+                        parts[1] = str_mapping[parts[1]]
+                        changed += 1
+                        new_lines.append(' '.join(parts))
+                        continue
+                new_lines.append(line)
+
             print(f"[ColorVariant] Changed {changed} bricks")
 
-            # 4. LDR 출력 (STEP 마커 포함)
-            ldr_output = model_to_ldr(model, parts_db, skip_validation=True, skip_physics=True, step_mode=STEP_MODE_LAYER)
+            ldr_output = '\n'.join(new_lines)
             ldr_bytes = ldr_output.encode('utf-8')
             ldr_data = base64.b64encode(ldr_bytes).decode('utf-8')
 
