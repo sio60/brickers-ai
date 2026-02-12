@@ -30,6 +30,16 @@ from chat.service import ChatService
 # ============================================================================
 app = FastAPI(title="Brickers AI API", version="0.2.0")
 
+# ✅ [DEBUG] 모든 요청 경로 로깅 미들웨어
+@app.middleware("http")
+async def log_requests(request, call_next):
+    path = request.url.path
+    query = request.url.query
+    print(f"[AI-SERVER] Incoming Request: {request.method} {path} (Query: {query})", flush=True)
+    response = await call_next(request)
+    print(f"[AI-SERVER] Response Status: {response.status_code} for {path}", flush=True)
+    return response
+
 # ============================================================================
 # CORS 미들웨어
 # ============================================================================
@@ -58,11 +68,11 @@ app.mount(
 # ============================================================================
 # 라우터 등록 (모든 API 엔드포인트)
 # ============================================================================
+app.include_router(admin.router)            # ✅ [CRITICAL] Admin 라우터를 가장 먼저 등록
 app.include_router(kids_render.router)      # Kids Mode
 app.include_router(color_variant.router)    # Color Variant
 # instructions_pdf.router moved to blueprint server (port 8001)
 app.include_router(kids_background.router) # ✅ [NEW] Background Generation
-app.include_router(admin.router)            # ✅ [NEW] Admin/Logs
 app.include_router(chat_router)             # ✅ 챗봇 (/api/v1/chat)
 
 # --- [Integrate] Brick Judge (Rust Viewer) ---
