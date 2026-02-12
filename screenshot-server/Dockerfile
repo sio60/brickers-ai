@@ -56,8 +56,13 @@ RUN mkdir -p /usr/share/ldraw && \
     unzip -q /tmp/ldraw.zip -d /usr/share/ && \
     rm /tmp/ldraw.zip
 
+ENV LDVIEW_BIN=LDView
 ENV LDRAWDIR=/usr/share/ldraw
 ENV PYTHONUNBUFFERED=1
+
+# Gemini Configuration
+ENV GEMINI_API_KEY=""
+ENV NANO_BANANA_MODEL=""
 
 # builder 스테이지에서 빌드된 wheel 복사 및 설치
 COPY --from=python-builder /build/wheels /tmp/wheels
