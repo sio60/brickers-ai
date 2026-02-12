@@ -2,6 +2,7 @@
 import os
 import io
 import asyncio
+import base64
 from PIL import Image
 
 # Google GenAI
@@ -52,7 +53,14 @@ def _generate_background_sync(subject: str) -> bytes:
     # Gemini 2.0 Flash Image returns inline data usually
     for part in resp.candidates[0].content.parts:
         if part.inline_data and part.inline_data.data:
-            return part.inline_data.data
+            data = part.inline_data.data
+            if isinstance(data, str):
+                try:
+                    return base64.b64decode(data)
+                except Exception:
+                    # Maybe it's raw bytes in string encoding? or just return as bytes
+                    return data.encode('utf-8')
+            return data
             
     raise ValueError("No image data found in Gemini response")
 
