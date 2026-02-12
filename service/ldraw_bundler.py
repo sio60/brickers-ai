@@ -1,10 +1,13 @@
 """LDraw Parts Bundler — LDR 파일에서 참조하는 모든 파트를 JSON 번들로 생성."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Dict, Optional, Set
+
+log = logging.getLogger(__name__)
 
 LDRAW_DIR = Path(os.environ.get("LDRAWDIR", "/usr/share/ldraw"))
 
@@ -77,6 +80,7 @@ def _collect_parts(
 
     resolved = _resolve_part_path(ref)
     if resolved is None:
+        log.warning(f"[LDraw Bundle] Part not found: {ref}")
         return
 
     try:
