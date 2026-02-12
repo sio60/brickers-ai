@@ -33,20 +33,5 @@ services:
       - PYTHONUNBUFFERED=1
       - S3_PREFIX=uploads/ai-generated
 
-  screenshot-server:
-    build:
-      context: ./screenshot-server
-      dockerfile: Dockerfile
-    image: brickers-screenshot-server:latest
-    container_name: brickers-screenshot-server
-    restart: unless-stopped
-    ports:
-      - "8002:8002"
-    env_file:
-      - .env
-    environment:
-      - TZ=Asia/Seoul
-      - PYTHONUNBUFFERED=1
-
 volumes:
   hf_cache:
