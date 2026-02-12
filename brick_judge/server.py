@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 from pathlib import Path
 import time
+import httpx
 
 # OpenAPI 메타데이터
 app = FastAPI(
@@ -57,6 +58,11 @@ class LdrRequest(BaseModel):
     )
 
 
+class LdrUrlRequest(BaseModel):
+    """S3 URL 기반 LDR 검증 요청"""
+    ldr_url: str = Field(..., description="S3 LDR 파일 URL")
+
+
 class BrickIssue(BaseModel):
     """브릭 구조 이슈"""
     brick_id: Optional[int] = Field(None, description="문제가 있는 브릭 ID (0부터 시작)")
@@ -94,6 +100,11 @@ class JudgeResponse(BaseModel):
                 "backend": "rust"
             }
         }
+
+
+class JudgeUrlResponse(JudgeResponse):
+    """S3 URL 기반 물리 검증 결과 (ldr_content 포함)"""
+    ldr_content: str = Field(..., description="원본 LDR 텍스트 (프론트 3D 렌더링용)")
 
 
 class BackendInfo(BaseModel):
@@ -328,6 +339,69 @@ async def judge_ldr(req: LdrRequest):
         brick_colors=brick_colors,
         elapsed_ms=elapsed,
         backend=get_backend_info()["backend"]
+    )
+
+
+@app.post(
+    "/api/judge-url",
+    tags=["judge"],
+    response_model=JudgeUrlResponse,
+    summary="S3 URL 기반 LDR 브릭 구조 물리 검증",
+    response_description="검증 결과 + 원본 LDR 텍스트"
+)
+async def judge_ldr_url(req: LdrUrlRequest):
+    """
+    S3 URL에서 LDR 파일을 다운로드하여 물리 검증을 수행합니다.
+    응답에 ldr_content(원본 LDR 텍스트)가 포함되어 프론트에서 3D 렌더링에 사용 가능.
+    """
+    # 1. S3 URL에서 LDR 파일 다운로드
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(req.ldr_url)
+            resp.raise_for_status()
+            ldr_content = resp.text
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(400, f"LDR 파일 다운로드 실패 (HTTP {e.response.status_code}): {req.ldr_url}")
+    except Exception as e:
+        raise HTTPException(400, f"LDR 파일 다운로드 실패: {e}")
+
+    # 2. LDR 파싱
+    try:
+        model = parse_ldr_string(ldr_content)
+    except Exception as e:
+        raise HTTPException(400, f"LDR 파싱 실패: {e}")
+
+    # 3. 물리 검증
+    start = time.perf_counter()
+    issues = full_judge(model)
+    score = calc_score_from_issues(issues, len(model.bricks))
+    elapsed = (time.perf_counter() - start) * 1000
+
+    brick_colors = {}
+    for i in issues:
+        if i.brick_id is not None and i.brick_id not in brick_colors:
+            brick_colors[i.brick_id] = ISSUE_COLORS.get(i.issue_type.value, "#888888")
+
+    return JudgeUrlResponse(
+        model_name=model.model_name,
+        brick_count=len(model.bricks),
+        score=score,
+        stable=not any(i.issue_type.value in ("unstable_base", "floating", "isolated") for i in issues),
+        issues=[
+            BrickIssue(
+                brick_id=i.brick_id,
+                type=i.issue_type.value,
+                severity=i.severity.value,
+                message=i.message,
+                color=ISSUE_COLORS.get(i.issue_type.value, "#888888"),
+                data=i.data
+            )
+            for i in issues
+        ],
+        brick_colors=brick_colors,
+        elapsed_ms=elapsed,
+        backend=get_backend_info()["backend"],
+        ldr_content=ldr_content
     )
 
 

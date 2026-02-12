@@ -42,7 +42,7 @@ def _generate_background_sync(subject: str) -> bytes:
         contents=prompt,
         config=genai_types.GenerateContentConfig(
             response_modalities=["Image"],
-            number_of_images=1
+            candidate_count=1
         ),
     )
 
