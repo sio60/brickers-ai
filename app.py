@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime
+
 import httpx
 from datetime import datetime
 
@@ -84,7 +86,9 @@ app.add_api_route("/brick-judge/viewer", bj_server.viewer, methods=["GET"], incl
 app.add_api_route("/api/verify", bj_server.verify_ldr, methods=["POST"], tags=["viewer"])
 # 3. LLM용 Judge API
 app.add_api_route("/api/judge", bj_server.judge_ldr, methods=["POST"], tags=["judge"])
-# 4. 정보 API
+# 4. S3 URL 기반 Judge API (Admin 프론트용)
+app.add_api_route("/api/judge-url", bj_server.judge_ldr_url, methods=["POST"], tags=["judge"])
+# 5. 정보 API
 app.add_api_route("/api/info", bj_server.info, methods=["GET"], tags=["info"])
 
 # 5. [DEBUG] 앱에 직접 등록하는 테스트 경로
