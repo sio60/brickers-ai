@@ -59,3 +59,9 @@ async def notify_gallery_screenshots_complete(gallery_post_id: str, screenshot_u
     """갤러리 포스트 screenshotUrls 업데이트 알림 전송 (백필용)"""
     url = f"{BACKEND_URL}/api/gallery/{gallery_post_id}/screenshots"
     await _patch_with_retry(url, {"screenshotUrls": screenshot_urls}, f"Gallery 백필 알림 | postId={gallery_post_id}")
+
+
+async def notify_background_complete(job_id: str, background_url: str) -> None:
+    """Backend에 backgroundUrl 업데이트 알림 전송"""
+    url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/background"
+    await _patch_with_retry(url, {"backgroundUrl": background_url}, f"Backend 배경 알림 | jobId={job_id}")

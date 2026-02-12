@@ -93,7 +93,7 @@ async def send_result_message(
         log(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (메시지 전송 스킵) | jobId={job_id}")
         return
 
-    log(f"📤 [SQS Producer] RESULT 메시지 생성 시작 | jobId={job_id}")
+        log(f"[SQS Producer] RESULT 메시지 생성 시작 | jobId={job_id}")
 
     try:
         client = _get_sqs_client()
@@ -230,3 +230,46 @@ async def send_screenshot_request_message(
     except Exception as e:
         log(f"❌ [SQS Producer] 스크린샷 요청 전송 실패 | jobId={job_id} | error={str(e)}")
         raise
+
+
+async def send_background_request_message(
+    job_id: str,
+    subject: str,
+) -> None:
+    """
+    배경 생성 요청을 brickers-screenshots-queue로 전송 (Screenshot Server에서 처리)
+
+    Args:
+        job_id: Job ID
+        subject: 배경 생성 주제 (Gemini 프롬프트용)
+    """
+    if not SQS_ENABLED:
+        log(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (배경 요청 전송 스킵) | jobId={job_id}")
+        return
+
+    if not SQS_SCREENSHOT_QUEUE_URL:
+        log(f"[SQS Producer] ⚠️ AWS_SQS_SCREENSHOT_QUEUE_URL 미설정 (배경 요청 전송 스킵) | jobId={job_id}")
+        return
+
+    log(f"[SQS Producer] 배경 생성 요청 메시지 생성 | jobId={job_id} | subject={subject}")
+
+    try:
+        client = _get_sqs_client()
+
+        message = {
+            "type": "BACKGROUND_REQUEST",
+            "jobId": job_id,
+            "subject": subject,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        response = client.send_message(
+            QueueUrl=SQS_SCREENSHOT_QUEUE_URL,
+            MessageBody=json.dumps(message),
+        )
+
+        log(f"✅ [SQS Producer] 배경 생성 요청 전송 완료 | jobId={job_id} | messageId={response.get('MessageId', 'N/A')}")
+
+    except Exception as e:
+        log(f"❌ [SQS Producer] 배경 생성 요청 전송 실패 | jobId={job_id} | error={str(e)}")
+        # 실패하더라도 파이프라인 전체를 중단시키지는 않음 (배경은 부가 기능)

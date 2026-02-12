@@ -19,7 +19,12 @@ import httpx
 
 from service.render_client import render_6_views, RENDER_ENABLED
 from service.s3_client import USE_S3, S3_BUCKET, upload_bytes_to_s3
-from service.backend_client import notify_screenshots_complete, notify_gallery_screenshots_complete
+from service.backend_client import (
+    notify_screenshots_complete, 
+    notify_gallery_screenshots_complete,
+    notify_background_complete
+)
+from service.background_composer import generate_background_async
 
 
 def _log(msg: str) -> None:
@@ -172,7 +177,7 @@ async def poll_and_process() -> int:
         messages = response.get("Messages", [])
 
         if messages:
-            _log(f"📥 메시지 수신 | count={len(messages)} | poll #{_POLL_COUNT}")
+            _log(f"메시지 수신 | count={len(messages)} | poll #{_POLL_COUNT}")
 
         for m in messages:
             await _handle_message(m)
@@ -191,13 +196,17 @@ async def _handle_message(message: Dict[str, Any]) -> None:
 
     try:
         body = json.loads(message["Body"])
+        message_type = body.get("type")
 
-        if body.get("type") != "SCREENSHOT_REQUEST":
-            _log(f"⚠️ 잘못된 메시지 타입 무시 | type={body.get('type')} | messageId={message_id}")
+        if message_type == "SCREENSHOT_REQUEST":
+            await process_screenshot_message(body)
+        elif message_type == "BACKGROUND_REQUEST":
+            await process_background_message(body)
+        else:
+            _log(f"⚠️ 잘못된 메시지 타입 무시 | type={message_type} | messageId={message_id}")
             _delete_message(receipt_handle)
             return
 
-        await process_screenshot_message(body)
         _delete_message(receipt_handle)
 
     except json.JSONDecodeError as e:
@@ -205,9 +214,45 @@ async def _handle_message(message: Dict[str, Any]) -> None:
         _delete_message(receipt_handle)
 
     except Exception as e:
-        _log(f"❌ 스크린샷 생성 실패 | messageId={message_id} | error={str(e)}")
+        _log(f"❌ 메시지 처리 실패 | messageId={message_id} | error={str(e)}")
         _log(traceback.format_exc())
         _delete_message(receipt_handle)
+
+
+async def process_background_message(body: Dict[str, Any]) -> None:
+    """
+    배경 생성 메시지 처리
+    1. Gemini 배경 생성
+    2. S3 업로드
+    3. Backend 알림
+    """
+    job_id = body.get("jobId", "")
+    subject = body.get("subject", "lego creation")
+
+    _log(f"배경 생성 시작 | jobId={job_id} | subject={subject}")
+
+    # 1. Gemini 배경 생성
+    _log("   [1/3] Gemini 배경 생성 중...")
+    bg_bytes = await generate_background_async(subject)
+    _log(f"   [1/3] 배경 생성 완료 | {len(bg_bytes)/1024:.1f}KB")
+
+    # 2. S3 업로드
+    _log("   [2/3] S3 업로드 중...")
+    if not (USE_S3 and S3_BUCKET):
+        raise RuntimeError("S3 is not configured for background upload.")
+
+    now = datetime.now()
+    # 경로: uploads/backgrounds/2026/02/jobId_bg.png
+    s3_key = f"uploads/backgrounds/{now.year:04d}/{now.month:02d}/{job_id}_bg.png"
+    background_url = upload_bytes_to_s3(bg_bytes, s3_key, "image/png")
+    _log(f"   [2/3] S3 업로드 완료 | url={background_url[:60]}...")
+
+    # 3. Backend 알림
+    _log("   [3/3] Backend 알림 전송 중...")
+    await notify_background_complete(job_id, background_url)
+    _log("   [3/3] Backend 알림 완료")
+
+    _log(f"배경 생성 완료 | jobId={job_id}")
 
 
 def _delete_message(receipt_handle: str) -> None:
