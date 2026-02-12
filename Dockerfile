@@ -48,6 +48,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgfortran5 \
     && rm -rf /var/lib/apt/lists/*
 
+# LDraw parts library (for parts bundling)
+RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
+    && mkdir -p /usr/share/ldraw \
+    && wget -q https://library.ldraw.org/library/updates/complete.zip -O /tmp/ldraw.zip \
+    && unzip -q /tmp/ldraw.zip -d /usr/share/ \
+    && rm /tmp/ldraw.zip \
+    && apt-get purge -y wget unzip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+ENV LDRAWDIR=/usr/share/ldraw
+
 # builder 스테이지에서 빌드된 wheel들 복사
 COPY --from=python-builder /build/wheels /tmp/wheels
 COPY --from=rust-builder /build/wheels /tmp/wheels
