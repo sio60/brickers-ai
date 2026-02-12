@@ -21,6 +21,8 @@ class AnalyticsAgentService:
         """
         summary = await backend_client.get_analytics_summary(days)
         daily_users = await backend_client.get_daily_users(days)
+        top_tags = await backend_client.get_top_tags(days, limit=10)
+        heavy_users = await backend_client.get_heavy_users(days, limit=5)
         
         if not summary:
             return "현재 분석 데이터를 불러올 수 없습니다. 백엔드 연결을 확인해주세요."
@@ -34,14 +36,26 @@ class AnalyticsAgentService:
 
 [Daily Users Trend]
 {daily_users}
+
+[Popular Brick Tags (Top 10)]
+{top_tags}
+
+[Key Active Users (Top 5)]
+{heavy_users}
 """
         prompt = f"""
 You are the 'Brickers Data Analyst Agent'. 
-Based on the following GA4 data, provide a brief, professional, and friendly analysis in Korean.
+Based on the following GA4 data, provide a very detailed and professional analysis in Korean.
 Focus on:
-1. Overall performance trend.
-2. Any notable insights (growth, user engagement).
-3. Suggestions for improvement.
+1. Overall performance trend and daily user patterns.
+2. Popular brick themes and trends based on 'Popular Brick Tags'.
+3. User engagement insights looking at total metrics and 'Key Active Users'.
+4. Specific, actionable suggestions for product improvement or marketing based on the data.
+
+Rules:
+- Format the report with clear headings and bullet points.
+- provide strategic insights for a LEGO-like toy/creation platform.
+- Tone: Insightful, professional, yet encouraging. Use Korean.
 
 Data:
 {context}
