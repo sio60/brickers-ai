@@ -144,6 +144,11 @@ async def startup():
         app.state.analytics_agent = AnalyticsAgentService(http_client=app.state.openai_http)
         print("[FastAPI] ✅ Analytics Agent Service Enabled", flush=True)
 
+        # --- [NEW] Admin Analyst LangGraph Agent LLM 주입 ---
+        from admin_analyst import set_llm_client
+        set_llm_client(app.state.openai_http)
+        print("[FastAPI] ✅ Admin Analyst LangGraph Agent Enabled", flush=True)
+
     # --- [NEW] Global log capture ---
     try:
         from service.log_context import GlobalLogCapture
