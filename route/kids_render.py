@@ -252,18 +252,18 @@ async def process_kids_request_internal(
 
                 # 0) S3에서 원본 이미지 다운로드
                 step_start = time.time()
-                _log("\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")
+                _log("[STEP 0/5] S3에서 원본 이미지 다운로드 중...")
                 await _sse("download", "이미지 수신 완료. 구조부터 살펴보겠습니다.")
                 img_bytes = await _download_from_s3(source_image_url)
                 raw_path = out_req_dir / "raw.png"
                 await _write_bytes_async(raw_path, img_bytes)
-                _log(f"\u2705 [STEP 0/5] \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
+                _log(f"[STEP 0/5] 다운로드 완료 | {len(img_bytes)/1024:.1f}KB | {time.time()-step_start:.2f}s")
                 # await _async_archive() # [Restored comment]
             
 
                 # 1) Gemini 보정
                 step_start = time.time()
-                _log("\U0001f4cc [STEP 1/5] Gemini \uc774\ubbf8\uc9c0 \ubcf4\uc815 \ubc0f \ud0dc\uadf8 \ucd94\ucd9c \uc2dc\uc791...")
+                _log("[STEP 1/5] Gemini 이미지 보정 및 태그 추출 시작...")
                 await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
                 corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
 
@@ -272,20 +272,20 @@ async def process_kids_request_internal(
                 corrected_path = out_req_dir / "corrected.png"
                 await _write_bytes_async(corrected_path, corrected_bytes)
                 corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
-                _log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+                _log(f"[STEP 1/5] Gemini 완료 | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
                 # await _async_archive() # [Restored comment]
                 
                 await update_job_suggested_tags(job_id, ai_tags)
-
+ 
                 # 2) Tripo 3D
                 step_start = time.time()
-                _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
+                _log(f"[STEP 2/4] Tripo 3D 모델 생성 시작 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
                 await _sse("tripo", "2D 정보를 바탕으로 3D 형태를 잡아봅니다.")
                 await update_job_stage(job_id, "THREE_D_PREVIEW")
 
                 async with TripoClient(api_key=TRIPO_API_KEY) as client:
                     task_id = await client.image_to_model(image=str(corrected_path))
-                    _log(f"   \U0001f504 Tripo \uc791\uc5c5 \uc0dd\uc131\ub428 | taskId={task_id}")
+                    _log(f"   Tripo 작업 생성됨 | taskId={task_id}")
 
                     # [CHANGE] Custom Async Polling (Non-blocking)
                     # wait_for_task might use time.sleep(), blocking the event loop.
@@ -315,12 +315,12 @@ async def process_kids_request_internal(
 
                         await asyncio.sleep(5.0) # Yield control to _auto_flush_logs
 
-                    _log(f"   \u2705 Tripo \uc791\uc5c5 \uc644\ub8cc | status={task.status}")
+                    _log(f"   Tripo 작업 완료 | status={task.status}")
                     downloaded = await client.download_task_models(task, str(out_tripo_dir))
-                    _log(f"   \U0001f4e5 Tripo \ud30c\uc77c \ub2e4\uc6b4\ub85c\ub4dc \uc644\ub8cc | files={list(downloaded.keys()) if downloaded else 'None'}")
+                    _log(f"   Tripo 파일 다운로드 완료 | files={list(downloaded.keys()) if downloaded else 'None'}")
 
                 tripo_elapsed = time.time() - step_start
-                _log(f"\u2705 [STEP 2/4] Tripo \uc644\ub8cc | {tripo_elapsed:.2f}s")
+                _log(f"[STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
                 # await _async_archive() # [Restored comment]
 
                 # 3-1) downloaded 정규화
@@ -379,7 +379,7 @@ async def process_kids_request_internal(
                 if not glb_path.exists() or glb_path.stat().st_size == 0:
                     raise RuntimeError(f"GLB missing/empty: {glb_path}")
 
-                _log(f"   \U0001f4e6 GLB \uc900\ube44\uc644\ub8cc | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
+                _log(f"   GLB 준비완료 | path={glb_path.name} | size={glb_path.stat().st_size/1024:.1f}KB")
 
                 # 4) CoScientist Brickify (Generate → Debate → Evolve)
                 step_start = time.time()
@@ -388,7 +388,7 @@ async def process_kids_request_internal(
                 v_limit = 50000 if eff_budget >= 4000 else (20000 if eff_budget >= 1000 else 6000)
                 start_target = budget_to_start_target(eff_budget)
 
-                _log(f"🚀 [STEP 3/4] CoScientist Brickify 시작... | budget={eff_budget} | target={start_target}")
+                _log(f"[STEP 3/4] CoScientist Brickify 시작... | budget={eff_budget} | target={start_target}")
                 await update_job_stage(job_id, "MODEL")
                 await _sse("brickify", "브릭 단위로 분해하면서 안정적인 조합을 탐색 중이에요.")
 
@@ -426,7 +426,7 @@ async def process_kids_request_internal(
                 used_coscientist = False
                 try:
                     regen_loop_fn, gemini_cls = load_agent_modules()
-                    _log("🔬 [CoScientist] LLM 재생성 에이전트 활성화")
+                    _log("[CoScientist] LLM 재생성 에이전트 활성화")
                     await _sse("coscientist", "CoScientist가 구조를 검증하며 최적의 브릭 배치를 찾고 있어요.")
 
                     # SSE 로그 콜백을 params에 주입
@@ -456,10 +456,10 @@ async def process_kids_request_internal(
                         parts_count = sum(1 for line in ldr_text.splitlines() if line.startswith('1 '))
                     result = {"parts": parts_count, "final_target": start_target}
                     used_coscientist = True
-                    _log(f"🔬 [CoScientist] 완료 | 성공={report.get('success', '?')} | 시도={report.get('total_attempts', '?')}회")
+                    _log(f"[CoScientist] 완료 | 성공={report.get('success', '?')} | 시도={report.get('total_attempts', '?')}회")
 
                 except Exception as cos_err:
-                    _log(f"⚠️ [CoScientist] 실패, 단순 Brickify로 fallback: {cos_err}")
+                    _log(f"[CoScientist] 실패, 단순 Brickify로 fallback: {cos_err}")
 
                     # Fallback: 기존 단순 brickify
                     global _CONVERT_FN
@@ -473,7 +473,7 @@ async def process_kids_request_internal(
 
                 brickify_elapsed = time.time() - step_start
                 engine_label = "CoScientist" if used_coscientist else "Brickify"
-                _log(f"\u2705 [STEP 3/4] {engine_label} \uc644\ub8cc | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
+                _log(f"[STEP 3/4] {engine_label} 완료 | parts={result.get('parts')} | target={result.get('final_target')} | {brickify_elapsed:.2f}s")
                 # await _async_archive() # [Restored comment]
                 
 
@@ -483,18 +483,18 @@ async def process_kids_request_internal(
                 # 5) 결과 URL + BOM
                 step_start = time.time()
                 s3_mode = "ON" if USE_S3 else "OFF"
-                _log(f"\U0001f4cc [STEP 4/4] \uacb0\uacfc URL \uc0dd\uc131 \ubc0f BOM \ud30c\uc77c \uc0dd\uc131 \uc911... (S3={s3_mode})")
+                _log(f"[STEP 4/4] 결과 URL 생성 및 BOM 파일 생성 중... (S3={s3_mode})")
                 await _sse("bom", "현재 설계를 기준으로 필요한 부품 수를 계산하고 있어요.")
                 ldr_url = to_generated_url(out_ldr, out_dir=out_brick_dir)
 
-                _log("   \U0001f4cb BOM \ud30c\uc77c \uc0dd\uc131 \uc911...")
+                _log("   BOM 파일 생성 중...")
                 bom_data = await anyio.to_thread.run_sync(generate_bom_from_ldr, out_ldr)
                 out_bom = out_brick_dir / "bom.json"
                 await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
                 bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
-                _log(f"   \u2705 BOM \ud30c\uc77c \uc0dd\uc131 \uc644\ub8cc | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+                _log(f"   BOM 파일 생성 완료 | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
 
-                _log(f"\u2705 [STEP 4/4] URL \uc0dd\uc131 \uc644\ub8cc | {time.time()-step_start:.2f}s")
+                _log(f"[STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
 
                 # 5-2) PDF + Screenshot 생성 요청 (SQS로 위임)
                 pdf_url = None
@@ -505,9 +505,9 @@ async def process_kids_request_internal(
                         ldr_url=ldr_url,
                         model_name=final_subject or "Brickers Model",
                     )
-                    _log("📤 [STEP 5/5] PDF 생성 요청 전송 (brickers-blueprints-queue)")
+                    _log("PDF 생성 요청 전송 (brickers-blueprints-queue)")
                 except Exception as pdf_err:
-                    _log(f"⚠️ [STEP 5/5] PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
+                    _log(f"PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
 
                 try:
                     await send_screenshot_request_message(
@@ -515,19 +515,19 @@ async def process_kids_request_internal(
                         ldr_url=ldr_url,
                         model_name=final_subject or "Brickers Model",
                     )
-                    _log("📤 [STEP 5/5] 스크린샷 생성 요청 전송 (brickers-screenshots-queue)")
+                    _log("스크린샷 생성 요청 전송 (brickers-screenshots-queue)")
                 except Exception as ss_err:
-                    _log(f"⚠️ [STEP 5/5] 스크린샷 SQS 전송 실패 (파이프라인 계속): {ss_err}")
+                    _log(f"스크린샷 SQS 전송 실패 (파이프라인 계속): {ss_err}")
 
                 await _sse("complete", "설계가 끝났어요. 결과를 한번 살펴볼까요?")
 
                 total_elapsed = time.time() - total_start
                 _log("\u2550" * 70)
-                _log(f"\U0001f389 [AI-SERVER] \uc694\uccad \uc644\ub8cc! | jobId={job_id}")
-                _log(f"\u23f1\ufe0f  \ucd1d \uc18c\uc694\uc2dc\uac04: {total_elapsed:.2f}s ({total_elapsed/60:.1f}\ubd84)")
+                _log(f"[AI-SERVER] 요청 완료! | jobId={job_id}")
+                _log(f"총 소요시간: {total_elapsed:.2f}s ({total_elapsed/60:.1f}분)")
                 _log(f"   - Tripo 3D: {tripo_elapsed:.2f}s")
                 _log(f"   - Brickify: {brickify_elapsed:.2f}s")
-                _log(f"\U0001f4e6 \uacb0\uacfc: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
+                _log(f"결과: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
                 _log("\u2550" * 70)
             
 
@@ -548,9 +548,11 @@ async def process_kids_request_internal(
                         bg_path = out_req_dir / bg_filename
                         await _write_bytes_async(bg_path, bg_bytes)
                         background_url = to_generated_url(bg_path, out_dir=out_req_dir)
-                    _log(f"   \ud83d\udccd Background ready | url={background_url}")
+                    _log(f"   Background ready | url={background_url}")
                 except Exception as bg_err:
-                    _log(f"\u26a0\ufe0f Background generation failed: {bg_err}")
+                    _log(f"Background generation failed: {bg_err}")
+            elif background_task and background_url:
+                _log("   Background generation requested to Screenshot Server")
 
             return {
                 "correctedUrl": corrected_url,

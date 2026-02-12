@@ -55,4 +55,24 @@ async def notify_gallery_screenshots_complete(gallery_post_id: str, screenshot_u
         )
         r.raise_for_status()
 
-    _log(f"✅ Gallery 백필 알림 성공 | postId={gallery_post_id} | status={r.status_code}")
+    _log(f"✅ Gallery \ubc31\ud544 \uc54c\ubbc2 \uc131\uacf5 | postId={gallery_post_id} | status={r.status_code}")
+ 
+ 
+async def notify_background_complete(job_id: str, background_url: str) -> None:
+    """Backend\uc5d0 backgroundUrl \uc5c5\ub370\uc774\ud2b8 \uc54c\ubbc2 \uc804\uc1a1"""
+    url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/background"
+    headers = {}
+    if INTERNAL_API_TOKEN:
+        headers["X-Internal-Token"] = INTERNAL_API_TOKEN
+ 
+    _log(f"\ud83d\udce4 Backend \ubc30\uacbd \uc54c\ubbc2 \uc804\uc1a1 | jobId={job_id} | url={url}")
+ 
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.patch(
+            url,
+            json={"backgroundUrl": background_url},
+            headers=headers,
+        )
+        r.raise_for_status()
+ 
+    _log(f"\u2705 Backend \ubc30\uacbd \uc54c\ubbc2 \uc131\uacf5 | jobId={job_id} | status={r.status_code}")
