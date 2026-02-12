@@ -80,7 +80,39 @@ except ImportError:
 # Legacy functions (하위 호환성을 위해 남겨두거나 삭제 가능)
 def get_memory_collection(): return memory_manager.collection_exps if memory_manager else None
 def load_memory_from_db(model_id: str): return {} # Legacy 로드 비활성화 (RAG로 대체)
-def save_memory_to_db(model_id: str, memory: Dict): pass # Legacy 저장 비활성화
+def save_memory_to_db(model_id: str, memory: Dict):
+    """학습 데이터를 MongoDB에 저장"""
+    try:
+        import os
+        from pymongo import MongoClient
+        from datetime import datetime
+
+        mongo_uri = os.getenv("MONGODB_URI")
+        if not mongo_uri:
+            print("  [Memory] MONGODB_URI not set, skip save")
+            return
+
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=3000)
+        col = client["brickers"]["regeneration_memory"]
+
+        doc = {
+            "model_id": model_id,
+            "failed_approaches": memory.get("failed_approaches", []),
+            "successful_patterns": memory.get("successful_patterns", []),
+            "lessons": memory.get("lessons", []),
+            "consecutive_failures": memory.get("consecutive_failures", 0),
+            "updated_at": datetime.utcnow(),
+        }
+
+        col.update_one(
+            {"model_id": model_id},
+            {"$set": doc},
+            upsert=True,
+        )
+        print(f"  [Memory] Saved to DB: {model_id} (lessons={len(doc['lessons'])})")
+
+    except Exception as e:
+        print(f"  [Memory] DB save failed: {e}")
 
 
 # ============================================================================
@@ -1319,6 +1351,21 @@ def regeneration_loop(
                     print(f"   - 권장사항: {feedback_report.get('final_recommendation', '')}")
         except Exception as e:
             print(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
+
+    # 학습 데이터 DB 저장
+    try:
+        model_id = Path(glb_path).name
+        mem = final_state.get("memory", {})
+        if mem.get("lessons") or mem.get("successful_patterns") or mem.get("failed_approaches"):
+            report_data = final_state.get("final_report", {})
+            mem["final_report"] = {
+                "success": report_data.get("success", False),
+                "total_attempts": report_data.get("total_attempts", final_state.get("attempts", 0)),
+                "final_metrics": report_data.get("final_metrics", {}),
+            }
+            save_memory_to_db(model_id, mem)
+    except Exception as e:
+        print(f"⚠️ [Memory] 저장 중 오류: {e}")
 
     _log("COMPLETE", "설계가 완료됐어요. 다음 단계로 넘어가도 좋아요.")
 
