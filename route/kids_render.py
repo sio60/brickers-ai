@@ -277,13 +277,6 @@ async def process_kids_request_internal(
                 
                 await update_job_suggested_tags(job_id, ai_tags)
 
-                # Parallel background generation (Gemini image)
-                try:
-                    background_task = asyncio.create_task(generate_background_async(final_subject or subject or "lego creation"))
-                    _log("   \U0001f4cd Background gen task started (Gemini)")
-                except Exception as bg_start_err:
-                    _log(f"\u26a0\ufe0f Background task start failed: {bg_start_err}")
-
                 # 2) Tripo 3D
                 step_start = time.time()
                 _log(f"\U0001f4cc [STEP 2/4] Tripo 3D \ubaa8\ub378 \uc0dd\uc131 \uc2dc\uc791 (image-to-model)... (timeout={TRIPO_WAIT_TIMEOUT_SEC}s)")
