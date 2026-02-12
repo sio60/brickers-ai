@@ -43,8 +43,7 @@ def _generate_background_sync(subject: str) -> bytes:
         model=model,
         contents=prompt,
         config=genai_types.GenerateContentConfig(
-            response_modalities=["IMAGE"],          # force image modality
-            response_mime_type="image/png",         # ask for PNG bytes
+            response_modalities=["IMAGE"],  # force image modality (let API choose mime)
             candidate_count=1,
         ),
     )
