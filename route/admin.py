@@ -26,12 +26,15 @@ except ImportError:
 
 from service.analytics_agent_service import AnalyticsAgentService
 
-# Create router
-router = APIRouter(prefix="/ai-admin", tags=["admin"])
+# Create router (No prefix for maximum compatibility)
+router = APIRouter(tags=["admin"])
 
-@router.get("/ping")
+print("[Admin] Initializing admin routes...", flush=True)
+
+@router.get("/ai-admin/ping")
 def ping_admin():
-    return {"status": "ai_admin_ok"}
+    print("[Admin] Ping received!", flush=True)
+    return {"status": "ai_admin_ok", "timestamp": datetime.now().isoformat()}
 
 # --- Models ---
 class AnalyticsReportResponse(BaseModel):
@@ -46,7 +49,7 @@ class AnomalyResponse(BaseModel):
     drop_rate: float
 
 
-@router.get("/analytics/ai-report")
+@router.get("/ai-admin/analytics/ai-report")
 async def get_ai_analytics_report(request: Request, days: int = Query(7, ge=1, le=30)):
     agent: AnalyticsAgentService = request.app.state.analytics_agent
     if not agent:
