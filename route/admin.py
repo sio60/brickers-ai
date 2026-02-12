@@ -26,7 +26,7 @@ except ImportError:
 
 from service.analytics_agent_service import AnalyticsAgentService
 
-# Create router (No prefix for maximum compatibility)
+# Create router (Prefix를 쓰지 않고 데코레이터에서 직접 명시)
 router = APIRouter(tags=["admin"])
 
 print("[Admin] Initializing admin routes...", flush=True)
@@ -58,7 +58,7 @@ async def get_ai_analytics_report(request: Request, days: int = Query(7, ge=1, l
     report = await agent.get_analyst_report(days)
     return {"report": report, "days": days}
 
-@router.get("/analytics/check-anomaly", response_model=AnomalyResponse)
+@router.get("/ai-admin/analytics/check-anomaly", response_model=AnomalyResponse)
 async def check_analytics_anomaly(request: Request):
     """
     [NEW] 이상 징후 감지 실행
