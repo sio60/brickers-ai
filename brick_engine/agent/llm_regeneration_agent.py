@@ -1006,33 +1006,32 @@ class RegenerationGraph:
         overall_improved = failure_improved or floating_improved
         
         # 도구별 결과 분석 및 기록
-        # 2. 결과 분석 및 통합 로그 저장 (Unified Log)
+        # 2. 결과 분석 및 학습 데이터 저장
+        current_hypothesis = state.get('current_hypothesis', {})
+        hyp_text = current_hypothesis.get('hypothesis', 'No hypothesis')
+
+        if overall_improved:
+            lesson = f"✅ {last_tool} 성공: {hyp_text} (Gained Improvement)"
+            memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
+            memory["consecutive_failures"] = 0
+            print(f"  {lesson}")
+        else:
+            lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
+            memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
+            memory["consecutive_failures"] += 1
+            print(f"  {lesson}")
+
+        memory["lessons"].append(lesson)
+
+        # 리스트 관리
+        memory["lessons"] = memory["lessons"][-10:]
+        memory["failed_approaches"] = memory["failed_approaches"][-5:]
+        memory["successful_patterns"] = memory["successful_patterns"][-5:]
+
+        # 통합 로그 저장 (memory_manager 있을 때만)
         if memory_manager:
             try:
-                # 관찰 (Observation)
                 observation = f"ratio={prev_small_ratio:.2f}, floating={prev_floating}, failure={prev_failure:.2f}"
-                
-                current_hypothesis = state.get('current_hypothesis', {})
-                hyp_text = current_hypothesis.get('hypothesis', 'No hypothesis')
-
-                # 간단한 성공/실패 판정 및 메시지
-                if overall_improved:
-                    lesson = f"✅ {last_tool} 성공: {hyp_text} (Gained Improvement)"
-                    memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
-                    memory["consecutive_failures"] = 0
-                    print(f"  {lesson}")
-                else:
-                    lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
-                    memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
-                    memory["consecutive_failures"] += 1
-                    print(f"  {lesson}")
-                
-                memory["lessons"].append(lesson)
-                
-                # 리스트 관리
-                memory["lessons"] = memory["lessons"][-10:]
-                memory["failed_approaches"] = memory["failed_approaches"][-5:]
-                memory["successful_patterns"] = memory["successful_patterns"][-5:]
 
                 memory_manager.log_experiment(
                     session_id=state.get('session_id', 'unknown_session'),
@@ -1356,14 +1355,13 @@ def regeneration_loop(
     try:
         model_id = Path(glb_path).name
         mem = final_state.get("memory", {})
-        if mem.get("lessons") or mem.get("successful_patterns") or mem.get("failed_approaches"):
-            report_data = final_state.get("final_report", {})
-            mem["final_report"] = {
-                "success": report_data.get("success", False),
-                "total_attempts": report_data.get("total_attempts", final_state.get("attempts", 0)),
-                "final_metrics": report_data.get("final_metrics", {}),
-            }
-            save_memory_to_db(model_id, mem)
+        report_data = final_state.get("final_report", {})
+        mem["final_report"] = {
+            "success": report_data.get("success", False),
+            "total_attempts": report_data.get("total_attempts", final_state.get("attempts", 0)),
+            "final_metrics": report_data.get("final_metrics", {}),
+        }
+        save_memory_to_db(model_id, mem)
     except Exception as e:
         print(f"⚠️ [Memory] 저장 중 오류: {e}")
 
