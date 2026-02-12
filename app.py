@@ -154,10 +154,10 @@ async def shutdown():
 # ============================================================================
 # Health Check
 # ============================================================================
-@app.get("/debug-ping")
-def debug_ping():
-    return {"status": "app_root_ok"}
-
-@app.get("/ai-admin/root-ping")
-def ai_admin_root_ping():
-    return {"status": "ai_admin_root_ok"}
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "mode": "kids-only",
+        "env": getattr(config, "ENV", "unknown"),
+    }
