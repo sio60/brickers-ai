@@ -238,41 +238,52 @@ async def deep_investigator_node(state: AdminAnalystState) -> dict:
 # Node 6: Reporter Green — 정상 보고서
 # ═══════════════════════════════════════════════════════════════
 async def reporter_green_node(state: AdminAnalystState) -> dict:
-    """이상 없을 때 간결한 녹색 보고서."""
-    log.info("[Reporter] 정상 보고서 생성...")
+    """이상 징후가 없을 때도 LLM으로 심층 운영 인사이트 생성."""
+    log.info("[Reporter] 정상 상태 심층 인사이트 생성 시작...")
 
-    s = state.get("raw_metrics", {}).get("summary", {})
-    daily = state.get("raw_metrics", {}).get("daily_users", [])
-    tags = state.get("raw_metrics", {}).get("top_tags", [])
-    t = state.get("temporal_context", {})
+    metrics = state.get("raw_metrics", {})
+    summary = metrics.get("summary", {})
+    daily = metrics.get("daily_users", [])
+    tags = metrics.get("top_tags", [])
+    temporal = state.get("temporal_context", {})
 
-    # 트렌드
-    trend = ""
-    if daily and len(daily) >= 2:
+    # 트렌드 요약 (LLM 참고용)
+    trend_desc = "보합세"
+    if daily and len(daily) >= 3:
         try:
-            c = [d.get("count", d.get("activeUsers", 0)) for d in daily]
-            r_avg = sum(c[-3:]) / min(3, len(c))
-            p_avg = sum(c[:-3]) / max(1, len(c) - 3) if len(c) > 3 else r_avg
-            chg = ((r_avg - p_avg) / max(p_avg, 1)) * 100
-            trend = f"최근 3일 {'📈 증가' if chg > 0 else '📉 감소'} ({chg:+.1f}%)"
-        except Exception:
-            trend = "계산 불가"
+            counts = [d.get("count", d.get("activeUsers", 0)) for d in daily]
+            recent_avg = sum(counts[-3:]) / 3
+            prev_avg = sum(counts[-6:-3]) / 3 if len(counts) >= 6 else counts[0]
+            chg = ((recent_avg - prev_avg) / max(prev_avg, 1)) * 100
+            trend_desc = f"최근 3일 평균이 이전 대비 {chg:+.1f}% {'상승' if chg > 0 else '하락'} 중"
+        except: pass
 
-    top = ", ".join(f"#{x.get('tag', x.get('name', '?'))}" for x in (tags or [])[:5]) or "없음"
+    prompt = f"""당신은 브릭커스(Brickers) 서비스의 데이터 과학자이자 운영 컨설턴트입니다.
+현재 서비스의 주요 지표는 통계적으로 안정 범위에 있습니다. 
+단순 지표 요약을 넘어, 데이터를 다각도로 해석하여 관리자에게 가치 있는 '심층 인사이트'를 제공하세요.
 
-    report = f"""## ✅ 서비스 정상 운영 중
+[수집된 데이터]
+- 활성 유저(DAU): {summary.get('activeUsers', 'N/A')}
+- 페이지뷰: {summary.get('pageViews', 'N/A')}
+- 세션당 활동: {summary.get('sessions', 'N/A')}
+- 현 시점 트렌드: {trend_desc}
+- 인기 관심사(태그): {', '.join(f"#{t.get('tag', '알수없음')}" for t in tags[:5])}
+- 시간대 맥락: {temporal.get('day_of_week')}요일 {temporal.get('hour')}시 (피크타임 여부: {temporal.get('is_peak')})
 
-| 항목 | 값 |
-|------|-----|
-| 활성 유저 | {s.get('activeUsers', 'N/A')}명 |
-| 페이지뷰 | {s.get('pageViews', 'N/A')} |
-| 세션 수 | {s.get('sessions', 'N/A')} |
-| 이상 징후 | 없음 |
-| 트렌드 | {trend} |
-| 인기 태그 | {top} |
-| 분석 시각 | {t.get('date', '')} {t.get('hour', '')}시 |
+[보고서 구성 가이드]
+1. '지표 해석 (Metrics Interpretation)': 현재 수치가 의미하는 서비스의 건강 상태
+2. '유저 페르소나 및 행동 추론': 인기 태그와 시간대를 바탕으로 현재 어떤 유저층이 무엇을 위해 접속하는지 분석
+3. '성장 기회 (Growth Opportunity)': 지표를 한 단계 더 끌어올리기 위한 구체적인 실험이나 마케팅 제안
+4. 마크다운 형식을 적극 활용하여 가독성 있게 작성하세요.
 
-> 모든 핵심 지표가 정상 범위 입니다. 🎉"""
+다음 JSON으로만 응답하세요:
+{{"report": "심층 분석 내용 (마크다운 형식)"}}"""
+
+    res = await call_llm_json(prompt)
+    report = res.get("report") if res else None
+
+    if not report:
+        report = f"## ✅ 서비스 안정 운영 중\n\n모든 핵심 지표가 정상 범위를 유지하고 있습니다. 유저 유입 및 전환 트렌드가 안정적입니다. ({trend_desc})"
 
     return {"final_report": report, "next_action": "end"}
 
@@ -281,49 +292,43 @@ async def reporter_green_node(state: AdminAnalystState) -> dict:
 # Node 7: Finalizer — 이상 발견 시 종합 보고서
 # ═══════════════════════════════════════════════════════════════
 async def finalizer_node(state: AdminAnalystState) -> dict:
-    """종합 분석 보고서 생성 (이상 징후 + 원인 + 전략)."""
-    log.info("[Finalizer] 종합 보고서 생성...")
+    """이상 징후 발견 시 LLM으로 유기적인 종합 분석 보고서 생성."""
+    log.info("[Finalizer] 종합 보고서 생성 시작...")
 
     dx = state.get("diagnosis", {})
     actions = state.get("proposed_actions", [])
     anomalies = state.get("anomalies", [])
+    metrics = state.get("raw_metrics", {})
+    temporal = state.get("temporal_context", {})
 
-    a_lines = []
-    for a in anomalies:
-        icon = "🔴" if a.get("direction") == "DROP" else "🔺"
-        a_lines.append(
-            f"- {icon} **{a.get('metric')}**: 현재 {a.get('current')} vs "
-            f"기준 {a.get('baseline')} (심각도: {a.get('severity')}, Z: {a.get('z_score')})"
-        )
+    prompt = f"""당신은 브릭커스(Brickers) 서비스의 위기 대응 본부장입니다.
+감지된 이상 징후에 대해 경영진이 즉시 의사결정을 내릴 수 있도록 '심층 분석 및 대응 보고서'를 작성하세요.
 
-    act_lines = []
-    for i, ac in enumerate(actions, 1):
-        ri = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(ac.get("risk", ""), "⚪")
-        act_lines.append(
-            f"{i}. **{ac.get('action')}** → {ac.get('target', '?')}\n"
-            f"   - 기대: {ac.get('expected_impact', '?')} | 리스크: {ri} {ac.get('risk', '?')}"
-        )
+[수집된 이상 징후]
+{json.dumps(anomalies, ensure_ascii=False, indent=2)}
 
-    ev = "\n".join(f"- {e}" for e in dx.get("evidence", []))
+[진단 결과 (원인)]
+- 근본 원인: {dx.get('root_cause', '?')}
+- 증거 및 영향: {json.dumps(dx.get('evidence', []), ensure_ascii=False)} / {dx.get('affected_segment', '전체')}
 
-    report = f"""## 🚨 이상 징후 분석 보고서
+[권장 대응 전략]
+{json.dumps(actions, ensure_ascii=False, indent=2)}
 
-### 감지된 이상
-{chr(10).join(a_lines) or '- 없음'}
+[보고서 작성 가이드]
+1. 제목은 상황의 심각도를 나타내는 이모지와 함께 작성하세요 (예: � 긴급 대응 보고서)
+2. '브리핑': 무엇이 문제이고 얼마나 심각한지 전문가 시각에서 한 문단 요약
+3. '인과관계 분석': 왜 이런 일이 발생했는지 데이터와 맥락을 연결하여 설명
+4. '우선순위 조치 계획': 제안된 전략들을 실행 순서와 기대 효과 중심으로 재구성
+5. 마크다운 형식을 사용하여 가독성 있게 작성하세요 (테이블, 인용구 등 권장).
 
-### 근본 원인
-> {dx.get('root_cause', '분석 불가')}
+다음 JSON으로만 응답하세요:
+{{"report": "종합 분석 보고서 내용 (마크다운 형식)"}}"""
 
-### 증거
-{ev or '- 없음'}
+    res = await call_llm_json(prompt)
+    report = res.get("report") if res else None
 
-### 영향 범위
-{dx.get('affected_segment', '전체 유저')}
-
-### 제안 조치 ({len(actions)}건)
-{chr(10).join(act_lines) or '- 없음'}
-
----
-📊 확신도: {dx.get('confidence', 0) * 100:.0f}% | 🔄 반복: {state.get('iteration', 1)}회 | ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}"""
+    if not report:
+        # Fallback 템플릿
+        report = f"## 🚨 관리자 주의: 이상 징후 감지\n\n- 원인: {dx.get('root_cause', '?')}\n- 조치: {len(actions)}건의 전략 수립됨."
 
     return {"final_report": report, "next_action": "end"}
