@@ -27,7 +27,7 @@ except ImportError:
 from service.analytics_agent_service import AnalyticsAgentService
 
 # Create router
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(prefix="/ai-admin", tags=["admin"])
 
 # --- Models ---
 class AnalyticsReportResponse(BaseModel):
@@ -41,15 +41,6 @@ class AnomalyResponse(BaseModel):
     previous_average: float
     drop_rate: float
 
-
-@router.get("/analytics/ai-report", response_model=AnalyticsReportResponse)
-async def get_ai_analytics_report(days: int = Query(7, ge=1, le=30)):
-    """
-    [NEW] AI 데이터 분석가 보고서 생성
-    """
-    request_app = router.dependencies[0].dependency if router.dependencies else None # fallback
-    # Actually, the best way to get app state in router is via Request
-    return None # Will fix in actual implementation below
 
 @router.get("/analytics/ai-report")
 async def get_ai_analytics_report(request: Request, days: int = Query(7, ge=1, le=30)):
