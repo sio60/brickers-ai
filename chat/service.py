@@ -11,6 +11,28 @@ log = logging.getLogger(__name__)
 
 OPENAI_PATH = "chat/completions"
 
+# --- i18n: 유저에게 노출되는 메시지 ---
+_FALLBACK_MESSAGES = {
+    "ko": {
+        "empty_response": "음? 답변을 가져오지 못했어요.",
+        "api_error": "죄송해요, 잠시 문제가 생겼어요. 다시 시도해주세요!",
+    },
+    "en": {
+        "empty_response": "Hmm, I couldn't get a response.",
+        "api_error": "Sorry, something went wrong. Please try again!",
+    },
+    "ja": {
+        "empty_response": "あれ？回答を取得できませんでした。",
+        "api_error": "申し訳ありません、問題が発生しました。もう一度お試しください！",
+    },
+}
+
+
+def _msg(lang: str, key: str) -> str:
+    return _FALLBACK_MESSAGES.get(lang, _FALLBACK_MESSAGES["ko"]).get(
+        key, _FALLBACK_MESSAGES["ko"][key]
+    )
+
 
 def build_system_prompt(lang: str) -> str:
     if lang == "en":
@@ -21,6 +43,14 @@ You are 'BrickBot', a helper AI for 'Brickers', a service turning photos into Le
 - Tone: Polite, friendly, enthusiastic.
 - Role: Help ONLY with Brickers services (Making Lego, Gallery, My Page).
 - If user asks about unrelated topics (weather, math, coding), politely refuse.
+
+[Brick Levels]
+Users can choose how many bricks their model will have:
+- L1: 100~199 bricks (simple, quick build)
+- L2: 200~299 bricks (moderate detail)
+- L3: 300~399 bricks (high detail, longer build)
+- PRO: 1000+ bricks (maximum detail, advanced builders)
+Higher levels produce more detailed models but take longer to generate and assemble.
 
 [Rules]
 - Irrelevant topics: "Sorry, I can only help with Brickers service. Do you want to know how to create Lego?"
@@ -41,6 +71,14 @@ Append exact tags if relevant:
 - Role: Brickersのサービス（レゴ作成、ギャラリー、マイページ）に関する手助けのみを行います。
 - 関係のない話題（天気、数学、コーディングなど）には丁寧に断ってください。
 
+[ブリックレベル]
+ユーザーはモデルのブリック数を選択できます:
+- L1: 100~199個 (シンプルで簡単)
+- L2: 200~299個 (適度なディテール)
+- L3: 300~399個 (高ディテール、組み立て時間が長い)
+- PRO: 1000個以上 (最高ディテール、上級者向け)
+レベルが高いほど、より精密なモデルが作れますが、生成と組み立てに時間がかかります。
+
 [Rules]
 - 関係ない話題: "申し訳ありません。私はBrickersのサービスについてのみお手伝いできます。レゴの作り方について知りたいですか？"
 - 常に レゴ作成, ギャラリー, マイページ の話題に戻してください。
@@ -59,6 +97,14 @@ You are 'BrickBot', a kind and friendly AI guide for 'Brickers', a service that 
 - Tone: Very polite, warm, and encouraging (Korean '존댓말', e.g., '해요', '할까요?').
 - Role: Provide help ONLY related to Brickers services (creating Lego, gallery, my page, etc.).
 - If the user asks about general knowledge, coding, politics, weather, or anything unrelated to Brickers, politely refuse.
+
+[브릭 레벨]
+사용자가 선택할 수 있는 브릭 개수 레벨:
+- L1: 100~199개 (간단하고 빠른 조립)
+- L2: 200~299개 (적당한 디테일)
+- L3: 300~399개 (높은 디테일, 조립 시간 더 김)
+- PRO: 1000개 이상 (최고 디테일, 숙련자용)
+레벨이 높을수록 더 정밀한 모델이 만들어지지만, 생성과 조립에 시간이 더 걸려요.
 
 [Rules / Boundaries]
 - **IMPORTANT**: Do NOT answer questions unrelated to Brickers.
@@ -148,7 +194,7 @@ class ChatService:
 
             content = data["choices"][0]["message"]["content"]
             if not isinstance(content, str) or not content.strip():
-                content = "음? 답변을 가져오지 못했어요."
+                content = _msg(lang, "empty_response")
 
             # 5) turn 저장 (이번 user + assistant)
             await self.store.append_turn(cid, user_message, content)
@@ -157,8 +203,7 @@ class ChatService:
 
         except Exception as e:
             log.exception("OpenAI API call failed: %s", e)
-            # 실패 시에도 conversation_id는 반환해서 클라이언트가 유지 가능
-            return "죄송해요, 잠시 문제가 생겼어요. 다시 시도해주세요! 🤖", cid
+            return _msg(lang, "api_error"), cid
 
     async def _summarize_and_compact(
         self,
