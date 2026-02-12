@@ -48,12 +48,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgfortran5 \
     && rm -rf /var/lib/apt/lists/*
 
-# LDraw parts library (for parts bundling)
+# LDraw parts library — same GitHub source as frontend CDN
 RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
-    && mkdir -p /usr/share/ldraw \
-    && wget -q https://library.ldraw.org/library/updates/complete.zip -O /tmp/ldraw.zip \
-    && unzip -q /tmp/ldraw.zip -d /usr/share/ \
-    && rm /tmp/ldraw.zip \
+    && wget -q https://github.com/gkjohnson/ldraw-parts-library/archive/refs/heads/master.zip -O /tmp/ldraw-gh.zip \
+    && unzip -q /tmp/ldraw-gh.zip -d /tmp/ \
+    && mv /tmp/ldraw-parts-library-master/complete/ldraw /usr/share/ldraw \
+    && rm -rf /tmp/ldraw-gh.zip /tmp/ldraw-parts-library-master \
     && apt-get purge -y wget unzip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 ENV LDRAWDIR=/usr/share/ldraw
