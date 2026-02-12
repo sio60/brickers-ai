@@ -3,6 +3,7 @@ import os
 import io
 import asyncio
 import base64
+import httpx
 from PIL import Image
 
 # Google GenAI
@@ -42,26 +43,43 @@ def _generate_background_sync(subject: str) -> bytes:
         model=model,
         contents=prompt,
         config=genai_types.GenerateContentConfig(
-            response_modalities=["Image"],
-            candidate_count=1
+            response_modalities=["IMAGE"],          # force image modality
+            response_mime_type="image/png",         # ask for PNG bytes
+            candidate_count=1,
         ),
     )
 
     if not resp.candidates:
         raise ValueError("No image candidates returned from Gemini")
-    
-    # Gemini 2.0 Flash Image returns inline data usually
+
+    # Gemini may return inline_data (base64) or file_data (URL)
     for part in resp.candidates[0].content.parts:
-        if part.inline_data and part.inline_data.data:
-            data = part.inline_data.data
+        inline = getattr(part, "inline_data", None)
+        if inline and inline.data:
+            mime = (inline.mime_type or "").lower()
+            if mime and not mime.startswith("image/"):
+                # Skip non-image responses (safety/blocked content text, etc.)
+                print(f"[Gemini] Non-image inline response skipped: mime={mime}")
+                continue
+            data = inline.data
             if isinstance(data, str):
                 try:
                     return base64.b64decode(data)
                 except Exception:
-                    # Maybe it's raw bytes in string encoding? or just return as bytes
-                    return data.encode('utf-8')
+                    # Fallback: treat as utf-8 bytes
+                    return data.encode("utf-8")
             return data
-            
+
+        file_data = getattr(part, "file_data", None)
+        if file_data and getattr(file_data, "file_uri", None):
+            try:
+                r = httpx.get(file_data.file_uri, timeout=30.0)
+                r.raise_for_status()
+                return r.content
+            except Exception as e:
+                print(f"[Gemini] Failed to fetch file_uri: {e}")
+                continue
+
     raise ValueError("No image data found in Gemini response")
 
 
