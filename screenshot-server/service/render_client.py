@@ -20,13 +20,14 @@ LDRAWDIR = os.environ.get("LDRAWDIR", "/usr/share/ldraw")
 RENDER_ENABLED = shutil.which(LDVIEW_BIN) is not None
 
 # 6면 카메라 뷰 (latitude, longitude)
+# 약 30도 위에서 내려다보는 입체감 있는 앵글 + 45도 회전
 VIEWS: Dict[str, Dict[str, float]] = {
-    "front":  {"lat": 0,   "lon": 0},
-    "back":   {"lat": 0,   "lon": 180},
-    "left":   {"lat": 0,   "lon": 90},
-    "right":  {"lat": 0,   "lon": -90},
-    "top":    {"lat": 90,  "lon": 0},
-    "bottom": {"lat": -90, "lon": 0},
+    "front":  {"lat": 30,  "lon": 45},
+    "back":   {"lat": 30,  "lon": 225},
+    "left":   {"lat": 30,  "lon": 135},
+    "right":  {"lat": 30,  "lon": -45},
+    "top":    {"lat": 80,  "lon": 45},
+    "bottom": {"lat": -30, "lon": 45},
 }
 
 

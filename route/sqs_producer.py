@@ -70,6 +70,7 @@ async def send_result_message(
     parts: int = 0,
     final_target: int = 0,
     tags: list[str] = None,
+    background_url: str = "",
     error_message: Optional[str] = None,
 ) -> None:
     """
@@ -114,6 +115,7 @@ async def send_result_message(
                 "parts": parts,
                 "finalTarget": final_target,
                 "tags": tags or [],
+                "backgroundUrl": background_url or "",
             })
             log("   - success=True")
             log(f"   - ldrUrl: {ldr_url[:60]}..." if ldr_url else "   - ldrUrl: (empty)")
