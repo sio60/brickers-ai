@@ -39,14 +39,52 @@ def _generate_background_sync(subject: str) -> bytes:
 
     prompt = PROMPT_TEMPLATE.format(subject=subject)
 
-    resp = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=genai_types.GenerateContentConfig(
-            response_modalities=["IMAGE"],  # ask for image
-            candidate_count=1,
+    # Safety settings: allow everything to prevent false positives
+    safety_settings = [
+        genai_types.SafetySetting(
+            category="HARM_CATEGORY_HARASSMENT",
+            threshold="BLOCK_NONE",
         ),
-    )
+        genai_types.SafetySetting(
+            category="HARM_CATEGORY_HATE_SPEECH",
+            threshold="BLOCK_NONE",
+        ),
+        genai_types.SafetySetting(
+            category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            threshold="BLOCK_NONE",
+        ),
+        genai_types.SafetySetting(
+            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold="BLOCK_NONE",
+        ),
+    ]
+
+    max_retries = 3
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],  # ask for image
+                    candidate_count=1,
+                    safety_settings=safety_settings,
+                ),
+            )
+            # If successful, break
+            if resp.candidates:
+                break
+        except Exception as e:
+            print(f"[Gemini] Attempt {attempt+1}/{max_retries} failed: {e}")
+            last_error = e
+            # Wait a bit before retry
+            import time
+            time.sleep(1)
+    else:
+        # Loop finished without success
+        raise last_error or ValueError(f"Failed to generate image after {max_retries} attempts")
 
     if not resp.candidates:
         raise ValueError("No image candidates returned from Gemini")
@@ -96,7 +134,15 @@ def _generate_background_sync(subject: str) -> bytes:
                     data = base64.b64decode(data)
                 except Exception:
                     # Fallback: treat as utf-8 bytes
-                    data = data.encode("utf-8", errors="ignore")
+                    # Try surrogateescape first to recover binary data if it was decoded loosely
+                    try:
+                        data = data.encode("utf-8", errors="surrogateescape")
+                    except Exception:
+                        try:
+                            data = data.encode("utf-8", errors="ignore")
+                        except Exception as e_enc:
+                            print(f"[Gemini] String encoding failed: {e_enc}")
+                            continue
             elif isinstance(data, bytes):
                  # Check if it is valid image data
                  if not _looks_like_image(data):
