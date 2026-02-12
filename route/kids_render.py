@@ -49,6 +49,7 @@ from service.backend_client import (
     send_agent_log,
 )
 from service.bom_generator import generate_bom_from_ldr
+from service.ldraw_bundler import generate_parts_bundle
 from service.brickify_loader import (
     load_engine_convert,
     load_agent_modules,
@@ -505,6 +506,18 @@ async def process_kids_request_internal(
                 await _write_bytes_async(out_bom, json.dumps(bom_data, indent=2, ensure_ascii=False).encode("utf-8"))
                 bom_url = to_generated_url(out_bom, out_dir=out_brick_dir)
                 _log(f"   BOM 파일 생성 완료 | total_parts={bom_data['total_parts']} | unique={len(bom_data['parts'])}")
+
+                # Parts Bundle 생성 (실패해도 파이프라인 계속)
+                try:
+                    bundle_data = await anyio.to_thread.run_sync(
+                        lambda: generate_parts_bundle(out_ldr)
+                    )
+                    out_bundle = out_brick_dir / "parts-bundle.json"
+                    await _write_bytes_async(out_bundle, json.dumps(bundle_data).encode("utf-8"))
+                    bundle_url = to_generated_url(out_bundle, out_dir=out_brick_dir)
+                    _log(f"   Parts Bundle 생성 완료 | parts={len(bundle_data['parts'])} | url={bundle_url}")
+                except Exception as e:
+                    _log(f"Parts Bundle 실패 (파이프라인 계속): {e}")
 
                 _log(f"[STEP 4/4] URL 생성 완료 | {time.time()-step_start:.2f}s")
 
