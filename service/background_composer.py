@@ -52,23 +52,29 @@ def _generate_background_sync(subject: str) -> bytes:
         raise ValueError("No image candidates returned from Gemini")
 
     def _looks_like_image(buf: bytes) -> bool:
-        # quick magic sniff for common formats
+        # quick magic sniff for common formats (PNG, JPEG, WEBP, GIF, HEIC/AVIF)
         return (
-            buf.startswith(b"\x89PNG")
+            buf.startswith(b"\x89PNG")  # png
             or buf.startswith(b"\xff\xd8\xff")  # jpeg
-            or buf.startswith(b"RIFF") and b"WEBP" in buf[:16]  # webp
+            or (buf.startswith(b"RIFF") and b"WEBP" in buf[:16])  # webp
+            or buf.startswith(b"GIF8")  # gif
+            or (buf[4:8] == b"ftyp" and buf[8:12] in (b"heic", b"heix", b"mif1", b"avif"))  # heic/avif
         )
 
-    def _validate_image_bytes(buf: bytes) -> bytes:
+    def _validate_image_bytes(buf: bytes, mime: str | None = None) -> bytes:
+        # If Pillow can verify, great
         try:
             Image.open(io.BytesIO(buf)).verify()
             return buf
-        except Exception:
-            if not _looks_like_image(buf):
-                raise
-            # Try again with load (some formats need load)
+        except Exception as e_verify:
+            # If magic bytes look like an image, accept to let the browser handle formats Pillow lacks (e.g., HEIC/AVIF)
+            if _looks_like_image(buf):
+                print(f"[Gemini] Pillow verify failed but magic looks like image (mime={mime}): {e_verify}")
+                return buf
+            # Try load (some formats need load)
             try:
-                Image.open(io.BytesIO(buf)).load()
+                img = Image.open(io.BytesIO(buf))
+                img.load()
                 return buf
             except Exception:
                 raise
@@ -80,6 +86,12 @@ def _generate_background_sync(subject: str) -> bytes:
             mime = (inline.mime_type or "").lower()
             data = inline.data
             if isinstance(data, str):
+                # strip data URL prefix if present
+                if data.startswith("data:"):
+                    try:
+                        data = data.split(",", 1)[1]
+                    except Exception:
+                        pass
                 try:
                     data = base64.b64decode(data)
                 except Exception:
@@ -95,9 +107,9 @@ def _generate_background_sync(subject: str) -> bytes:
                 print(f"[Gemini] Inline data without mime does not look like image, skipping (len={len(data)})")
                 continue
             try:
-                return _validate_image_bytes(data)
+                return _validate_image_bytes(data, mime)
             except Exception as e:
-                print(f"[Gemini] Inline image validation failed: {e} (len={len(data)})")
+                print(f"[Gemini] Inline image validation failed: {e} (len={len(data)}, mime={mime})")
                 continue
 
         file_data = getattr(part, "file_data", None)
@@ -106,7 +118,7 @@ def _generate_background_sync(subject: str) -> bytes:
                 r = httpx.get(file_data.file_uri, timeout=30.0)
                 r.raise_for_status()
                 buf = r.content
-                return _validate_image_bytes(buf)
+                return _validate_image_bytes(buf, getattr(file_data, "mime_type", None))
             except Exception as e:
                 print(f"[Gemini] Failed to fetch/validate file_uri: {e}")
                 continue

@@ -41,6 +41,7 @@ from service.kids_config import (
 )
 from service.s3_client import USE_S3, S3_BUCKET, to_generated_url, upload_bytes_to_s3
 from service.gemini_image import render_one_image_async
+from service.background_composer import generate_background_async
 from service.backend_client import (
     update_job_stage,
     update_job_suggested_tags,
@@ -164,6 +165,7 @@ class ProcessResp(BaseModel):
     ldrData: Optional[str] = None
     bomUrl: str
     pdfUrl: Optional[str] = None # [New]
+    backgroundUrl: Optional[str] = None # [New]
     subject: str
     tags: list[str]
     parts: int
@@ -207,6 +209,8 @@ async def process_kids_request_internal(
     out_req_dir.mkdir(parents=True, exist_ok=True)
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
+    background_task = None
+    background_url: Optional[str] = None
 
     # 내부 래퍼 로그 (이메일 자동 주입 + 버퍼링)
     # [수정] LogCapture가 이미 stdout을 캡쳐하므로, 
@@ -271,8 +275,14 @@ async def process_kids_request_internal(
                 _log(f"\u2705 [STEP 1/5] Gemini \uc644\ub8cc | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
                 # await _async_archive() # [Restored comment]
                 
-
                 await update_job_suggested_tags(job_id, ai_tags)
+
+                # Parallel background generation (Gemini image)
+                try:
+                    background_task = asyncio.create_task(generate_background_async(final_subject or subject or "lego creation"))
+                    _log("   \ud83d\udccd Background gen task started (Gemini)")
+                except Exception as bg_start_err:
+                    _log(f"\u26a0\ufe0f Background task start failed: {bg_start_err}")
 
                 # 2) Tripo 3D
                 step_start = time.time()
@@ -534,6 +544,21 @@ async def process_kids_request_internal(
             # except:
             #     pass
 
+            # Ensure background URL ready before returning
+            if background_task and background_url is None:
+                try:
+                    bg_bytes = await background_task
+                    bg_filename = f"bg_{req_id}.png"
+                    bg_key = f"backgrounds/{bg_filename}"
+                    background_url = upload_bytes_to_s3(bg_bytes, bg_key, content_type="image/png")
+                    if not background_url:
+                        bg_path = out_req_dir / bg_filename
+                        await _write_bytes_async(bg_path, bg_bytes)
+                        background_url = to_generated_url(bg_path, out_dir=out_req_dir)
+                    _log(f"   \ud83d\udccd Background ready | url={background_url}")
+                except Exception as bg_err:
+                    _log(f"\u26a0\ufe0f Background generation failed: {bg_err}")
+
             return {
                 "correctedUrl": corrected_url,
                 "modelUrl": model_url,
@@ -544,6 +569,7 @@ async def process_kids_request_internal(
                 "tags": ai_tags,
                 "parts": int(result.get("parts", 0)),
                 "finalTarget": int(result.get("final_target", 0)),
+                "backgroundUrl": background_url,
             }
 
     except Exception as e:
@@ -608,6 +634,7 @@ async def process(request: KidsProcessRequest):
             "ldrData": ldr_data_uri,
             "bomUrl": result["bomUrl"],
             "pdfUrl": result.get("pdfUrl"), # [New]
+            "backgroundUrl": result.get("backgroundUrl"),
             "subject": result["subject"],
             "tags": result["tags"],
             "parts": result["parts"],
