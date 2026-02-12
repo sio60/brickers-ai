@@ -254,6 +254,7 @@ async def _job_worker():
                     parts=result["parts"],
                     final_target=result["finalTarget"],
                     tags=result.get("tags", []),
+                    background_url=result.get("backgroundUrl", ""),
                 )
 
                 delete_message(receipt_handle)
