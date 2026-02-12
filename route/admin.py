@@ -25,6 +25,7 @@ except ImportError:
     from brick_engine.agent.log_analyzer.graph import app as log_agent_app
 
 from service.analytics_agent_service import AnalyticsAgentService
+from admin_analyst import analyst_graph
 
 # Create router (Prefix를 쓰지 않고 데코레이터에서 직접 명시)
 router = APIRouter(tags=["admin"])
@@ -69,6 +70,44 @@ async def check_analytics_anomaly(request: Request):
     
     result = await agent.run_anomaly_detection()
     return result
+
+
+@router.post("/ai-admin/analytics/deep-analyze")
+async def deep_analyze():
+    """
+    [NEW] LangGraph 기반 심층 분석 실행.
+    데이터 수집 → 이상 탐지 → 인과 추론 → 전략 수립 파이프라인.
+    """
+    logger.info("🧠 [Admin] LangGraph Deep Analysis 시작...")
+    try:
+        initial_state = {
+            "raw_metrics": {},
+            "temporal_context": {},
+            "anomalies": [],
+            "risk_score": 0.0,
+            "diagnosis": None,
+            "proposed_actions": [],
+            "iteration": 0,
+            "max_iterations": 3,
+            "next_action": "mine",
+            "final_report": None,
+        }
+
+        result = await analyst_graph.ainvoke(initial_state)
+
+        logger.info(f"✅ [Admin] Deep Analysis 완료 (risk={result.get('risk_score', 0)})")
+        return {
+            "status": "success",
+            "report": result.get("final_report", "보고서 생성 실패"),
+            "risk_score": result.get("risk_score", 0),
+            "anomalies": result.get("anomalies", []),
+            "diagnosis": result.get("diagnosis"),
+            "proposed_actions": result.get("proposed_actions", []),
+            "iteration": result.get("iteration", 0),
+        }
+    except Exception as e:
+        logger.error(f"❌ [Admin] Deep Analysis 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"Deep Analysis Failed: {str(e)}")
 
 class LogResponse(BaseModel):
     container: str
