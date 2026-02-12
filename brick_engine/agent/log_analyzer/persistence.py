@@ -7,7 +7,7 @@ import os
 logger = logging.getLogger("agent.log_analyzer.persistence")
 
 # API Base URL (관리자 로그 관련 API 엔드포인트)
-ADMIN_API_BASE = f"{config.API_PUBLIC_BASE_URL}/api/admin"
+ADMIN_API_BASE = f"{config.API_PUBLIC_BASE_URL}/ai-admin"
 
 
 
