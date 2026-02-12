@@ -172,3 +172,37 @@ async def get_user_activity(user_id: str, days: int = 30) -> list | None:
     except Exception as e:
         print(f"  ⚠️ [BackendClient] User Activity Fail: {e}")
     return None
+
+
+async def get_top_tags(days: int = 30, limit: int = 10) -> list | None:
+    """백엔드로부터 실시간 인기 태그 순위를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/top-tags",
+                params={"days": days, "limit": limit},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Top Tags Fail: {e}")
+    return None
+
+
+async def get_heavy_users(days: int = 30, limit: int = 10) -> list | None:
+    """백엔드로부터 활동량이 많은 상위 유저 리스트를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/heavy-users",
+                params={"days": days, "limit": limit},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Heavy Users Fail: {e}")
+    return None
