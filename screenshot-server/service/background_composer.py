@@ -40,7 +40,9 @@ def _generate_background_sync(subject: str) -> bytes:
         raise RuntimeError("GEMINI_API_KEY is not set")
 
     client = genai.Client(api_key=gemini_key)
-    model = os.environ.get("NANO_BANANA_MODEL", "gemini-2.0-flash-exp") # [NOTE] Adjust model name if needed
+    model = os.environ.get("NANO_BANANA_MODEL")
+    if not model:
+        raise RuntimeError("NANO_BANANA_MODEL is not set")
 
     safe_subject = _sanitize_text(subject)
     prompt = PROMPT_TEMPLATE.format(subject=safe_subject or "lego creation")
