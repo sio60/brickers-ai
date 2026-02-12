@@ -43,7 +43,7 @@ def _generate_background_sync(subject: str) -> bytes:
         model=model,
         contents=prompt,
         config=genai_types.GenerateContentConfig(
-            response_modalities=["IMAGE"],  # force image modality (let API choose mime)
+            response_modalities=["IMAGE"],  # ask for image
             candidate_count=1,
         ),
     )
@@ -51,35 +51,67 @@ def _generate_background_sync(subject: str) -> bytes:
     if not resp.candidates:
         raise ValueError("No image candidates returned from Gemini")
 
+    def _looks_like_image(buf: bytes) -> bool:
+        # quick magic sniff for common formats
+        return (
+            buf.startswith(b"\x89PNG")
+            or buf.startswith(b"\xff\xd8\xff")  # jpeg
+            or buf.startswith(b"RIFF") and b"WEBP" in buf[:16]  # webp
+        )
+
+    def _validate_image_bytes(buf: bytes) -> bytes:
+        try:
+            Image.open(io.BytesIO(buf)).verify()
+            return buf
+        except Exception:
+            if not _looks_like_image(buf):
+                raise
+            # Try again with load (some formats need load)
+            try:
+                Image.open(io.BytesIO(buf)).load()
+                return buf
+            except Exception:
+                raise
+
     # Gemini may return inline_data (base64) or file_data (URL)
     for part in resp.candidates[0].content.parts:
         inline = getattr(part, "inline_data", None)
         if inline and inline.data:
             mime = (inline.mime_type or "").lower()
-            if mime and not mime.startswith("image/"):
-                # Skip non-image responses (safety/blocked content text, etc.)
-                print(f"[Gemini] Non-image inline response skipped: mime={mime}")
-                continue
             data = inline.data
             if isinstance(data, str):
                 try:
-                    return base64.b64decode(data)
+                    data = base64.b64decode(data)
                 except Exception:
                     # Fallback: treat as utf-8 bytes
-                    return data.encode("utf-8")
-            return data
+                    data = data.encode("utf-8", errors="ignore")
+
+            # If mime is present and not image, skip
+            if mime and not mime.startswith("image/"):
+                print(f"[Gemini] Non-image inline response skipped: mime={mime}")
+                continue
+            # If mime missing, sniff bytes
+            if not mime and not _looks_like_image(data):
+                print(f"[Gemini] Inline data without mime does not look like image, skipping (len={len(data)})")
+                continue
+            try:
+                return _validate_image_bytes(data)
+            except Exception as e:
+                print(f"[Gemini] Inline image validation failed: {e} (len={len(data)})")
+                continue
 
         file_data = getattr(part, "file_data", None)
         if file_data and getattr(file_data, "file_uri", None):
             try:
                 r = httpx.get(file_data.file_uri, timeout=30.0)
                 r.raise_for_status()
-                return r.content
+                buf = r.content
+                return _validate_image_bytes(buf)
             except Exception as e:
-                print(f"[Gemini] Failed to fetch file_uri: {e}")
+                print(f"[Gemini] Failed to fetch/validate file_uri: {e}")
                 continue
 
-    raise ValueError("No image data found in Gemini response")
+    raise ValueError("No valid image data found in Gemini response")
 
 
 async def generate_background_async(subject: str) -> bytes:
