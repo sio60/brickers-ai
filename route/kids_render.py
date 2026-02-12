@@ -280,7 +280,7 @@ async def process_kids_request_internal(
                 # Parallel background generation (Gemini image)
                 try:
                     background_task = asyncio.create_task(generate_background_async(final_subject or subject or "lego creation"))
-                    _log("   \ud83d\udccd Background gen task started (Gemini)")
+                    _log("   \U0001f4cd Background gen task started (Gemini)")
                 except Exception as bg_start_err:
                     _log(f"\u26a0\ufe0f Background task start failed: {bg_start_err}")
 
