@@ -57,7 +57,11 @@ from service.brickify_loader import (
 )
 
 # PDF Generation (SQS로 Blueprint 서버에 위임)
-from route.sqs_producer import send_pdf_request_message, send_screenshot_request_message
+from route.sqs_producer import (
+    send_pdf_request_message, 
+    send_screenshot_request_message,
+    send_background_request_message
+)
 
 # from brick_engine.agent.log_analyzer.persistence import archive_job_logs # [DECOUPLED]
 from brick_engine.agent.log_analyzer.persistence import archive_job_logs
@@ -209,8 +213,8 @@ async def process_kids_request_internal(
     out_req_dir.mkdir(parents=True, exist_ok=True)
     out_tripo_dir.mkdir(parents=True, exist_ok=True)
     out_brick_dir.mkdir(parents=True, exist_ok=True)
-    background_task = None
     background_url: Optional[str] = None
+    background_requested = False
 
     # 내부 래퍼 로그 (이메일 자동 주입 + 버퍼링)
     # [수정] LogCapture가 이미 stdout을 캡쳐하므로, 
@@ -276,6 +280,14 @@ async def process_kids_request_internal(
                 # await _async_archive() # [Restored comment]
                 
                 await update_job_suggested_tags(job_id, ai_tags)
+ 
+                # [NEW] 배경 생성 요청 (Screenshot Server로 위임)
+                try:
+                    await send_background_request_message(job_id, final_subject or "lego creation")
+                    background_requested = True
+                    _log(f"배경 생성 요청 전송 완료 | subject={final_subject}")
+                except Exception as bg_err:
+                    _log(f"배경 생성 요청 실패: {bg_err}")
  
                 # 2) Tripo 3D
                 step_start = time.time()
@@ -538,20 +550,8 @@ async def process_kids_request_internal(
             #     pass
 
             # Ensure background URL ready before returning
-            if background_task and background_url is None:
-                try:
-                    bg_bytes = await background_task
-                    bg_filename = f"bg_{req_id}.png"
-                    bg_key = f"backgrounds/{bg_filename}"
-                    background_url = upload_bytes_to_s3(bg_bytes, bg_key, content_type="image/png")
-                    if not background_url:
-                        bg_path = out_req_dir / bg_filename
-                        await _write_bytes_async(bg_path, bg_bytes)
-                        background_url = to_generated_url(bg_path, out_dir=out_req_dir)
-                    _log(f"   Background ready | url={background_url}")
-                except Exception as bg_err:
-                    _log(f"Background generation failed: {bg_err}")
-            elif background_task and background_url:
+            # Ensure background requested log
+            if background_requested:
                 _log("   Background generation requested to Screenshot Server")
 
             return {
