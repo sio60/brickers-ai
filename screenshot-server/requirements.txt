@@ -4,3 +4,4 @@ pillow==12.1.0
 boto3
 httpx==0.28.1
 anyio
+google-generativeai
