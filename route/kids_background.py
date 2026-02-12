@@ -34,6 +34,13 @@ async def composite_background(
         
         return {"ok": True, "url": s3_url}
         
+    except HTTPException as he:
+        raise he
     except Exception as e:
+        # Google GenAI Error Handling
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            print(f"[BG Composite] Rate Limit: {e}")
+            raise HTTPException(status_code=429, detail="AI Server Busy (Rate Limit Exceeded). Please try again later.")
+            
         print(f"[BG Composite] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
