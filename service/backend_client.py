@@ -279,3 +279,22 @@ async def get_top_posts(days: int = 7, limit: int = 5) -> list | None:
     except Exception as e:
         print(f"  \u26a0\ufe0f [BackendClient] Top Posts Fail: {e}")
     return None
+
+
+async def get_full_report(days: int = 7) -> dict | None:
+    """백엔드로부터 AI 분석용 통합 리포트를 한번에 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/full-report",
+                params={"days": days},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                print("  \u2705 [BackendClient] Full Report Fetched Successfully")
+                return resp.json()
+            print(f"  \u26a0\ufe0f [BackendClient] Full Report Error: {resp.status_code} | {resp.text[:100]}")
+    except Exception as e:
+        print(f"  \u26a0\ufe0f [BackendClient] Full Report Fail: {e}")
+    return None
