@@ -45,48 +45,42 @@ async def miner_node(state: AdminAnalystState) -> dict:
         # │  - [Fix] Rate Limiting (429) 방지를 위한 배치 처리            │
         # └─────────────────────────────────────────────────────────────┘
         
-        # Batch 1: 핵심 요약 (가장 중요)
-        b1 = await asyncio.gather(
-            backend_client.get_analytics_summary(7),
-            backend_client.get_daily_users(14),
-            return_exceptions=True
-        )
-        await asyncio.sleep(0.5) # Rate Limit 완화
-
-        # Batch 2: 트렌드 및 유저 (중요도 높음)
-        b2 = await asyncio.gather(
-            backend_client.get_top_tags(7, limit=10),
-            backend_client.get_heavy_users(7, limit=5),
-            backend_client.get_top_posts(7, limit=3),
-            return_exceptions=True
-        )
-        await asyncio.sleep(0.5)
-
-        # Batch 3: 이벤트 통계 (보조 지표)
-        b3 = await asyncio.gather(
-            backend_client.get_event_stats("generate_fail", 7),
-            backend_client.get_event_stats("generate_success", 7),
-            backend_client.get_event_stats("generate_success", 1),
-            backend_client.get_event_stats("generate_fail", 1),
-            backend_client.get_event_stats("gallery_register_attempt", 1),
-            return_exceptions=True
-        )
-
-        results = b1 + b2 + b3
-
-        # 결과 매핑 (에러 발생 시 None/빈값 처리)
-        summary = results[0] if not isinstance(results[0], Exception) else {}
-        daily = results[1] if not isinstance(results[1], Exception) else []
+        # ┌─────────────────────────────────────────────────────────────┐
+        # │  PART 1: Macro Analytics (Sequential Execution)             │
+        # │  - Executing sequentially to avoid GA4 429 Rate Limits      │
+        # └─────────────────────────────────────────────────────────────┘
         
-        tags = results[2] if not isinstance(results[2], Exception) else []
-        users = results[3] if not isinstance(results[3], Exception) else []
-        top_posts = results[4] if not isinstance(results[4], Exception) else []
+        # 1. 핵심 요약
+        summary = await backend_client.get_analytics_summary(7)
+        await asyncio.sleep(0.2)
         
-        fail_7d = results[5] if not isinstance(results[5], Exception) else []
-        success_7d = results[6] if not isinstance(results[6], Exception) else []
-        today_gen_success = results[7] if not isinstance(results[7], Exception) else []
-        today_gen_fail = results[8] if not isinstance(results[8], Exception) else []
-        today_gallery = results[9] if not isinstance(results[9], Exception) else []
+        daily = await backend_client.get_daily_users(14)
+        await asyncio.sleep(0.2)
+
+        # 2. 트렌드 및 유저
+        tags = await backend_client.get_top_tags(7, limit=10)
+        await asyncio.sleep(0.2)
+        
+        users = await backend_client.get_heavy_users(7, limit=5)
+        await asyncio.sleep(0.2)
+        
+        top_posts = await backend_client.get_top_posts(7, limit=3)
+        await asyncio.sleep(0.2)
+
+        # 3. 이벤트 통계
+        fail_7d = await backend_client.get_event_stats("generate_fail", 7)
+        await asyncio.sleep(0.1)
+        
+        success_7d = await backend_client.get_event_stats("generate_success", 7)
+        await asyncio.sleep(0.1)
+        
+        today_gen_success = await backend_client.get_event_stats("generate_success", 1)
+        await asyncio.sleep(0.1)
+        
+        today_gen_fail = await backend_client.get_event_stats("generate_fail", 1)
+        await asyncio.sleep(0.1)
+        
+        today_gallery = await backend_client.get_event_stats("gallery_register_attempt", 1)
 
         # ┌─────────────────────────────────────────────────────────────┐
         # │  PART 2: Micro Logs (Direct MongoDB Access)                 │
