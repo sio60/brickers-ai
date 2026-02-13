@@ -11,6 +11,7 @@ jobs:
   # ============================================
   deploy-ai:
     name: Deploy AI Server
+    needs: [deploy-screenshot]
     runs-on: ubuntu-latest
     steps:
       - name: Deploy AI Server via SSH
@@ -58,6 +59,10 @@ jobs:
             AWS_SQS_PDF_QUEUE_URL=${{ secrets.AWS_SQS_PDF_QUEUE_URL }}
             AWS_SQS_SCREENSHOT_QUEUE_URL=${{ secrets.AWS_SQS_SCREENSHOT_QUEUE_URL }}
             AWS_SQS_ENABLED=true
+
+            # --- Celery (Screenshot Server) ---
+            CELERY_SQS_SCREENSHOT_QUEUE_URL=${{ secrets.CELERY_SQS_SCREENSHOT_QUEUE_URL }}
+            CELERY_SCREENSHOT_ENABLED=true
             SQS_POLL_INTERVAL=5
             SQS_MAX_MESSAGES=1
             SQS_VISIBILITY_TIMEOUT=1800
@@ -220,13 +225,16 @@ jobs:
             S3_PUBLIC_BASE_URL=${{ secrets.S3_PUBLIC_BASE_URL }}
             USE_S3=true
 
-            # --- SQS ---
+            # --- SQS (legacy, fallback) ---
             AWS_SQS_SCREENSHOT_QUEUE_URL=${{ secrets.AWS_SQS_SCREENSHOT_QUEUE_URL }}
             AWS_SQS_ENABLED=true
             SQS_POLL_INTERVAL=5
             SQS_MAX_MESSAGES=1
             SQS_WAIT_TIME=10
             SQS_VISIBILITY_TIMEOUT=300
+
+            # --- Celery (primary) ---
+            CELERY_SQS_SCREENSHOT_QUEUE_URL=${{ secrets.CELERY_SQS_SCREENSHOT_QUEUE_URL }}
 
             # --- Backend ---
             BACKEND_URL=${{ secrets.BACKEND_URL }}

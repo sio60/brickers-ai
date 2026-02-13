@@ -216,7 +216,8 @@ async def _handle_message(message: Dict[str, Any]) -> None:
     except Exception as e:
         _log(f"❌ 메시지 처리 실패 | messageId={message_id} | error={str(e)}")
         _log(traceback.format_exc())
-        _delete_message(receipt_handle)
+        # 실패한 메시지를 삭제하지 않음 → visibility timeout 후 SQS가 자동 재전달
+        _log(f"⚠️ 메시지 삭제하지 않음 (SQS 재전달 대기) | messageId={message_id}")
 
 
 async def process_background_message(body: Dict[str, Any]) -> None:

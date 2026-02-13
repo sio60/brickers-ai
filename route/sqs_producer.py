@@ -186,19 +186,43 @@ async def send_pdf_request_message(
         raise
 
 
+def _get_celery_producer():
+    """Celery producer 모듈 lazy import (없으면 None)"""
+    try:
+        from route.celery_screenshot_producer import (
+            CELERY_ENABLED as _ce,
+            send_screenshot_task,
+            send_background_task,
+        )
+        if _ce:
+            return send_screenshot_task, send_background_task
+    except Exception:
+        pass
+    return None
+
+
 async def send_screenshot_request_message(
     job_id: str,
     ldr_url: str,
     model_name: str,
 ) -> None:
     """
-    스크린샷 생성 요청을 brickers-screenshots-queue로 전송
+    스크린샷 생성 요청 — Celery 우선, raw SQS 폴백
 
     Args:
         job_id: Job ID
         ldr_url: LDR 파일 S3 URL
         model_name: 모델 이름
     """
+    # 1) Celery 경로 시도
+    celery_fns = _get_celery_producer()
+    if celery_fns:
+        send_ss, _ = celery_fns
+        send_ss(job_id, ldr_url, model_name)
+        log(f"✅ [Celery] 스크린샷 태스크 전송 완료 | jobId={job_id}")
+        return
+
+    # 2) raw SQS 폴백
     if not SQS_ENABLED:
         log(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (스크린샷 요청 전송 스킵) | jobId={job_id}")
         return
@@ -207,7 +231,7 @@ async def send_screenshot_request_message(
         log(f"[SQS Producer] ⚠️ AWS_SQS_SCREENSHOT_QUEUE_URL 미설정 (스크린샷 요청 전송 스킵) | jobId={job_id}")
         return
 
-    log(f"📤 [SQS Producer] 스크린샷 요청 메시지 생성 | jobId={job_id}")
+    log(f"📤 [SQS Producer] 스크린샷 요청 메시지 생성 (raw SQS) | jobId={job_id}")
 
     try:
         client = _get_sqs_client()
@@ -237,12 +261,21 @@ async def send_background_request_message(
     subject: str,
 ) -> None:
     """
-    배경 생성 요청을 brickers-screenshots-queue로 전송 (Screenshot Server에서 처리)
+    배경 생성 요청 — Celery 우선, raw SQS 폴백
 
     Args:
         job_id: Job ID
         subject: 배경 생성 주제 (Gemini 프롬프트용)
     """
+    # 1) Celery 경로 시도
+    celery_fns = _get_celery_producer()
+    if celery_fns:
+        _, send_bg = celery_fns
+        send_bg(job_id, subject)
+        log(f"✅ [Celery] 배경 생성 태스크 전송 완료 | jobId={job_id}")
+        return
+
+    # 2) raw SQS 폴백
     if not SQS_ENABLED:
         log(f"[SQS Producer] ⚠️ SQS 비활성화 상태 (배경 요청 전송 스킵) | jobId={job_id}")
         return
@@ -251,7 +284,7 @@ async def send_background_request_message(
         log(f"[SQS Producer] ⚠️ AWS_SQS_SCREENSHOT_QUEUE_URL 미설정 (배경 요청 전송 스킵) | jobId={job_id}")
         return
 
-    log(f"[SQS Producer] 배경 생성 요청 메시지 생성 | jobId={job_id} | subject={subject}")
+    log(f"[SQS Producer] 배경 생성 요청 메시지 생성 (raw SQS) | jobId={job_id} | subject={subject}")
 
     try:
         client = _get_sqs_client()
