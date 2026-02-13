@@ -250,6 +250,8 @@ async def process_kids_request_internal(
             
             with anyio.fail_after(KIDS_TOTAL_TIMEOUT_SEC):
 
+                await _sse("init", "요청을 받았어요. 이미지를 준비하고 있습니다.")
+
                 # 0) S3에서 원본 이미지 다운로드
                 step_start = time.time()
                 _log("\U0001f4cc [STEP 0/5] S3\uc5d0\uc11c \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 \ub2e4\uc6b4\ub85c\ub4dc \uc911...")

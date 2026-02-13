@@ -28,6 +28,8 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
         args = tool_call['args']
         tool_call_id = tool_call['id']
 
+        graph._log("TOOL", f"도구를 활용해 브릭 구조를 조정하고 있어요. ({tool_name})")
+
         # 무한 루프 방지
         if tool_name == last_tool_used:
             consecutive_same_tool += 1
@@ -76,6 +78,7 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             result_content = f"알 수 없는 도구: {tool_name}"
 
         print(f"  결과: {result_content}")
+        graph._log("TOOL", f"조정 결과를 반영하고 있어요. ({result_content[:40]})")
         tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))
 
     return {
