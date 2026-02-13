@@ -58,18 +58,18 @@ async def miner_node(state: AdminAnalystState) -> dict:
             print("   \u26a0\ufe0f [Miner] Full Report Fetch Failed - Proceeding with empty stats")
             full_data = {}  # Empty dict ensures subsequent .get calls return defaults
             
-        summary = full_data.get("summary", {})
-        daily = full_data.get("dailyUsers", [])
-        tags = full_data.get("topTags", [])
-        users = full_data.get("heavyUsers", [])
-        top_posts = full_data.get("topPages", [])
+        summary = full_data.get("summary") or {}
+        daily = full_data.get("dailyUsers") or []
+        tags = full_data.get("topTags") or []
+        users = full_data.get("heavyUsers") or []
+        top_posts = full_data.get("topPages") or []
 
-        event_stats = full_data.get("eventStats", {})
-        fail_7d = event_stats.get("fail_7d", [])
-        success_7d = event_stats.get("success_7d", [])
-        today_gen_success = event_stats.get("success_1d", [])
-        today_gen_fail = event_stats.get("fail_1d", [])
-        today_gallery = event_stats.get("gallery_attempt_1d", [])
+        event_stats = full_data.get("eventStats") or {}
+        fail_7d = event_stats.get("fail_7d") or []
+        success_7d = event_stats.get("success_7d") or []
+        today_gen_success = event_stats.get("success_1d") or []
+        today_gen_fail = event_stats.get("fail_1d") or []
+        today_gallery = event_stats.get("gallery_attempt_1d") or []
 
         # ┌─────────────────────────────────────────────────────────────┐
         # │  PART 2: Micro Logs (Direct MongoDB Access)                 │
@@ -193,8 +193,8 @@ def evaluator_node(state: AdminAnalystState) -> dict:
     """Z-Score 및 DB 품질 지표 기반 이상 탐지."""
     log.info("[Evaluator] 이상 탐지 시작...")
     anomalies: List[Dict[str, Any]] = []
-    metrics = state.get("raw_metrics", {})
-    db_raw = metrics.get("db_raw", {})
+    metrics = state.get("raw_metrics") or {}
+    db_raw = metrics.get("db_raw") or {}
 
     # ┌─────────────────────────────────────────────────────────────┐
     # │  CHECK 1: Macro Analytics Anomalies (DAU, Fail Rare)        │
@@ -232,7 +232,7 @@ def evaluator_node(state: AdminAnalystState) -> dict:
     # ── 1-B. 생성 실패율 급증 ──
     fail_ev = metrics.get("fail_events") or []
     succ_ev = metrics.get("success_events") or []
-    today_failures = metrics.get("today_stats", {}).get("gen_fail", 0)
+    today_failures = (metrics.get("today_stats") or {}).get("gen_fail", 0)
     
     if fail_ev and succ_ev:
         try:
@@ -243,7 +243,7 @@ def evaluator_node(state: AdminAnalystState) -> dict:
             else:
                 recent_fail = sum(fc[-1:]) if fc else 0
             
-            recent_succ = metrics.get("today_stats", {}).get("gen_success", 0)
+            recent_succ = (metrics.get("today_stats") or {}).get("gen_success", 0)
             total = recent_fail + recent_succ
 
             if total > 5:
@@ -553,11 +553,11 @@ async def finalizer_node(state: AdminAnalystState) -> dict:
     """이상 징후 발견 시 LLM으로 유기적인 종합 분석 보고서 생성."""
     log.info("[Finalizer] 종합 보고서 생성 시작...")
 
-    dx = state.get("diagnosis", {})
-    actions = state.get("proposed_actions", [])
-    anomalies = state.get("anomalies", [])
-    mod_results = state.get("moderation_results", [])
-    temporal = state.get("temporal_context", {})
+    dx = state.get("diagnosis") or {}
+    actions = state.get("proposed_actions") or []
+    anomalies = state.get("anomalies") or []
+    mod_results = state.get("moderation_results") or []
+    temporal = state.get("temporal_context") or {}
 
     # 자동 조치 내역 요약
     hidden_count = sum(1 for r in mod_results if r.get("action_taken") == "HIDDEN")
