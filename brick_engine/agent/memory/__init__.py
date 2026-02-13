@@ -1,12 +1,9 @@
 # ============================================================================
-# 통합 메모리 관리 모듈 (호환성 유지 wrapper)
-#
-# 실제 구현은 memory/ 패키지로 분리됨.
-# 기존 import 경로 호환을 위해 re-export.
+# memory 패키지
 # ============================================================================
 
-from .memory.manager import MemoryUtils, memory_manager
-from .memory.builders import (
+from .manager import MemoryUtils, memory_manager
+from .builders import (
     calculate_delta,
     ensure_not_empty,
     build_hypothesis,
