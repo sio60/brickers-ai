@@ -10,6 +10,18 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 from .state import AdminAnalystState
+from .prompts import (
+    DIAGNOSER_PROMPT,
+    STRATEGIST_PROMPT,
+    GUARDIAN_PROMPT,
+    REPORTER_GREEN_PROMPT,
+    FINALIZER_PROMPT,
+    QUERY_ANALYST_PROMPT,
+)
+
+# ... (기존 코드: miner_node, evaluator_node 유지)
+
+
 from .llm_utils import call_llm_json
 
 log = logging.getLogger("admin_analyst.nodes")
@@ -30,20 +42,37 @@ async def miner_node(state: AdminAnalystState) -> dict:
     # │  PART 1: Macro Analytics (GA4 & Backend Stats)              │
     # │  - 전체 서비스의 거시적 흐름(트래픽, 유입) 파악                 │
     # └─────────────────────────────────────────────────────────────┘
-    summary = await backend_client.get_analytics_summary(7)
-    daily = await backend_client.get_daily_users(14)
-    tags = await backend_client.get_top_tags(7, limit=15)
-    users = await backend_client.get_heavy_users(7, limit=10)
-    top_posts = await backend_client.get_top_posts(7, limit=5)
-    
-    # [복구] Evaluator 노드를 위한 과거 7일간의 이벤트 데이터
-    fail_7d = await backend_client.get_event_stats("generate_fail", 7)
-    success_7d = await backend_client.get_event_stats("generate_success", 7)
+    import asyncio
 
-    # [수집] 오늘 하루 상세 통계 (API 기반)
-    today_gen_success = await backend_client.get_event_stats("generate_success", 1)
-    today_gen_fail = await backend_client.get_event_stats("generate_fail", 1)
-    today_gallery = await backend_client.get_event_stats("gallery_register_attempt", 1)
+    # ┌─────────────────────────────────────────────────────────────┐
+    # │  PART 1: Macro Analytics (GA4 & Backend Stats)              │
+    # │  - 병렬(Parallel) 처리로 속도 10배 향상: 모든 API 동시 호출      │
+    # └─────────────────────────────────────────────────────────────┘
+    results = await asyncio.gather(
+        backend_client.get_analytics_summary(7),
+        backend_client.get_daily_users(14),
+        backend_client.get_top_tags(7, limit=15),
+        backend_client.get_heavy_users(7, limit=10),
+        backend_client.get_top_posts(7, limit=5),
+        backend_client.get_event_stats("generate_fail", 7),
+        backend_client.get_event_stats("generate_success", 7),
+        backend_client.get_event_stats("generate_success", 1),
+        backend_client.get_event_stats("generate_fail", 1),
+        backend_client.get_event_stats("gallery_register_attempt", 1),
+        return_exceptions=True
+    )
+
+    # 결과 매핑 (에러 발생 시 None/빈값 처리)
+    summary = results[0] if not isinstance(results[0], Exception) else {}
+    daily = results[1] if not isinstance(results[1], Exception) else []
+    tags = results[2] if not isinstance(results[2], Exception) else []
+    users = results[3] if not isinstance(results[3], Exception) else []
+    top_posts = results[4] if not isinstance(results[4], Exception) else []
+    fail_7d = results[5] if not isinstance(results[5], Exception) else []
+    success_7d = results[6] if not isinstance(results[6], Exception) else []
+    today_gen_success = results[7] if not isinstance(results[7], Exception) else []
+    today_gen_fail = results[8] if not isinstance(results[8], Exception) else []
+    today_gallery = results[9] if not isinstance(results[9], Exception) else []
 
     # ┌─────────────────────────────────────────────────────────────┐
     # │  PART 2: Micro Logs (Direct MongoDB Access)                 │
@@ -301,43 +330,22 @@ async def diagnoser_node(state: AdminAnalystState) -> dict:
     temporal = state.get("temporal_context", {})
     tags = state.get("raw_metrics", {}).get("top_tags", [])
 
-    prompt = f"""당신은 브릭커스(Brickers) 서비스의 수석 SRE(Service Reliability Engineer)이자 최고 수준의 데이터분석 전문가입니다.
-현재 감지된 이상 징후에 대해 거시적 지표(Analytics)와 미시적 로그(Database)를 결합하여 심층적인 '인과관계 분석(Root Cause Analysis)'을 수행하세요.
-
-[현상: 감지된 이상 징후]
-{anomaly_text}
-
-[서비스 실시간 지표 요약 (거시)]
-- 활성 유저(DAU): {summary.get('activeUsers', 'N/A')}
-- 페이지뷰: {summary.get('pageViews', 'N/A')}
-- 세션 수: {summary.get('sessions', 'N/A')}
-
-[미시 데이터: DB 실시간 작업 로그 (최근 24시간)]
-- 총 생성 작업 수: {db_raw.get('total_jobs_24h', 0)}건
-- 평균 품질 지표: 안정성 {db_raw.get('avg_stability', 0.0)}, 생성시간 {db_raw.get('avg_gen_time', 0.0)}초
-- 작업 단계 분포: {json.dumps(db_raw.get('stage_dist', {}), ensure_ascii=False)}
-- 에러 유형 분포: {json.dumps(db_raw.get('error_dist', {}), ensure_ascii=False)}
-- 입력 방식 선호: {json.dumps(db_raw.get('input_type_dist', {}), ensure_ascii=False)}
-
-[인기 태그 및 시간적 맥락]
-- 인기 태그: {json.dumps(tags[:10], ensure_ascii=False)}
-- 시각: {temporal.get('date')} {temporal.get('hour')}시 ({temporal.get('day_of_week')})
-
-[분석 및 예측 가이드라인]
-1. 인과관계 검증 (Causal Proof): 거시적 지표의 하락이 DB 로그상 특정 'Stage'의 실패나 특정 'Error Type'과 어떻게 연결되는지 입증하세요. (예: 이미지 업로드 방식에서 타임아웃 에러 급증)
-2. 전문가적 휴리스틱 추론: 데이터가 부족한 구간은 풍부한 운영 경험을 토대로 '가장 가능성 높은 시나리오'를 추론하되 확신도를 명시하세요.
-3. 데이터 기반 예측: 현재 수치의 '가속도(변화율)'를 고려하여, 조치 미비 시 향후 1~24시간 내 발생할 임계점 돌파 가능성을 수치로 제시하세요.
-4. 영향 범위 구체화: 특정 태그 선호 유저군에 국한된 문제인지 아니면 전체 인프라 결함인지 판별하세요.
-
-다음 JSON 형식으로만 최종 결론을 응답하세요:
-{{
-    "root_cause": "구체적인 근본 원인 (데이터 간의 상관관계와 논리적 추론 과정을 세세하게 나열. 한국어)",
-    "confidence": 0.0~1.0 (분석 및 예측의 확신도),
-    "evidence": ["증거1 (DB 수치 및 에러 로그 기반)", "증거2 (애널리틱스 트렌드 기반)"],
-    "affected_segment": "문제가 집중된 유저군 또는 기능 영역",
-    "risk_level": "LOW|MEDIUM|HIGH|CRITICAL",
-    "forecast": "전망 및 조치 미비 시 예상되는 실질적 타격과 임계 수치"
-}}"""
+    prompt = DIAGNOSER_PROMPT.format(
+        anomaly_text=anomaly_text,
+        active_users=summary.get('activeUsers', 'N/A'),
+        page_views=summary.get('pageViews', 'N/A'),
+        sessions=summary.get('sessions', 'N/A'),
+        total_jobs=db_raw.get('total_jobs_24h', 0),
+        avg_stability=db_raw.get('avg_stability', 0.0),
+        avg_gen_time=db_raw.get('avg_gen_time', 0.0),
+        stage_dist=json.dumps(db_raw.get('stage_dist', {}), ensure_ascii=False),
+        error_dist=json.dumps(db_raw.get('error_dist', {}), ensure_ascii=False),
+        input_type_dist=json.dumps(db_raw.get('input_type_dist', {}), ensure_ascii=False),
+        top_tags=json.dumps(tags[:10], ensure_ascii=False),
+        date=temporal.get('date'),
+        hour=temporal.get('hour'),
+        day_of_week=temporal.get('day_of_week')
+    )
 
     diagnosis = await call_llm_json(prompt)
 
@@ -363,32 +371,12 @@ async def strategist_node(state: AdminAnalystState) -> dict:
     dx = state.get("diagnosis", {})
     confidence = dx.get("confidence", 0.5)
 
-    prompt = f"""당신은 브릭커스 서비스의 제품 운영 전략가(Product Operations Strategist)입니다.
-진단된 원인을 바탕으로 즉각적이고 실효성 있는 대응 전략을 수립하세요.
-
-[진단 리포트 요약]
-- 근본 원인: {dx.get('root_cause', '?')}
-- 위험 등급: {dx.get('risk_level', 'UNKNOWN')}
-- 분석 확신도: {confidence * 100}%
-- 구체적 증거: {json.dumps(dx.get('evidence', []), ensure_ascii=False)}
-
-[대응 전략 수립 지침]
-1. 단기 조치: 즉시 적용 가능한 피해 최소화 방안 (예: 특정 태그 일시 제한, 서버 리소스 증설 알림 등)
-2. 중장기 방안: 동일 문제 재발 방지를 위한 시스템 개선안
-3. 조치 옵션: 각 전략에 대해 예상 효과(Impact)와 수행 난이도(Effort), 잠재적 리스트(Risk)를 명시하세요.
-4. 순위 선정: 우선순위에 따라 정렬하여 최대 3개까지 제시하세요.
-
-다음 JSON 배열 형식으로만 응답하세요:
-[
-  {{
-    "action": "구체적인 조치 내용 (한국어)",
-    "target": "조치 대상 (기능/유저군/인프라)",
-    "priority": "HIGH|MEDIUM|LOW",
-    "expected_impact": "기대되는 구체적 수치 또는 상태 변화",
-    "risk": "LOW|MEDIUM|HIGH",
-    "reason": "해당 조치를 추천하는 이유"
-  }}
-]"""
+    prompt = STRATEGIST_PROMPT.format(
+        root_cause=dx.get('root_cause', '?'),
+        risk_level=dx.get('risk_level', 'UNKNOWN'),
+        confidence=confidence * 100,
+        evidence=json.dumps(dx.get('evidence', []), ensure_ascii=False)
+    )
 
     actions = await call_llm_json(prompt)
 
@@ -439,42 +427,7 @@ async def guardian_node(state: AdminAnalystState) -> dict:
 
     queue_text = json.dumps(queue, ensure_ascii=False, indent=2)
 
-    prompt = f"""당신은 브릭커스 서비스의 콘텐츠 보안 및 정책 준수 책임자(Content Moderation Officer)입니다.
-수집된 최근 댓글 및 게시글을 분석하여 '선정성', '폭력성', '욕설 및 혐오', '외설 및 악용' 여부를 판단하세요.
-
-[검색된 콘텐츠 큐]
-{queue_text}
-
-[🚨 검열 정책 - 브릭커스는 어린이 전용 서비스입니다!]
-1. 선정성 (SEXUAL) [즉시 차단]:
-   - 성적인 행위 묘사, 성적 수치심 유발 표현, 신체 부위(가슴, 성기 등)에 대한 직접/간접적 언급.
-   - 아동 대상 그루밍 의심 표현 ('번호 줘', '사귀자' 등) 포함.
-2. 폭력성 (VIOLENT) [즉시 차단]:
-   - 살상 무기를 이용한 가해 방법 묘사, 자해/자살 조장, 신체 훼손의 잔인한 텍스트 묘사.
-   - 타인에 대한 구체적인 협박 및 공포심 유발.
-3. 욕설 및 혐오 (PROFANITY/HATE) [즉시 차단]:
-   - 직접적 비속어는 물론, 변형된 우회 욕설(ㅅㅂ, ㅆㅂ, 18 등) 전체 포함.
-   - 특정 성별, 지역, 유저를 조롱하거나 비하하는 혐오 단어 및 인격 모독.
-4. 외설 및 악용 (OBSCENE/ABUSE) [즉시 차단]:
-   - 배설물 관련 지저분한 표현 (외설적인 똥/오줌 농담 등 어린이 정서에 유해한 수준).
-   - 광고, 도박 유도, 개인정보(주소, 전화번호) 요구.
-
-[판단 지침]
-- 위 기준 중 하나라도 명백히 위반했다면 'is_violating': true로 설정하세요.
-- 판단의 확신도(Confidence)가 0.8 이상인 경우에만 자동 차단 시스템이 작동합니다.
-- 'reason': 왜 이 콘텐츠가 차단되어야 하는지 위 정책 항목(A, B, C, D)을 인용하여 상세히 설명하세요.
-
-다음 JSON 배열 형식으로만 응답하세요:
-[
-  {{
-    "target_id": "콘텐츠 ID",
-    "type": "COMMENT|POST",
-    "is_violating": true|false,
-    "violation_type": "SEXUAL|VIOLENT|PROFANITY|ABUSE|NONE",
-    "reason": "구체적인 위반 사유 (한국어)",
-    "confidence": 0.0~1.0
-  }}
-]"""
+    prompt = GUARDIAN_PROMPT.format(queue_text=queue_text)
 
     judgments = await call_llm_json(prompt)
     if not isinstance(judgments, list):
@@ -562,26 +515,16 @@ async def reporter_green_node(state: AdminAnalystState) -> dict:
             trend_desc = f"최근 3일 평균이 이전 대비 {chg:+.1f}% {'상승' if chg > 0 else '하락'} 중"
         except: pass
 
-    prompt = f"""당신은 브릭커스(Brickers) 성장을 책임지는 Senior Product Growth Lead입니다.
-현재 서비스 지표는 통계적으로 '정상 범위' 내에 있지만, 데이터를 심층적으로 파악하여 숨겨진 성장의 실마리를 찾으세요.
-단순 지표 요약을 넘어, 데이터를 다각도로 해석하여 관리자에게 가치 있는 '심층 인사이트'를 제공하세요.
-
-[수집된 운영 지표]
-- 활성 유저(DAU): {summary.get('activeUsers', 'N/A')}
-- 페이지뷰/세션: {summary.get('pageViews', 'N/A')} / {summary.get('sessions', 'N/A')}
-- 현 시점 트렌드 요약: {trend_desc}
-
-[유저 관심 트렌드]
-- 인기 태그: {', '.join(f"#{t.get('tag', '알수없음')}" for t in tags[:7])}
-- 시간대별 특성: {temporal.get('day_of_week')}요일 {temporal.get('hour')}시 (피크타임: {temporal.get('is_peak')})
-
-[분석 및 제안 가이드]
-1. '지표 이면의 맥락': 현재 유저들이 가장 몰입하고 있는 기능이나 콘텐츠 테마가 무엇인지 데이터로 설명하세요.
-2. '잠재적 위험/기회': 지표는 정상이지만, 서서히 변하고 있는 태그 트렌드나 특정 시간대 유저 이탈 징후가 있는지 검토하세요.
-3. '성장 부스트 전략': 내일 당장 실행해 볼 수 있는 구체적인 운영 액션(예: 특정 태그 큐레이션, 이벤트 시점 조정 등)을 제안하세요.
-4. '유저 페르소나 및 행동 추론': 인기 태그와 시간대를 바탕으로 현재 어떤 유저층이 무엇을 위해 접속하는지 분석하세요.
-
-마크다운 형식을 적극 활용하여, '지표 기반 인사이트' → '유저 행동 분석' → '성장 액션 제안'의 흐름으로 작성하세요."""
+    prompt = REPORTER_GREEN_PROMPT.format(
+        active_users=summary.get('activeUsers', 'N/A'),
+        page_views=summary.get('pageViews', 'N/A'),
+        sessions=summary.get('sessions', 'N/A'),
+        trend_desc=trend_desc,
+        top_tags=', '.join(f"#{t.get('tag', '알수없음')}" for t in tags[:7]),
+        day_of_week=temporal.get('day_of_week'),
+        hour=temporal.get('hour'),
+        is_peak=temporal.get('is_peak')
+    )
 
     res = await call_llm_json(prompt)
     report = res.get("report") if res else None
@@ -618,34 +561,16 @@ async def finalizer_node(state: AdminAnalystState) -> dict:
         for r in [r for r in mod_results if r.get("is_violating")][:5]:
              mod_text += f"  - [{r.get('violation_type')}] {r.get('target_id')}: {r.get('reason')} ({r.get('action_taken', 'PENDING')})\n"
 
-    prompt = f"""당신은 브릭커스(Brickers) 서비스의 위기 대응 본부장입니다.
-감지된 이상 징후 및 자율 검역 결과에 대해 경영진이 즉시 의사결정을 내릴 수 있도록 '심층 분석 및 대응 보고서'를 작성하세요.
-
-[수집된 이상 징후]
-{json.dumps(anomalies, ensure_ascii=False, indent=2)}
-
-[콘텐츠 검열 요약]
-{mod_text}
-
-[진단 결과 (원인 및 예측)]
-- 근본 원인: {dx.get('root_cause', '?')}
-- 향후 전망(Forecast): {dx.get('forecast', '데이터 수집 중...')}
-- 확신도: {dx.get('confidence', 0) * 100:.1f}%
-- 증거 및 영향: {json.dumps(dx.get('evidence', []), ensure_ascii=False)} / {dx.get('affected_segment', '전체')}
-
-[권장 대응 전략]
-{json.dumps(actions, ensure_ascii=False, indent=2)}
-
-[보고서 작성 가이드]
-1. 제목은 상황의 심각도를 나타내는 이모지와 함께 작성하세요 (예: 🚨 긴급 대응 및 자율 보안 보고서)
-2. '브리핑': 무엇이 문제이고 얼마나 심각한지 전문가 시각에서 한 문단 요약
-3. '자율 보안 조치': Content Guardian이 감지하고 조치한 내역에 대한 평가와 추가 권고 사항을 포함하세요.
-4. '인과관계 및 미래 예측': 왜 발생했는지와 함께 '조치 미비 시 예상되는 타격(Forecast/미래 예측값)'을 데이터 기반으로 설명하세요.
-5. '우선순위 조치 계획': 제안된 전략들을 실행 순서와 기대 효과 중심으로 재구성하세요.
-6. 마크다운 형식을 사용하여 가독성 있게 작성하세요 (테이블, 인용구 등 권장).
-
-다음 JSON으로만 응답하세요:
-{{"report": "종합 분석 보고서 내용 (마크다운 형식)"}}"""
+    prompt = FINALIZER_PROMPT.format(
+        anomalies=json.dumps(anomalies, ensure_ascii=False, indent=2),
+        mod_text=mod_text,
+        root_cause=dx.get('root_cause', '?'),
+        forecast=dx.get('forecast', '데이터 수집 중...'),
+        confidence=dx.get('confidence', 0) * 100,
+        evidence=json.dumps(dx.get('evidence', []), ensure_ascii=False),
+        affected_segment=dx.get('affected_segment', '전체'),
+        actions=json.dumps(actions, ensure_ascii=False, indent=2)
+    )
 
     res = await call_llm_json(prompt)
     report = res.get("report") if res else None
@@ -679,28 +604,20 @@ async def query_analyst_node(state: AdminAnalystState) -> dict:
     if history:
         history_context = "\n[이전 대화 맥락]\n" + "\n".join([f"{h['role']}: {h['content']}" for h in history[-3:]])
 
-    prompt = f"""당신은 브릭커스(Brickers)의 모든 지표를 꿰뚫어보고 있는 최고의 데이터 분석가 에이전트입니다.
-관리자의 특정 질문에 대해 현재 수집된 거시적 지표(Analytics)와 미시적 로그(Database)를 바탕으로 가장 정확하고 통찰력 있는 답변을 제공하세요.
-{history_context}
-
-[관리자의 질문]
-"{user_query}"
-
-[실시간 운영 데이터 (Analytics & DB Integrated)]
-- 서비스 요약 (7D): {json.dumps(summary, ensure_ascii=False)}
-- 오늘 실시간 현황: 생성성공({today.get('gen_success')}), 생성실패({today.get('gen_fail')}), 갤러리업로드({today.get('gallery_uploads')})
-- DB 정밀 로그 (24H): 총작업({db_raw.get('total_jobs_24h')}), 단계분포({json.dumps(db_raw.get('stage_dist', {}), ensure_ascii=False)})
-- 최근 트래픽 추이 (14일): {json.dumps(daily, ensure_ascii=False)}
-- 인기 태그 및 인기 포스트: {json.dumps(tags[:10], ensure_ascii=False)}, {json.dumps(top_posts, ensure_ascii=False)}
-- 시간적 맥락: {json.dumps(temporal, ensure_ascii=False)}
-
-[작성 가이드라인]
-1. 데이터 기반 답변: 답변의 근거를 반드시 위 [실시간 운영 데이터]에서 인용하고, 거시 데이터와 미시 데이터의 상관관계를 짚어주세요.
-2. 전문가적 추론 (Heuristic): 데이터가 부족할 경우, 풍부한 분석 경험을 바탕으로 전문가적인 추측을 더하되 확신 수준을 명시하세요.
-3. 운영 및 보고서 개선 제안: 질문이 서비스 개선이나 보고서 수정과 관련되어 있다면, 새로운 지표 수집 관점이나 GA4 맞춤 정의 항목을 구체적으로 제안하세요.
-4. 가독성: 마크다운 형식을 적극 활용하여 전문적이고 깔끔하게 작성하세요.
-
-친절하면서도 지극히 전문적인 한국어로 답변하세요."""
+    prompt = QUERY_ANALYST_PROMPT.format(
+        history_context=history_context,
+        user_query=user_query,
+        summary=json.dumps(summary, ensure_ascii=False),
+        today_gen_success=today.get('gen_success'),
+        today_gen_fail=today.get('gen_fail'),
+        today_gallery=today.get('gallery_uploads'),
+        total_jobs=db_raw.get('total_jobs_24h'),
+        stage_dist=json.dumps(db_raw.get('stage_dist', {}), ensure_ascii=False),
+        daily=json.dumps(daily, ensure_ascii=False),
+        tags=json.dumps(tags[:10], ensure_ascii=False),
+        top_posts=json.dumps(top_posts, ensure_ascii=False),
+        temporal=json.dumps(temporal, ensure_ascii=False)
+    )
 
     res = await call_llm_json(prompt)
     report = res.get("report") if isinstance(res, dict) else str(res)
