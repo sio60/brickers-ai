@@ -27,3 +27,10 @@ class AdminAnalystState(TypedDict):
     max_iterations: int     # 최대 허용 반복 (기본 3)
     next_action: str        # 다음 노드 결정 키
     final_report: Optional[str]  # 최종 보고서 (마크다운)
+
+    # ─── 🛡️ 검열 (Moderation) ───
+    moderation_queue: List[Dict[str, Any]]   # 검열 대상 콘텐츠 (댓글/게시글)
+    moderation_results: List[Dict[str, Any]] # 검열 및 자동 조치 결과
+    user_query: Optional[str]                # 관리자의 인터랙티브 질문
+    
+    history: List[Dict[str, str]]             # [NEW] 대화 이력 (role, content)
