@@ -204,5 +204,78 @@ async def get_heavy_users(days: int = 30, limit: int = 10) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Heavy Users Fail: {e}")
+        print(f"  \u26a0\ufe0f [BackendClient] Heavy Users Fail: {e}")
+    return None
+
+
+async def get_recent_contents(days: int = 1, limit: int = 50) -> list | None:
+    """백엔드로부터 아직 검열되지 않은 최신 댓글/게시글을 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/moderation/recent",
+                params={"days": days, "limit": limit},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  \u26a0\ufe0f [BackendClient] Recent Contents Fail: {e}")
+    return None
+
+
+async def hide_content(target_type: str, target_id: str, reason: str) -> bool:
+    """부적절한 콘텐츠를 백엔드에서 숨김(삭제) 처리합니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/api/admin/moderation/hide",
+                json={
+                    "type": target_type,
+                    "targetId": target_id,
+                    "reason": reason
+                },
+                headers={"X-Internal-Token": token},
+            )
+            return resp.status_code == 200
+    except Exception as e:
+        print(f"  \u26a0\ufe0f [BackendClient] Hide Content Fail: {e}")
+    return False
+
+
+async def restore_content(target_type: str, target_id: str) -> bool:
+    """숨겨진 콘텐츠를 백엔드에서 다시 복구 처리합니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/api/admin/moderation/restore",
+                json={
+                    "type": target_type,
+                    "targetId": target_id
+                },
+                headers={"X-Internal-Token": token},
+            )
+            return resp.status_code == 200
+    except Exception as e:
+        print(f"  \u26a0\ufe0f [BackendClient] Restore Content Fail: {e}")
+    return False
+
+
+async def get_top_posts(days: int = 7, limit: int = 5) -> list | None:
+    """백엔드로부터 조회수가 높은 인기 게시글 리스트를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/top-posts",
+                params={"days": days, "limit": limit},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  \u26a0\ufe0f [BackendClient] Top Posts Fail: {e}")
     return None

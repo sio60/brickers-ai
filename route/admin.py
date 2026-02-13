@@ -103,11 +103,65 @@ async def deep_analyze():
             "anomalies": result.get("anomalies", []),
             "diagnosis": result.get("diagnosis"),
             "proposed_actions": result.get("proposed_actions", []),
+            "moderation_results": result.get("moderation_results", []), # ✅ [NEW]
             "iteration": result.get("iteration", 0),
         }
     except Exception as e:
         logger.error(f"❌ [Admin] Deep Analysis 실패: {e}")
         raise HTTPException(status_code=500, detail=f"Deep Analysis Failed: {str(e)}")
+ 
+ 
+@router.post("/ai-admin/analytics/query")
+async def query_analytics(body: Dict[str, Any] = Body(...)):
+    """
+    [NEW] 관리자의 자연어 질문에 따른 커스텀 분석 수행.
+    """
+    query = body.get("query")
+    if not query:
+        raise HTTPException(status_code=400, detail="Query is required")
+
+    logger.info(f"💬 [Admin] 인터랙티브 쿼리 요청: {query[:50]}...")
+    
+    try:
+        from admin_analyst.nodes import miner_node, query_analyst_node
+        
+        # 1. 데이터 수집
+        state = await miner_node({"user_query": query})
+        
+        # 2. 질문 기반 분석
+        state["user_query"] = query
+        result = await query_analyst_node(state)
+        
+        return {
+            "status": "success",
+            "answer": result.get("final_report", "답변 생성 실패"),
+        }
+    except Exception as e:
+        logger.error(f"❌ [Admin] Query Analysis 실패: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ai-admin/moderation/restore")
+async def restore_moderated_content(body: Dict[str, Any] = Body(...)):
+    """
+    [NEW] AI가 숨긴 콘텐츠를 관리자가 수동으로 복구.
+    """
+    from service import backend_client
+    target_type = body.get("type")
+    target_id = body.get("targetId")
+
+    if not target_type or not target_id:
+        raise HTTPException(status_code=400, detail="Missing type or targetId")
+
+    logger.info(f"♻️ [Admin] 콘텐츠 복구 시도: {target_type} {target_id}")
+    
+    # backend_client에 restore_content 함수를 미리 만들어두었다고 가정 (또는 추가 예정)
+    success = await backend_client.restore_content(target_type, target_id)
+    
+    if success:
+        return {"status": "success", "message": "Content restored"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to restore content")
 
 class LogResponse(BaseModel):
     container: str
