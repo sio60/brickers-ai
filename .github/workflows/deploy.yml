@@ -245,6 +245,9 @@ jobs:
             NANO_BANANA_MODEL=${{ secrets.NANO_BANANA_MODEL }}
             EOF
 
+            echo "🧹 Stopping old containers..."
+            sudo docker stop brickers-screenshot 2>/dev/null && sudo docker rm brickers-screenshot 2>/dev/null || true
+
             echo "🔨 Building & starting Screenshot Server..."
             sudo docker compose build
             sudo docker compose down --remove-orphans
