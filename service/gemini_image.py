@@ -64,10 +64,18 @@ def _decode_if_base64_image(data: bytes | str) -> bytes:
     return data if isinstance(data, (bytes, bytearray)) else s.encode("utf-8")
 
 
-def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, list[str]]:
+def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, list[str]]:
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if not gemini_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
+
+    lang_instruction = ""
+    if language == "ko":
+        lang_instruction = "\n[IMPORTANT] The SUBJECT and TAGS representing the analysis result MUST be in KOREAN."
+    elif language == "ja":
+        lang_instruction = "\n[IMPORTANT] The SUBJECT and TAGS representing the analysis result MUST be in JAPANESE."
+    
+    final_prompt = PROMPT_NANO_BANANA + lang_instruction
 
     model = os.environ.get("NANO_BANANA_MODEL", "gemini-2.5-flash-image")
     client = genai.Client(api_key=gemini_key)
@@ -75,7 +83,7 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
     resp = client.models.generate_content(
         model=model,
         contents=[
-            {"text": PROMPT_NANO_BANANA},
+            {"text": final_prompt},
             {"inline_data": {"mime_type": mime, "data": img_bytes}},
         ],
         config=genai_types.GenerateContentConfig(response_modalities=["Text", "Image"]),
@@ -142,6 +150,6 @@ def _render_one_image_sync(img_bytes: bytes, mime: str) -> tuple[bytes, str, lis
     return out_bytes, subject, tags
 
 
-async def render_one_image_async(img_bytes: bytes, mime: str) -> tuple[bytes, str, list[str]]:
+async def render_one_image_async(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, list[str]]:
     """Gemini 호출은 동기라서 thread로 래핑"""
-    return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime)
+    return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime, language)
