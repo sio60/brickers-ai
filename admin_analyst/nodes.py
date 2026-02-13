@@ -50,37 +50,26 @@ async def miner_node(state: AdminAnalystState) -> dict:
         # │  - Executing sequentially to avoid GA4 429 Rate Limits      │
         # └─────────────────────────────────────────────────────────────┘
         
-        # 1. 핵심 요약
-        summary = await backend_client.get_analytics_summary(7)
-        await asyncio.sleep(0.2)
+        # 1. 통합 데이터 조회 (Single Aggregated Request)
+        # - GA4 Rate Limit (429) 회피를 위해 한번에 백엔드에서 배치 처리 후 수신
+        full_data = await backend_client.get_full_report(7)
         
-        daily = await backend_client.get_daily_users(14)
-        await asyncio.sleep(0.2)
+        if not full_data:
+            print("   \u26a0\ufe0f [Miner] Full Report Fetch Failed - Proceeding with empty stats")
+            full_data = {}  # Empty dict ensures subsequent .get calls return defaults
+            
+        summary = full_data.get("summary", {})
+        daily = full_data.get("dailyUsers", [])
+        tags = full_data.get("topTags", [])
+        users = full_data.get("heavyUsers", [])
+        top_posts = full_data.get("topPages", [])
 
-        # 2. 트렌드 및 유저
-        tags = await backend_client.get_top_tags(7, limit=10)
-        await asyncio.sleep(0.2)
-        
-        users = await backend_client.get_heavy_users(7, limit=5)
-        await asyncio.sleep(0.2)
-        
-        top_posts = await backend_client.get_top_posts(7, limit=3)
-        await asyncio.sleep(0.2)
-
-        # 3. 이벤트 통계
-        fail_7d = await backend_client.get_event_stats("generate_fail", 7)
-        await asyncio.sleep(0.1)
-        
-        success_7d = await backend_client.get_event_stats("generate_success", 7)
-        await asyncio.sleep(0.1)
-        
-        today_gen_success = await backend_client.get_event_stats("generate_success", 1)
-        await asyncio.sleep(0.1)
-        
-        today_gen_fail = await backend_client.get_event_stats("generate_fail", 1)
-        await asyncio.sleep(0.1)
-        
-        today_gallery = await backend_client.get_event_stats("gallery_register_attempt", 1)
+        event_stats = full_data.get("eventStats", {})
+        fail_7d = event_stats.get("fail_7d", [])
+        success_7d = event_stats.get("success_7d", [])
+        today_gen_success = event_stats.get("success_1d", [])
+        today_gen_fail = event_stats.get("fail_1d", [])
+        today_gallery = event_stats.get("gallery_attempt_1d", [])
 
         # ┌─────────────────────────────────────────────────────────────┐
         # │  PART 2: Micro Logs (Direct MongoDB Access)                 │
