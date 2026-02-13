@@ -287,12 +287,17 @@ async def process_kids_request_internal(
                 await update_job_suggested_tags(job_id, ai_tags)
  
                 # [NEW] 배경 생성 요청 (Screenshot Server로 위임)
-                try:
-                    await send_background_request_message(job_id, final_subject or "lego creation")
-                    background_requested = True
-                    _log(f"배경 생성 요청 전송 완료 | subject={final_subject}")
-                except Exception as bg_err:
-                    _log(f"배경 생성 요청 실패: {bg_err}")
+                for _bg_attempt in range(1, 4):
+                    try:
+                        await send_background_request_message(job_id, final_subject or "lego creation")
+                        background_requested = True
+                        _log(f"배경 생성 요청 전송 완료 | subject={final_subject}")
+                        break
+                    except Exception as bg_err:
+                        _log(f"배경 생성 요청 실패 (시도 {_bg_attempt}/3): {bg_err}")
+                        if _bg_attempt < 3:
+                            import asyncio as _aio
+                            await _aio.sleep(2 ** _bg_attempt)
  
                 # 2) Tripo 3D
                 step_start = time.time()
@@ -538,15 +543,20 @@ async def process_kids_request_internal(
                 except Exception as pdf_err:
                     _log(f"PDF SQS 전송 실패 (파이프라인 계속): {pdf_err}")
 
-                try:
-                    await send_screenshot_request_message(
-                        job_id=job_id,
-                        ldr_url=ldr_url,
-                        model_name=final_subject or "Brickers Model",
-                    )
-                    _log("스크린샷 생성 요청 전송 (brickers-screenshots-queue)")
-                except Exception as ss_err:
-                    _log(f"스크린샷 SQS 전송 실패 (파이프라인 계속): {ss_err}")
+                for _ss_attempt in range(1, 4):
+                    try:
+                        await send_screenshot_request_message(
+                            job_id=job_id,
+                            ldr_url=ldr_url,
+                            model_name=final_subject or "Brickers Model",
+                        )
+                        _log("스크린샷 생성 요청 전송 완료")
+                        break
+                    except Exception as ss_err:
+                        _log(f"스크린샷 전송 실패 (시도 {_ss_attempt}/3): {ss_err}")
+                        if _ss_attempt < 3:
+                            import asyncio as _aio
+                            await _aio.sleep(2 ** _ss_attempt)
 
                 await _sse("complete", "설계가 끝났어요. 결과를 한번 살펴볼까요?")
 

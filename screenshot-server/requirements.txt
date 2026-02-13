@@ -5,3 +5,4 @@ boto3
 httpx==0.28.1
 anyio
 google-genai
+celery>=5.3.0
