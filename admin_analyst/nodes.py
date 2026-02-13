@@ -670,6 +670,7 @@ async def query_analyst_node(state: AdminAnalystState) -> dict:
     daily = metrics.get("daily_users", [])
     tags = metrics.get("top_tags", [])
     today = metrics.get("today_stats", {})
+    db_raw = metrics.get("db_raw", {})
     top_posts = metrics.get("top_posts", [])
     temporal = state.get("temporal_context", {})
 
