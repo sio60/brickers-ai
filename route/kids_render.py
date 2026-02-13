@@ -156,6 +156,7 @@ class KidsProcessRequest(BaseModel):
     budget: Optional[int] = None
     subject: Optional[str] = None
     prompt: Optional[str] = None
+    language: Optional[str] = "en"  # [NEW]
     returnLdrData: bool = False
 
 
@@ -186,6 +187,7 @@ async def process_kids_request_internal(
     budget: Optional[int] = None,
     subject: Optional[str] = None,
     user_email: str = "unknown",
+    language: str = "en", # [NEW]
     external_log_buffer: Optional[list[str]] = None, # [NEW]
 ) -> Dict[str, Any]:
     """
@@ -268,9 +270,9 @@ async def process_kids_request_internal(
 
                 # 1) Gemini 보정
                 step_start = time.time()
-                _log("[STEP 1/5] Gemini 이미지 보정 및 태그 추출 시작...")
+                _log(f"[STEP 1/5] Gemini 이미지 보정 및 태그 추출 시작... (lang={language})")
                 await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
-                corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png")
+                corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png", language=language)
 
                 final_subject = subject or ai_subject
 
@@ -621,6 +623,7 @@ async def process(request: KidsProcessRequest):
             budget=request.budget,
             subject=request.subject,
             user_email=request.userEmail or "unknown",
+            language=request.language or "en",
         )
 
         ldr_data_uri: Optional[str] = None

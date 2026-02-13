@@ -196,6 +196,7 @@ async def _job_worker():
                     source_image_url = body.get("sourceImageUrl")
                     age = body.get("age", "6-7")
                     budget = body.get("budget")
+                    language = body.get("language", "en") # [NEW]
 
                     # 취소 여부 확인 (처리 시작 전)
                     if await check_job_canceled(job_id):
@@ -232,6 +233,7 @@ async def _job_worker():
                     age=age,
                     budget=budget,
                     user_email=user_email,
+                    language=language, # [NEW]
                     external_log_buffer=job_log_buffer, # [NEW]
                 )
 
