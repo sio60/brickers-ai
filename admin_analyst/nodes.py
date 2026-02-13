@@ -44,6 +44,7 @@ async def miner_node(state: AdminAnalystState) -> dict:
     # └─────────────────────────────────────────────────────────────┘
     import asyncio
 
+
     # ┌─────────────────────────────────────────────────────────────┐
     # │  PART 1: Macro Analytics (GA4 & Backend Stats)              │
     # │  - 병렬(Parallel) 처리로 속도 10배 향상: 모든 API 동시 호출      │
@@ -51,9 +52,9 @@ async def miner_node(state: AdminAnalystState) -> dict:
     results = await asyncio.gather(
         backend_client.get_analytics_summary(7),
         backend_client.get_daily_users(14),
-        backend_client.get_top_tags(7, limit=15),
-        backend_client.get_heavy_users(7, limit=10),
-        backend_client.get_top_posts(7, limit=5),
+        backend_client.get_top_tags(7, limit=10),
+        backend_client.get_heavy_users(7, limit=5),
+        backend_client.get_top_posts(7, limit=3),
         backend_client.get_event_stats("generate_fail", 7),
         backend_client.get_event_stats("generate_success", 7),
         backend_client.get_event_stats("generate_success", 1),
@@ -85,10 +86,10 @@ async def miner_node(state: AdminAnalystState) -> dict:
         one_day_ago = datetime.now().timestamp() - 86400
         jobs_col = db["kids_jobs"]
         
-        # 성공했거나 실패한 작업 모두 포함하여 분석 (최대 200건 샘플링)
+        # 성공했거나 실패한 작업 모두 포함하여 분석 (최대 100건 샘플링 - 속도 최적화)
         recent_jobs = list(jobs_col.find({
             "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
-        }).limit(200))
+        }).limit(100))
         
         db_raw["total_jobs_24h"] = len(recent_jobs)
         db_raw["stage_dist"] = {}
@@ -404,8 +405,8 @@ async def content_miner_node(state: AdminAnalystState) -> dict:
     from service import backend_client
     log.info("[ContentMiner] 검열 대상 수집 시작...")
 
-    # 최근 1일 내의 미검열 콘텐츠 최대 50개 수집
-    contents = await backend_client.get_recent_contents(days=1, limit=50)
+    # 최근 1일 내의 미검열 콘텐츠 최대 10개 수집 (속도 최적화)
+    contents = await backend_client.get_recent_contents(days=1, limit=10)
 
     log.info(f"[ContentMiner] 수집 완료: {len(contents or [])}건")
     return {

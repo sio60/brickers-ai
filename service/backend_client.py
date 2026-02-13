@@ -12,7 +12,7 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").rstrip("/")
 async def update_job_stage(job_id: str, stage: str) -> None:
     """Backend에 Job stage 업데이트 (실패해도 무시)"""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             await client.patch(
                 f"{BACKEND_URL}/api/kids/jobs/{job_id}/stage",
                 json={"stage": stage},
@@ -28,7 +28,7 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
     if not tags:
         return
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.patch(
                 f"{BACKEND_URL}/api/kids/jobs/{job_id}/suggested-tags",
                 json={"suggestedTags": tags},
@@ -109,7 +109,7 @@ async def get_analytics_summary(days: int = 7) -> dict | None:
     """백엔드로부터 GA4 요약 데이터(Users, Views, Sessions)를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/analytics/summary",
                 params={"days": days},
@@ -127,7 +127,7 @@ async def get_daily_users(days: int = 30) -> list | None:
     """백엔드로부터 일별 활성 사용자(DAU) 트렌드를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/analytics/daily-users",
                 params={"days": days},
@@ -144,7 +144,7 @@ async def get_event_stats(event_name: str, days: int = 7) -> list | None:
     """특정 이벤트의 발생 통계를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/analytics/event-stats",
                 params={"event": event_name, "days": days},
@@ -161,7 +161,7 @@ async def get_user_activity(user_id: str, days: int = 30) -> list | None:
     """특정 유저의 상호작용(이벤트 발생 내역)을 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/analytics/user-activity",
                 params={"userId": user_id, "days": days},
@@ -178,7 +178,7 @@ async def get_top_tags(days: int = 30, limit: int = 10) -> list | None:
     """백엔드로부터 실시간 인기 태그 순위를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/analytics/top-tags",
                 params={"days": days, "limit": limit},
@@ -195,7 +195,7 @@ async def get_heavy_users(days: int = 30, limit: int = 10) -> list | None:
     """백엔드로부터 활동량이 많은 상위 유저 리스트를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/analytics/heavy-users",
                 params={"days": days, "limit": limit},
@@ -212,7 +212,7 @@ async def get_recent_contents(days: int = 1, limit: int = 50) -> list | None:
     """백엔드로부터 아직 검열되지 않은 최신 댓글/게시글을 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/moderation/recent",
                 params={"days": days, "limit": limit},
@@ -229,7 +229,7 @@ async def hide_content(target_type: str, target_id: str, reason: str) -> bool:
     """부적절한 콘텐츠를 백엔드에서 숨김(삭제) 처리합니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{BACKEND_URL}/api/admin/moderation/hide",
                 json={
@@ -249,7 +249,7 @@ async def restore_content(target_type: str, target_id: str) -> bool:
     """숨겨진 콘텐츠를 백엔드에서 다시 복구 처리합니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{BACKEND_URL}/api/admin/moderation/restore",
                 json={
@@ -268,7 +268,7 @@ async def get_top_posts(days: int = 7, limit: int = 5) -> list | None:
     """백엔드로부터 조회수가 높은 인기 게시글 리스트를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 f"{BACKEND_URL}/api/admin/analytics/top-posts",
                 params={"days": days, "limit": limit},
