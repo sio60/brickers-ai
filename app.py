@@ -108,7 +108,7 @@ def final_debug_no_prefix():
 async def startup():
     """서버 시작 시 초기화"""
     print("=" * 70, flush=True)
-    print("[FastAPI] 🚀 Application Startup", flush=True)
+    print("[FastAPI] Application Startup", flush=True)
     print("=" * 70, flush=True)
 
     # --- OpenAI/Gemini HTTP 클라이언트 초기화 ---
@@ -119,7 +119,7 @@ async def startup():
     base_url = "https://api.openai.com/v1/" if openai_key else "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     if not api_key:
-        print("⚠️ [Warn] OPENAI_API_KEY/GEMINI_API_KEY 둘 다 없음. 챗봇 기능 비활성화.", flush=True)
+        print("[Warn] OPENAI_API_KEY/GEMINI_API_KEY 둘 다 없음. 챗봇 기능 비활성화.", flush=True)
         app.state.openai_http = None
         app.state.chat_service = None
     else:
