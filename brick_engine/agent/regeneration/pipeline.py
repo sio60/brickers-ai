@@ -164,9 +164,11 @@ def regeneration_loop(
         evolver_result = run_evolver_subprocess(output_ldr_path, glb_path)
         if evolver_result.get("success"):
             print("[Evolver] ✅ 형태 개선 완료")
+            _log("EVOLVE", "형태 개선이 완료됐어요. 최종 검토에 들어갈게요.")
         else:
             reason = evolver_result.get("reason", "unknown")
             print(f"[Evolver] ⚠️ 형태 개선 스킵: {reason}")
+            _log("EVOLVE", "형태 개선을 건너뛰고 다음 단계로 넘어갈게요.")
     else:
         print(f"[DEBUG] ❌ LDR File MISSING before Evolver: {output_ldr_path}")
 

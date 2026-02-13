@@ -35,145 +35,172 @@ async def miner_node(state: AdminAnalystState) -> dict:
     from service import backend_client
     from db import get_db
     import config
-
-    log.info("[Miner] 통합 데이터 수집 시작 (Analytics + DB)...")
-
-    # ┌─────────────────────────────────────────────────────────────┐
-    # │  PART 1: Macro Analytics (GA4 & Backend Stats)              │
-    # │  - 전체 서비스의 거시적 흐름(트래픽, 유입) 파악                 │
-    # └─────────────────────────────────────────────────────────────┘
     import asyncio
 
-
-    # ┌─────────────────────────────────────────────────────────────┐
-    # │  PART 1: Macro Analytics (GA4 & Backend Stats)              │
-    # │  - 병렬(Parallel) 처리로 속도 10배 향상: 모든 API 동시 호출      │
-    # └─────────────────────────────────────────────────────────────┘
-    results = await asyncio.gather(
-        backend_client.get_analytics_summary(7),
-        backend_client.get_daily_users(14),
-        backend_client.get_top_tags(7, limit=10),
-        backend_client.get_heavy_users(7, limit=5),
-        backend_client.get_top_posts(7, limit=3),
-        backend_client.get_event_stats("generate_fail", 7),
-        backend_client.get_event_stats("generate_success", 7),
-        backend_client.get_event_stats("generate_success", 1),
-        backend_client.get_event_stats("generate_fail", 1),
-        backend_client.get_event_stats("gallery_register_attempt", 1),
-        return_exceptions=True
-    )
-
-    # 결과 매핑 (에러 발생 시 None/빈값 처리)
-    summary = results[0] if not isinstance(results[0], Exception) else {}
-    daily = results[1] if not isinstance(results[1], Exception) else []
-    tags = results[2] if not isinstance(results[2], Exception) else []
-    users = results[3] if not isinstance(results[3], Exception) else []
-    top_posts = results[4] if not isinstance(results[4], Exception) else []
-    fail_7d = results[5] if not isinstance(results[5], Exception) else []
-    success_7d = results[6] if not isinstance(results[6], Exception) else []
-    today_gen_success = results[7] if not isinstance(results[7], Exception) else []
-    today_gen_fail = results[8] if not isinstance(results[8], Exception) else []
-    today_gallery = results[9] if not isinstance(results[9], Exception) else []
-
-    # ┌─────────────────────────────────────────────────────────────┐
-    # │  PART 2: Micro Logs (Direct MongoDB Access)                 │
-    # │  - 개별 작업의 구체적 상태, 품질, 에러 등 미시적 데이터 파악      │
-    # └─────────────────────────────────────────────────────────────┘
-    db_raw = {}
+    log.info("[Miner] 통합 데이터 수집 시작 (Analytics + DB)...")
+    
     try:
-        db = get_db()
-        # 최근 24시간 내 생성된 작업들의 원본 상태 요약
-        one_day_ago = datetime.now().timestamp() - 86400
-        jobs_col = db["kids_jobs"]
+        # ┌─────────────────────────────────────────────────────────────┐
+        # │  PART 1: Macro Analytics (GA4 & Backend Stats)              │
+        # │  - [Fix] Rate Limiting (429) 방지를 위한 배치 처리            │
+        # └─────────────────────────────────────────────────────────────┘
         
-        # 성공했거나 실패한 작업 모두 포함하여 분석 (최대 100건 샘플링 - 속도 최적화)
-        recent_jobs = list(jobs_col.find({
-            "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
-        }).limit(100))
+        # Batch 1: 핵심 요약 (가장 중요)
+        b1 = await asyncio.gather(
+            backend_client.get_analytics_summary(7),
+            backend_client.get_daily_users(14),
+            return_exceptions=True
+        )
+        await asyncio.sleep(0.5) # Rate Limit 완화
+
+        # Batch 2: 트렌드 및 유저 (중요도 높음)
+        b2 = await asyncio.gather(
+            backend_client.get_top_tags(7, limit=10),
+            backend_client.get_heavy_users(7, limit=5),
+            backend_client.get_top_posts(7, limit=3),
+            return_exceptions=True
+        )
+        await asyncio.sleep(0.5)
+
+        # Batch 3: 이벤트 통계 (보조 지표)
+        b3 = await asyncio.gather(
+            backend_client.get_event_stats("generate_fail", 7),
+            backend_client.get_event_stats("generate_success", 7),
+            backend_client.get_event_stats("generate_success", 1),
+            backend_client.get_event_stats("generate_fail", 1),
+            backend_client.get_event_stats("gallery_register_attempt", 1),
+            return_exceptions=True
+        )
+
+        results = b1 + b2 + b3
+
+        # 결과 매핑 (에러 발생 시 None/빈값 처리)
+        summary = results[0] if not isinstance(results[0], Exception) else {}
+        daily = results[1] if not isinstance(results[1], Exception) else []
         
-        db_raw["total_jobs_24h"] = len(recent_jobs)
-        db_raw["stage_dist"] = {}
+        tags = results[2] if not isinstance(results[2], Exception) else []
+        users = results[3] if not isinstance(results[3], Exception) else []
+        top_posts = results[4] if not isinstance(results[4], Exception) else []
         
-        # [NEW] 미시적 품질 지표 계산 (Custom Definitions 대체/보완)
-        stability_scores = []
-        gen_times = []
-        brick_counts = []
-        error_dist = {}
-        input_type_dist = {}
-        
-        for j in recent_jobs:
-            st = j.get("stage", "UNKNOWN")
-            db_raw["stage_dist"][st] = db_raw["stage_dist"].get(st, 0) + 1
+        fail_7d = results[5] if not isinstance(results[5], Exception) else []
+        success_7d = results[6] if not isinstance(results[6], Exception) else []
+        today_gen_success = results[7] if not isinstance(results[7], Exception) else []
+        today_gen_fail = results[8] if not isinstance(results[8], Exception) else []
+        today_gallery = results[9] if not isinstance(results[9], Exception) else []
+
+        # ┌─────────────────────────────────────────────────────────────┐
+        # │  PART 2: Micro Logs (Direct MongoDB Access)                 │
+        # │  - 개별 작업의 구체적 상태, 품질, 에러 등 미시적 데이터 파악      │
+        # └─────────────────────────────────────────────────────────────┘
+        db_raw = {}
+        try:
+            db = get_db()
+            # 최근 24시간 내 생성된 작업들의 원본 상태 요약
+            one_day_ago = datetime.now().timestamp() - 86400
+            jobs_col = db["kids_jobs"]
             
-            # 안정성 점수 (result.stabilityScore)
-            if j.get("result") and "stabilityScore" in j["result"]:
-                stability_scores.append(j["result"]["stabilityScore"])
+            # 성공했거나 실패한 작업 모두 포함하여 분석 (최대 100건 샘플링 - 속도 최적화)
+            recent_jobs = list(jobs_col.find({
+                "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
+            }).limit(100))
+            
+            db_raw["total_jobs_24h"] = len(recent_jobs)
+            db_raw["stage_dist"] = {}
+            
+            # [NEW] 미시적 품질 지표 계산 (Custom Definitions 대체/보완)
+            stability_scores = []
+            gen_times = []
+            brick_counts = []
+            error_dist = {}
+            input_type_dist = {}
+            
+            for j in recent_jobs:
+                st = j.get("stage", "UNKNOWN")
+                db_raw["stage_dist"][st] = db_raw["stage_dist"].get(st, 0) + 1
                 
-            # 생성 소요 시간 (endedAt - startedAt)
-            if j.get("startedAt") and j.get("endedAt"):
-                try:
-                    dur = (j["endedAt"] - j["startedAt"]).total_seconds()
-                    if 0 < dur < 600: # 10분 이상은 이상치 제외
-                        gen_times.append(dur)
-                except: pass
+                # 안정성 점수 (result.stabilityScore)
+                if j.get("result") and "stabilityScore" in j["result"]:
+                    stability_scores.append(j["result"]["stabilityScore"])
+                    
+                # 생성 소요 시간 (endedAt - startedAt)
+                if j.get("startedAt") and j.get("endedAt"):
+                    try:
+                        dur = (j["endedAt"] - j["startedAt"]).total_seconds()
+                        if 0 < dur < 600: # 10분 이상은 이상치 제외
+                            gen_times.append(dur)
+                    except: pass
+                    
+                # 브릭 개수 (result.brickCount)
+                if j.get("result") and "brickCount" in j["result"]:
+                    brick_counts.append(j["result"]["brickCount"])
                 
-            # 브릭 개수 (result.brickCount)
-            if j.get("result") and "brickCount" in j["result"]:
-                brick_counts.append(j["result"]["brickCount"])
-            
-            # 에러 유형 분포 (실패 원인 분석용)
-            if j.get("error"):
-                # 에러 메시지나 코드를 단순화해서 카운팅
-                err_msg = str(j["error"])[:50] 
-                error_dist[err_msg] = error_dist.get(err_msg, 0) + 1
-            
-            # 입력 방식 선호도 (Text Prompt vs Image Upload)
-            inp = j.get("inputType", "unknown")
-            input_type_dist[inp] = input_type_dist.get(inp, 0) + 1
+                # 에러 유형 분포 (실패 원인 분석용)
+                if j.get("error"):
+                    # 에러 메시지나 코드를 단순화해서 카운팅
+                    err_msg = str(j["error"])[:50] 
+                    error_dist[err_msg] = error_dist.get(err_msg, 0) + 1
+                
+                # 입력 방식 선호도 (Text Prompt vs Image Upload)
+                inp = j.get("inputType", "unknown")
+                input_type_dist[inp] = input_type_dist.get(inp, 0) + 1
 
-        # 평균값 및 분포 산출
-        db_raw["avg_stability"] = round(sum(stability_scores) / len(stability_scores), 2) if stability_scores else 0.0
-        db_raw["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 0.0
-        db_raw["avg_brick_count"] = int(sum(brick_counts) / len(brick_counts)) if brick_counts else 0
-        db_raw["error_dist"] = error_dist
-        db_raw["input_type_dist"] = input_type_dist
-            
-        log.info(f"[Miner] DB 데이터 수집 완료: Jobs={len(recent_jobs)} (AvgStability={db_raw['avg_stability']})")
-    except Exception as e:
-        log.warning(f"[Miner] DB 수집 중 오류 (무시하고 진행): {e}")
+            # 평균값 및 분포 산출
+            db_raw["avg_stability"] = round(sum(stability_scores) / len(stability_scores), 2) if stability_scores else 0.0
+            db_raw["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 0.0
+            db_raw["avg_brick_count"] = int(sum(brick_counts) / len(brick_counts)) if brick_counts else 0
+            db_raw["error_dist"] = error_dist
+            db_raw["input_type_dist"] = input_type_dist
+                
+            log.info(f"[Miner] DB 데이터 수집 완료: Jobs={len(recent_jobs)} (AvgStability={db_raw['avg_stability']})")
+        except Exception as e:
+            log.warning(f"[Miner] DB 수집 중 오류 (무시하고 진행): {e}")
 
-    now = datetime.now()
-    temporal = {
-        "day_of_week": now.strftime("%a"),
-        "is_weekend": now.weekday() >= 5,
-        "hour": now.hour,
-        "is_peak": 19 <= now.hour <= 23,
-        "date": now.strftime("%Y-%m-%d"),
-    }
+        now = datetime.now()
+        temporal = {
+            "day_of_week": now.strftime("%a"),
+            "is_weekend": now.weekday() >= 5,
+            "hour": now.hour,
+            "is_peak": 19 <= now.hour <= 23,
+            "date": now.strftime("%Y-%m-%d"),
+        }
 
-    log.info(f"[Miner] 수집 완료: summary={bool(summary)}, db_raw={bool(db_raw)}, today_gen={bool(today_gen_success)}")
+        log.info(f"[Miner] 수집 완료: summary={bool(summary)}, db_raw={bool(db_raw)}, today_gen={bool(today_gen_success)}")
 
-    return {
-        "raw_metrics": {
-            "summary": summary or {},
-            "daily_users": daily or [],
-            "top_tags": tags or [],
-            "heavy_users": users or [],
-            "fail_events": fail_7d or [],       # [복구] Evaluator용
-            "success_events": success_7d or [], # [복구] Evaluator용
-            "db_raw": db_raw,
-            "today_stats": {
-                "gen_success": sum(e.get("count", 0) for e in (today_gen_success or [])),
-                "gen_fail": sum(e.get("count", 0) for e in (today_gen_fail or [])),
-                "gallery_uploads": sum(e.get("count", 0) for e in (today_gallery or [])),
+        return {
+            "raw_metrics": {
+                "summary": summary or {},
+                "daily_users": daily or [],
+                "top_tags": tags or [],
+                "heavy_users": users or [],
+                "fail_events": fail_7d or [],       # [복구] Evaluator용
+                "success_events": success_7d or [], # [복구] Evaluator용
+                "db_raw": db_raw,
+                "today_stats": {
+                    "gen_success": sum(e.get("count", 0) for e in (today_gen_success or [])),
+                    "gen_fail": sum(e.get("count", 0) for e in (today_gen_fail or [])),
+                    "gallery_uploads": sum(e.get("count", 0) for e in (today_gallery or [])),
+                },
+                "top_posts": top_posts or [],
             },
-            "top_posts": top_posts or [],
-        },
-        "temporal_context": temporal,
-        "moderation_queue": [],
-        "moderation_results": [],
-        "next_action": "evaluate",
-    }
+            "temporal_context": temporal,
+            "moderation_queue": [],
+            "moderation_results": [],
+            "next_action": "evaluate",
+        }
+
+    except Exception as e:
+        log.error(f"[Miner] CRITICAL FAILURE: {e}", exc_info=True)
+        return {
+            "raw_metrics": {}, 
+            "temporal_context": {
+                "day_of_week": datetime.now().strftime("%a"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "hour": datetime.now().hour
+            },
+            "anomalies": [],
+            "next_action": "end", 
+            "final_report": f"## 🚨 시스템 오류 발생\n\n데이터 수집 중 치명적인 오류가 발생했습니다.\n- Error: `{str(e)}`\n- 로그를 확인해주세요."
+        }
 
 
 # ═══════════════════════════════════════════════════════════════

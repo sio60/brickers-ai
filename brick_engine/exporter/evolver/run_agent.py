@@ -24,9 +24,9 @@ from agent.tools import get_model_state, analyze_glb  # noqa: E402
 from agent.config import init_config  # noqa: E402
 
 # Memory Utils Import
-# Memory Utils Import
-import config  # This registers AGENT_DIR in sys.path
-from memory_utils import memory_manager, build_hypothesis, build_experiment, build_verification, build_improvement
+import config  # This registers AGENT_DIR (brick_engine/agent/) in sys.path
+from memory.manager import memory_manager
+from memory.builders import build_hypothesis, build_experiment, build_verification, build_improvement
 
 def run_agent(ldr_path: str, glb_path: str = None):
     # ... (print headers) ...
