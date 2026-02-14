@@ -72,8 +72,14 @@ class RegenerationGraph:
                             "content": m.content if hasattr(m, 'content') else str(m)
                         } for m in v[-5:] # 최근 5개 메시지만
                     ]
-                elif k in ['hypothesis_maker']: # 직렬화 불가능한 객체 제외
+                elif k in ['hypothesis_maker', 'verifier']: # 직렬화 불가능한 객체 제외
                     continue
+                elif k in ['verification_raw_result', 'floating_bricks_ids', 'floating_ids', 'fallen_ids']:
+                    # 수백 개의 브릭 데이터는 요약정보만 표시 (가독성 보호)
+                    count = len(v) if isinstance(v, list) else (len(v.get('issues', [])) if isinstance(v, dict) else 0)
+                    clean_state[k] = f"[Filtered: {count} items for readability]"
+                elif isinstance(v, list) and len(v) > 20: # 너무 긴 리스트는 잘라냄
+                    clean_state[k] = [serialize_state(x) for x in v[:20]] + [f"... and {len(v)-20} more"]
                 elif isinstance(v, (str, int, float, bool, list, dict)) or v is None:
                     clean_state[k] = v
                 else:
