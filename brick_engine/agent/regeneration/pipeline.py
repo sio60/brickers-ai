@@ -148,6 +148,7 @@ async def regeneration_loop(
         round_count=0,
         internal_score=0,
         debate_history=[],
+        merged=False,
         next_action="generate"
     )
 
