@@ -95,6 +95,17 @@ async def deep_analyze():
 
         result = await analyst_graph.ainvoke(initial_state)
 
+        logger.info(f"🔍 [Admin] Deep Analysis Result Type: {type(result)}")
+        logger.info(f"🔍 [Admin] Deep Analysis Result Content: {str(result)[:500]}")
+
+        # If result is a list, try to get the last element (state)
+        if isinstance(result, list):
+             logger.warning("⚠️ [Admin] Result is a list, using the last element as state.")
+             if result:
+                 result = result[-1]
+             else:
+                 result = {}
+
         logger.info(f"✅ [Admin] Deep Analysis 완료 (risk={result.get('risk_score', 0)})")
         return {
             "status": "success",
