@@ -63,3 +63,28 @@ async def call_llm_json(prompt: str):
     except Exception as e:
         log.error(f"[LLM] 호출 실패: {e}")
         return None
+
+
+async def call_llm_text(prompt: str) -> str | None:
+    """
+    LLM을 호출하고 텍스트 응답을 반환합니다. (JSON 파싱 X)
+    """
+    client = get_llm_client()
+    if not client:
+        log.warning("[LLM] 클라이언트 미설정 — LLM 호출 불가")
+        return None
+
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7, 
+    }
+
+    try:
+        resp = await client.post("chat/completions", json=body)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        log.error(f"[LLM] 텍스트 호출 실패: {e}")
+        return None
