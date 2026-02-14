@@ -90,7 +90,10 @@ def regeneration_loop(
 
     _log("ANALYZE", "입력 이미지를 구조 관점에서 다시 해석하고 있어요.")
 
-    graph_builder = RegenerationGraph(llm_client, log_callback=log_callback)
+    # job_id 추출
+    job_id = params.get("job_id", "offline") if params else "offline"
+
+    graph_builder = RegenerationGraph(llm_client, log_callback=log_callback, job_id=job_id)
     app = graph_builder.build()
 
     system_msg = SystemMessage(content=graph_builder.SYSTEM_PROMPT)
