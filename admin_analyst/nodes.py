@@ -37,40 +37,48 @@ async def miner_node(state: AdminAnalystState) -> dict:
     from service.backend_client import get_full_report, get_product_intelligence
     from db import get_db
 
-    log.info("⛏️ [Miner] 데이터 수집 시작 (Analytics + MongoDB)...")
+    log.info("⛏️ [Miner] 통합 데이터 수집 및 정밀 분석 시작...")
     
     try:
-        # 1. Macro Analytics 병렬 수집 (GA4 기반)
+        # 1. Macro Analytics 병렬 수집 (GA4 기반 - 배치 요청)
         full_report_task = get_full_report(days=7)
         product_intel_task = get_product_intelligence(days=14)
         
-        # 2. Micro Logs 수집 (Direct MongoDB - Ground Truth)
+        # 2. Micro Logs 정밀 분석 (Direct MongoDB - Ground Truth)
         db = get_db()
         one_day_ago = datetime.now().timestamp() - 86400
         jobs_col = db["kids_jobs"]
         
-        # 가벼운 쿼리를 위해 최근 100건만 샘플링
+        # 최근 24시간 샘플링
         recent_jobs = list(jobs_col.find({
             "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
         }).sort("createdAt", -1).limit(100))
 
-        # 세부 품질 지표 계산
         db_raw = {
             "total_jobs_24h": len(recent_jobs),
             "avg_stability": 0.0,
             "avg_gen_time": 0.0,
             "avg_brick_count": 0,
             "error_dist": {},
-            "stage_dist": {}
+            "stage_dist": {},
+            "input_type_dist": {"Text Prompt": 0, "Image Upload": 0}
         }
 
         if recent_jobs:
             stabilities = [j["result"]["stabilityScore"] for j in recent_jobs if j.get("result", {}).get("stabilityScore")]
             gen_times = []
+            brick_counts = []
             for j in recent_jobs:
                 if j.get("startedAt") and j.get("endedAt"):
                     dur = (j["endedAt"] - j["startedAt"]).total_seconds()
                     if 0 < dur < 600: gen_times.append(dur)
+                
+                # 브릭 개수 및 입력 방식 통계
+                if j.get("result", {}).get("brickCount"):
+                    brick_counts.append(j["result"]["brickCount"])
+                
+                inp = j.get("inputType", "Text Prompt")
+                db_raw["input_type_dist"][inp] = db_raw["input_type_dist"].get(inp, 0) + 1
                 
                 # 에러 및 스테이지 분포
                 stage = j.get("stage", "UNKNOWN")
@@ -81,31 +89,49 @@ async def miner_node(state: AdminAnalystState) -> dict:
 
             db_raw["avg_stability"] = round(sum(stabilities) / len(stabilities), 2) if stabilities else 0.82
             db_raw["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 45.0
+            db_raw["avg_brick_count"] = int(sum(brick_counts) / len(brick_counts)) if brick_counts else 120
             
         # 3. 비동기 작업 대기 및 결과 병합
         full_report, product_intel = await asyncio.gather(full_report_task, product_intel_task)
         
         raw_data = full_report or {}
+        event_stats = raw_data.get("eventStats", {})
+        
         raw_metrics = {
             "summary": raw_data.get("summary", {}),
             "daily_users": raw_data.get("dailyUsers", []),
             "top_tags": raw_data.get("topTags", []),
             "heavy_users": raw_data.get("heavyUsers", []),
-            "event_stats": raw_data.get("eventStats", {}),
+            "event_stats": event_stats,
+            "top_posts": raw_data.get("topPages", []), # Diagnoser/Reporting용
             "product_intelligence": product_intel or {},
             "db_raw": db_raw,
             "today_stats": {
-                "gen_success": sum(e.get("count", 0) for e in (raw_data.get("eventStats", {}).get("success_1d") or [])),
-                "gen_fail": sum(e.get("count", 0) for e in (raw_data.get("eventStats", {}).get("fail_1d") or [])),
+                "gen_success": sum(e.get("count", 0) for e in (event_stats.get("success_1d") or [])),
+                "gen_fail": sum(e.get("count", 0) for e in (event_stats.get("fail_1d") or [])),
+                "gallery_uploads": sum(e.get("count", 0) for e in (event_stats.get("gallery_attempt_1d") or [])),
             }
         }
 
+        now = datetime.now()
         return {
             "raw_metrics": raw_metrics,
             "temporal_context": {
-                "now": datetime.now().isoformat(),
-                "weekday": datetime.now().strftime("%A"),
+                "now": now.isoformat(),
+                "date": now.strftime("%Y-%m-%d"),
+                "hour": now.hour,
+                "day_of_week": now.strftime("%A"),
+                "weekday": now.strftime("%A"), # 호환성 유지
+                "is_peak": 19 <= now.hour <= 23
             },
+            "next_action": "evaluate"
+        }
+
+    except Exception as e:
+        log.error(f"⛏️ [Miner] 데이터 수집 중 치명적 실패: {e}", exc_info=True)
+        return {
+            "raw_metrics": {},
+            "temporal_context": {"now": datetime.now().isoformat()},
             "next_action": "evaluate"
         }
 
