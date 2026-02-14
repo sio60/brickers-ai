@@ -478,18 +478,16 @@ async def process_kids_request_internal(
                     regen_params["log_callback"] = make_agent_log_sender(job_id)
                     regen_params["job_id"] = job_id # [NEW] Trace용
 
-                    def run_coscientist():
-                        return regen_loop_fn(
-                            glb_path=str(glb_path),
-                            output_ldr_path=str(out_ldr),
-                            subject_name=final_subject or "Unknown Object",
-                            llm_client=gemini_cls(),
-                            max_retries=1,
-                            acceptable_failure_ratio=0.1,
-                            params=regen_params,
-                        )
-
-                    final_state = await anyio.to_thread.run_sync(run_coscientist)
+                    # [ASYNC CHANGE] Direct await
+                    final_state = await regen_loop_fn(
+                        glb_path=str(glb_path),
+                        output_ldr_path=str(out_ldr),
+                        subject_name=final_subject or "Unknown Object",
+                        llm_client=gemini_cls(),
+                        max_retries=1,
+                        acceptable_failure_ratio=0.1,
+                        params=regen_params,
+                    )
 
                     # 결과 추출
                     report = final_state.get('final_report', {})

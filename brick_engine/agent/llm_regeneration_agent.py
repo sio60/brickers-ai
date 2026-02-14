@@ -36,10 +36,11 @@ if __name__ == "__main__":
 
     client = GeminiClient(api_key=args.api_key)
 
-    regeneration_loop(
+    import asyncio
+    asyncio.run(regeneration_loop(
         args.glb,
         args.out,
         llm_client=client,
         max_retries=args.max_retries,
         gui=args.gui
-    )
+    ))
