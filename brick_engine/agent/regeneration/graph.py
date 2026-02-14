@@ -56,13 +56,31 @@ class RegenerationGraph:
         from service.backend_client import send_agent_trace
 
         start_ts = time.time()
-        # Input snapshot (lite version)
-        input_snap = {
-            "attempts": state.get("attempts"),
-            "next_action": state.get("next_action"),
-            "params": state.get("params", {}),
-            # "messages": [m.content[:50] + "..." for m in state.get("messages", [])] # Too heavy?
-        }
+        # Input snapshot (Enriched for Admin UI)
+        def serialize_state(s):
+            """에이전트 상태를 JSON 직렬화 가능한 형태로 변환"""
+            if not isinstance(s, dict):
+                return str(s)
+            
+            clean_state = {}
+            for k, v in s.items():
+                if k == 'messages':
+                    # 메시지 내역을 읽기 쉬운 포맷으로 변환
+                    clean_state[k] = [
+                        {
+                            "role": "assistant" if "AI" in str(type(m)) else ("user" if "Human" in str(type(m)) else "system"),
+                            "content": m.content if hasattr(m, 'content') else str(m)
+                        } for m in v[-5:] # 최근 5개 메시지만
+                    ]
+                elif k in ['hypothesis_maker']: # 직렬화 불가능한 객체 제외
+                    continue
+                elif isinstance(v, (str, int, float, bool, list, dict)) or v is None:
+                    clean_state[k] = v
+                else:
+                    clean_state[k] = str(v)
+            return clean_state
+
+        input_snap = serialize_state(state)
         
         status = "SUCCESS"
         output_snap = {}
@@ -75,7 +93,7 @@ class RegenerationGraph:
                 # Run sync node in thread to avoid blocking loop
                 result = await anyio.to_thread.run_sync(func, self, state)
             
-            output_snap = result if isinstance(result, dict) else {"result": str(result)}
+            output_snap = serialize_state(result) if isinstance(result, dict) else {"result": str(result)}
             return result
         
         except Exception as e:
