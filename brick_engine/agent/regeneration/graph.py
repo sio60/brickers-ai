@@ -27,7 +27,7 @@ class RegenerationGraph:
 
     SYSTEM_PROMPT = SYSTEM_PROMPT
 
-    def __init__(self, llm_client: Optional[BaseLLMClient] = None, log_callback=None):
+    def __init__(self, llm_client: Optional[BaseLLMClient] = None, log_callback=None, job_id: str = "offline"):
         self.gemini_client = GeminiClient()
         self.default_client = llm_client if llm_client else self.gemini_client
         self.hypothesis_maker = HypothesisMaker(memory_manager, self.gemini_client)
@@ -37,6 +37,7 @@ class RegenerationGraph:
 
         # SSE 로그 콜백 (Kids 모드용)
         self._log_callback = log_callback
+        self.job_id = job_id 
         self.verifier = None
 
     def _log(self, step: str, message: str):
@@ -47,30 +48,80 @@ class RegenerationGraph:
             except Exception:
                 pass
 
+    async def _trace(self, node_name: str, func, state):
+        """노드 실행 트레이싱 래퍼"""
+        import time
+        import anyio
+        import asyncio
+        from service.backend_client import send_agent_trace
+
+        start_ts = time.time()
+        # Input snapshot (lite version)
+        input_snap = {
+            "attempts": state.get("attempts"),
+            "next_action": state.get("next_action"),
+            "params": state.get("params", {}),
+            # "messages": [m.content[:50] + "..." for m in state.get("messages", [])] # Too heavy?
+        }
+        
+        status = "SUCCESS"
+        output_snap = {}
+        
+        try:
+            # Sync vs Async Check
+            if asyncio.iscoroutinefunction(func):
+                result = await func(self, state)
+            else:
+                # Run sync node in thread to avoid blocking loop
+                result = await anyio.to_thread.run_sync(func, self, state)
+            
+            output_snap = result if isinstance(result, dict) else {"result": str(result)}
+            return result
+        
+        except Exception as e:
+            status = "FAILURE"
+            output_snap = {"error": str(e)}
+            raise e
+        finally:
+            duration = int((time.time() - start_ts) * 1000)
+            if self.job_id != "offline":
+                # Fire and forget trace sending
+                asyncio.create_task(
+                    send_agent_trace(
+                        self.job_id,
+                        step="TRACE",
+                        node_name=node_name,
+                        status=status,
+                        input_data=input_snap,
+                        output_data=output_snap,
+                        duration_ms=duration
+                    )
+                )
+
     # --- Node method wrappers ---
     # 각 노드 로직은 nodes/ 패키지에 분리되어 있고,
     # graph 인스턴스(self)를 첫 인자로 전달
 
     async def node_hypothesize(self, state):
-        return await node_hypothesize(self, state)
+        return await self._trace("node_hypothesize", node_hypothesize, state)
 
-    def node_strategy(self, state):
-        return node_strategy(self, state)
+    async def node_strategy(self, state):
+        return await self._trace("node_strategy", node_strategy, state)
 
-    def node_generator(self, state):
-        return node_generator(self, state)
+    async def node_generator(self, state):
+        return await self._trace("node_generator", node_generator, state)
 
-    def node_verifier(self, state):
-        return node_verifier(self, state)
+    async def node_verifier(self, state):
+        return await self._trace("node_verifier", node_verifier, state)
 
-    def node_model(self, state):
-        return node_model(self, state)
+    async def node_model(self, state):
+        return await self._trace("node_model", node_model, state)
 
-    def node_tool_executor(self, state):
-        return node_tool_executor(self, state)
+    async def node_tool_executor(self, state):
+        return await self._trace("node_tool_executor", node_tool_executor, state)
 
-    def node_reflect(self, state):
-        return node_reflect(self, state)
+    async def node_reflect(self, state):
+        return await self._trace("node_reflect", node_reflect, state)
 
     # --- Build Graph ---
 
