@@ -63,7 +63,7 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
     except Exception as e:
         logger.warning(f"HF embedding failed: {e}")
 
-    # Fallback: Gemini API
+    # Fallback: Gemini API (새 SDK: google-genai)
     for attempt in range(max_retries):
         try:
             try:
@@ -71,14 +71,13 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
             except ImportError:
                 break
             if getattr(config, "GEMINI_API_KEY", ""):
-                import google.generativeai as genai
-                genai.configure(api_key=config.GEMINI_API_KEY)
-                result = genai.embed_content(
-                    model="models/embedding-001",
-                    content=text,
-                    task_type="retrieval_document"
+                from google import genai
+                client = genai.Client(api_key=config.GEMINI_API_KEY)
+                result = client.models.embed_content(
+                    model="text-embedding-004",
+                    contents=text
                 )
-                return result['embedding']
+                return result.embeddings[0].values
         except Exception as e:
             logger.warning(f"Gemini embedding attempt {attempt+1} failed: {e}")
             if attempt < max_retries - 1:
