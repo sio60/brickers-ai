@@ -454,6 +454,7 @@ async def process_kids_request_internal(
                     # SSE 로그 콜백을 params에 주입
                     regen_params = brickify_params.copy()
                     regen_params["log_callback"] = make_agent_log_sender(job_id)
+                    regen_params["job_id"] = job_id # [NEW] Trace용
 
                     def run_coscientist():
                         return regen_loop_fn(

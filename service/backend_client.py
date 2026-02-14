@@ -105,6 +105,43 @@ async def send_agent_log(job_id: str, step: str, message: str) -> None:
         print(f"  [AgentLog] \u274c failed: {e} | url={url}")
 
 
+async def send_agent_trace(
+    job_id: str,
+    step: str,
+    node_name: str,
+    status: str,
+    input_data: dict,
+    output_data: dict,
+    duration_ms: int
+) -> None:
+    """CoScientist 에이전트 상세 트레이스 전송"""
+    url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs" # Same endpoint, different body
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    
+    # Body construction matching AgentLogRequest DTO
+    body = {
+        "step": step,
+        "message": f"Trace: {node_name} ({status})", # Placeholder message
+        "nodeName": node_name,
+        "status": status,
+        "input": input_data,
+        "output": output_data,
+        "durationMs": duration_ms
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                url,
+                json=body,
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code != 200:
+                 print(f"  [Trace] \u26a0\ufe0f HTTP {resp.status_code} | body={resp.text[:100]}")
+    except Exception as e:
+        print(f"  [Trace] \u274c failed: {e}")
+
+
 async def get_analytics_summary(days: int = 7) -> dict | None:
     """백엔드로부터 GA4 요약 데이터(Users, Views, Sessions)를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
