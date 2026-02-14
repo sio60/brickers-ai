@@ -118,16 +118,30 @@ async def send_agent_trace(
     url = f"{BACKEND_URL}/api/kids/jobs/{job_id}/logs" # Same endpoint, different body
     token = os.environ.get("INTERNAL_API_TOKEN", "")
     
+    # 직렬화 안전 처리 (객체가 JSON 변환 불가능한 경우 방어)
+    def _safe_serialize(data):
+        if not isinstance(data, dict):
+            return {"raw": str(data)[:500]}
+        try:
+            import json
+            json.dumps(data)  # 직렬화 테스트
+            return data
+        except (TypeError, ValueError):
+            return {"raw": str(data)[:500]}
+
+    safe_input = _safe_serialize(input_data)
+    safe_output = _safe_serialize(output_data)
+
     # Body construction matching AgentLogRequest DTO
     body = {
         "step": step,
-        "message": f"Trace: {node_name} ({status})", # Placeholder message
+        "message": f"Trace: {node_name} ({status})",
         "nodeName": node_name,
         "status": status,
-        "input": input_data,
-        "output": output_data,
-        "inputData": input_data,   # Backend 호환성 추가
-        "outputData": output_data, # Backend 호환성 추가
+        "input": safe_input,
+        "output": safe_output,
+        "inputData": safe_input,
+        "outputData": safe_output,
         "durationMs": duration_ms
     }
 
@@ -141,7 +155,7 @@ async def send_agent_trace(
             if resp.status_code != 200:
                  print(f"  [Trace] \u26a0\ufe0f HTTP {resp.status_code} | body={resp.text[:100]}")
     except Exception as e:
-        print(f"  [Trace] \u274c failed: {e}")
+        print(f"  [Trace] \u274c failed: {type(e).__name__}: {e}")
 
 
 async def get_analytics_summary(days: int = 7) -> dict | None:

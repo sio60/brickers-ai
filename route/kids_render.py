@@ -300,7 +300,8 @@ async def process_kids_request_internal(
                 corrected_path = out_req_dir / "corrected.png"
                 await _write_bytes_async(corrected_path, corrected_bytes)
                 corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
-                _log(f"[STEP 1/5] Gemini 완료 | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+                gemini_elapsed = time.time() - step_start
+                _log(f"[STEP 1/5] Gemini 완료 | Subject: {final_subject} | Tags: {ai_tags} | {gemini_elapsed:.2f}s")
                 # await _async_archive() # [Restored comment]
                 
                 await update_job_suggested_tags(job_id, ai_tags)
@@ -589,6 +590,37 @@ async def process_kids_request_internal(
                 _log(f"   - Brickify: {brickify_elapsed:.2f}s")
                 _log(f"결과: parts={result.get('parts')} | ldrSize={out_ldr.stat().st_size/1024:.1f}KB")
                 _log("\u2550" * 70)
+
+                # [NEW] PipelineSummary 트레이스 전송 (Conclusion 뷰어용)
+                bom_elapsed = time.time() - step_start
+                pipeline_summary = {
+                    "subject": final_subject,
+                    "age": age,
+                    "budget": eff_budget,
+                    "engine": engine_label,
+                    "total_time_sec": round(total_elapsed, 1),
+                    "steps": [
+                        {"name": "Gemini 보정", "duration_sec": round(gemini_elapsed, 1), "status": "SUCCESS", "detail": f"Subject: {final_subject} | Tags: {len(ai_tags)}개"},
+                        {"name": "Tripo 3D", "duration_sec": round(tripo_elapsed, 1), "status": "SUCCESS", "detail": f"GLB {glb_path.stat().st_size/1024:.0f}KB"},
+                        {"name": engine_label, "duration_sec": round(brickify_elapsed, 1), "status": "SUCCESS" if used_coscientist else "FALLBACK", "detail": f"{result.get('parts', 0)}개 브릭"},
+                        {"name": "BOM/PDF 생성", "duration_sec": round(bom_elapsed, 1), "status": "SUCCESS", "detail": f"{bom_data['total_parts']}종 부품"},
+                    ],
+                    "result": {
+                        "parts": result.get("parts", 0),
+                        "final_target": result.get("final_target", 0),
+                        "ldr_size_kb": round(out_ldr.stat().st_size / 1024, 1),
+                        "bom_unique_parts": len(bom_data["parts"]),
+                    },
+                }
+                # CoScientist 사용 시 추가 정보
+                if used_coscientist:
+                    pipeline_summary["coscientist"] = {
+                        "success": report.get("success"),
+                        "total_attempts": report.get("total_attempts"),
+                        "message": report.get("message", ""),
+                        "tool_usage": report.get("tool_usage", {}),
+                    }
+                await _trace("PipelineSummary", "SUCCESS", "Pipeline Complete", {}, pipeline_summary, int(total_elapsed * 1000))
             
 
             # [Restored comment]

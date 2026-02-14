@@ -42,7 +42,9 @@ def _load_hf_model():
             _hf_model = AutoModel.from_pretrained(model_name)
             logger.info("HF embedding model loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load HF model: {e}")
+            logger.error(f"Failed to load HF model: {type(e).__name__}: {e}")
+            # 로딩 실패 시 sentinel 값 설정하여 매번 재시도 방지
+            _hf_model = False
 
 
 def get_embedding(text: str, max_retries: int = 2) -> List[float]:
@@ -72,7 +74,11 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
                 break
             if getattr(config, "GEMINI_API_KEY", ""):
                 from google import genai
-                client = genai.Client(api_key=config.GEMINI_API_KEY)
+                from google.genai import types
+                client = genai.Client(
+                    api_key=config.GEMINI_API_KEY,
+                    http_options=types.HttpOptions(api_version='v1')
+                )
                 result = client.models.embed_content(
                     model="text-embedding-004",
                     contents=text
