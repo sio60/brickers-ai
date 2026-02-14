@@ -177,6 +177,7 @@ class ProcessResp(BaseModel):
     tags: list[str]
     parts: int
     finalTarget: int
+    lmmLatency: Optional[int] = None # [New] AI 생성 시간 (ms)
 
 
 # --------------- Core orchestration ---------------
@@ -612,6 +613,7 @@ async def process_kids_request_internal(
                 "tags": ai_tags,
                 "parts": int(result.get("parts", 0)),
                 "finalTarget": int(result.get("final_target", 0)),
+                "lmmLatency": int(brickify_elapsed * 1000), # [New] ms 단위 변환
                 "backgroundUrl": background_url,
             }
 
@@ -686,6 +688,7 @@ async def process(request: KidsProcessRequest):
             "tags": result["tags"],
             "parts": result["parts"],
             "finalTarget": result["finalTarget"],
+            "lmmLatency": result.get("lmmLatency"), # [New]
         }
 
     except HTTPException:

@@ -139,6 +139,12 @@ async def regeneration_loop(
         verification_errors=0,
         tool_usage_count={},
         last_tool_used=None,
+        
+        # [Hypothesis]
+        observation="",
+
+        # [시스템 컨텍스트]
+        job_id=job_id,
         consecutive_same_tool=0,
         previous_metrics={},
         current_metrics={},

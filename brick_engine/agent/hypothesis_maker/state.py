@@ -12,6 +12,7 @@ class HypothesisState(TypedDict):
     최소 2회의 티키타카 토론을 지원합니다.
     """
     # [입력 및 공통]
+    job_id: str                    # 시스템 로그용 Job ID
     subject_name: str              # 사물 태그 (RAG 검색용)
     observation: str
     verification_raw_result: Dict[str, Any]

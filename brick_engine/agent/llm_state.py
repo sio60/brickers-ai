@@ -59,6 +59,9 @@ class AgentState(TypedDict):
     # 최종 결과 리포트
     final_report: Dict[str, Any]
     
+    # [Hypothesis] 관찰 결과 (Verifier -> Reflect -> Hypothesize)
+    observation: str
+
     # Co-Scientist Memory
     memory: Dict[str, Any]
 
@@ -82,3 +85,6 @@ class AgentState(TypedDict):
 
     # 다음 노드 제어
     next_action: Literal["generate", "verify", "model", "tool", "reflect", "hypothesize", "strategy", "end", "search", "draft", "critic", "refine"]
+
+    # [시스템 컨텍스트]
+    job_id: str
