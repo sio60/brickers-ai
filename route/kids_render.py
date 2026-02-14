@@ -47,6 +47,7 @@ from service.backend_client import (
     update_job_suggested_tags,
     make_agent_log_sender,
     send_agent_log,
+    send_agent_trace,
 )
 from service.bom_generator import generate_bom_from_ldr
 from service.ldraw_bundler import generate_parts_bundle
@@ -233,6 +234,24 @@ async def process_kids_request_internal(
         """파이프라인 단계별 SSE 로그 전송 (async httpx)"""
         await send_agent_log(job_id, step, message)
 
+    async def _trace(node: str, status: str, message: str = "", input_data: dict = None, output_data: dict = None, duration: int = 0):
+        """에이전트 트레이스 수동 전송"""
+        try:
+            await send_agent_trace(
+                job_id, 
+                step="TRACE", 
+                node_name=node, 
+                status=status, 
+                input_data=input_data or {}, 
+                output_data=output_data or {"message": message}, 
+                duration_ms=duration
+            )
+        except Exception:
+            pass
+
+    # [Trace] Job Start
+    await _trace("System", "START", "Job Request Received", {"source": source_image_url, "params": {"age": age, "budget": budget, "subject": subject}})
+
     _log("\u2550" * 70)
     _log(f"\U0001f680 [AI-SERVER] \uc694\uccad \uc2dc\uc791") # jobId 중복 제거
     _log(f"\U0001f4c1 \uc6d0\ubcf8 \uc774\ubbf8\uc9c0 URL: {source_image_url}")
@@ -340,6 +359,9 @@ async def process_kids_request_internal(
                     _log(f"   Tripo 작업 완료 | status={task.status}")
                     downloaded = await client.download_task_models(task, str(out_tripo_dir))
                     _log(f"   Tripo 파일 다운로드 완료 | files={list(downloaded.keys()) if downloaded else 'None'}")
+                    
+                    # [Trace] Tripo Success
+                    await _trace("Tripo3D", "SUCCESS", "Model Generated", {"task_id": task_id}, {"files": list(downloaded.keys())}, int((time.time() - step_start) * 1000))
 
                 tripo_elapsed = time.time() - step_start
                 _log(f"[STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
@@ -604,6 +626,9 @@ async def process_kids_request_internal(
         _log("\u2550" * 70)
         _log(f"\u274c [AI-SERVER] \uc694\uccad \uc2e4\ud328! | jobId={job_id} | \uc18c\uc694\uc2dc\uac04={total_elapsed:.2f}s")
         _log(f"\u274c \uc5d0\ub7ec: {str(e)}")
+        
+        # [Trace] Global Failure
+        await _trace("System", "FAILURE", str(e), {"error": str(e), "traceback": tb})
         _log("\u2550" * 70)
         log(tb, user_email=user_email) # 이것도 캡쳐됨
         
