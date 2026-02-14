@@ -37,7 +37,10 @@ def node_verifier(graph, state) -> Dict[str, Any]:
 
         # brick_judge로 물리 검증 수행
         issues = full_judge(model)
-        score = calc_score_from_issues(issues, total_bricks)
+
+        # unstable_base는 점수 계산에서 제외 (경고만 표시)
+        score_issues = [i for i in issues if i.issue_type.value != 'unstable_base']
+        score = calc_score_from_issues(score_issues, total_bricks)
 
         # 이슈 분석
         floating_count = sum(1 for i in issues if i.issue_type.value == 'floating')
@@ -106,20 +109,33 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             "backend": "brick_judge_rs"
         }
 
-        # 성공 여부 판단
-        is_success = stable
+        # 성공 여부 판단 (unstable_base는 점수에서 제외했으므로 floating/isolated만 체크)
+        is_success = floating_count == 0 and isolated_count == 0
         is_over_budget = total_bricks > budget
 
         if is_success:
-            print("🎉 목표 달성! 프로세스를 종료합니다.")
+            base_warning = ""
+            if has_unstable_base:
+                base_warning = " (⚠️ 무게중심 불안정 경고 있음)"
+            print(f"🎉 목표 달성! 프로세스를 종료합니다.{base_warning}")
             final_report = {
                 "success": True,
                 "total_attempts": state['attempts'],
                 "tool_usage": state.get('tool_usage_count', {}),
                 "final_metrics": current_metrics,
-                "message": "안정적인 구조물 생성 완료"
+                "message": f"안정적인 구조물 생성 완료{base_warning}"
             }
             return {"next_action": "end", "final_report": final_report}
+
+        # 아직 병합 안 했으면 → merger로 이동 (첫 검증)
+        if not state.get('merged', False):
+            print("  🔀 첫 검증 완료 → 1x1 브릭 병합 단계로 이동")
+            return {
+                "verification_raw_result": {"issues": [{"type": i.issue_type.value, "brick_id": i.brick_id} for i in issues]},
+                "floating_bricks_ids": floating_ids,
+                "current_metrics": current_metrics,
+                "next_action": "merge"
+            }
 
         if state['attempts'] >= state['max_retries']:
             print("💥 최대 시도 횟수 초과.")
@@ -142,8 +158,9 @@ def node_verifier(graph, state) -> Dict[str, Any]:
                 custom_feedback += f"\n\n✅ **점수 {score}점으로 높음! 공중부양 브릭 {floating_count}개만 `RemoveBricks`로 삭제하면 성공입니다.**"
             else:
                 custom_feedback += f"\n\n⚠️ **점수 {score}점으로 낮음. `TuneParameters`로 파라미터를 조정하여 구조를 개선하세요.**"
-        elif has_unstable_base:
-            custom_feedback += "\n\n⚠️ **중요: 무게중심이 지지면을 벗어났습니다. 구조를 더 안정적으로 만드세요.**"
+
+        if has_unstable_base:
+            custom_feedback += "\n\n⚠️ **참고: 무게중심이 지지면을 벗어났습니다. 가능하면 구조를 더 안정적으로 만드세요.**"
 
         return {
             "verification_raw_result": {"issues": [{"type": i.issue_type.value, "brick_id": i.brick_id} for i in issues]},

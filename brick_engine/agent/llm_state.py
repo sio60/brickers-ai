@@ -40,6 +40,7 @@ class AgentState(TypedDict):
     # 실행 상태
     attempts: int
     session_id: str
+    merged: bool  # 1x1 브릭 병합 완료 여부
     messages: Annotated[List[BaseMessage], add_messages]
     
     # 검증 결과 캐시
@@ -81,4 +82,4 @@ class AgentState(TypedDict):
     debate_history: List[str]                      # 토론 로그 기록
 
     # 다음 노드 제어
-    next_action: Literal["generate", "verify", "model", "tool", "reflect", "hypothesize", "strategy", "end", "search", "draft", "critic", "refine"]
+    next_action: Literal["generate", "verify", "model", "tool", "reflect", "hypothesize", "strategy", "merge", "end", "search", "draft", "critic", "refine"]

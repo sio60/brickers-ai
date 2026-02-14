@@ -20,6 +20,7 @@ from .nodes.verifier import node_verifier
 from .nodes.model import node_model
 from .nodes.tool_executor import node_tool_executor
 from .nodes.reflect import node_reflect
+from .nodes.merger import node_merger
 
 
 class RegenerationGraph:
@@ -147,6 +148,9 @@ class RegenerationGraph:
     async def node_reflect(self, state):
         return await self._trace("node_reflect", node_reflect, state)
 
+    async def node_merger(self, state):
+        return await self._trace("node_merger", node_merger, state)
+
     # --- Build Graph ---
 
     def build(self):
@@ -158,6 +162,7 @@ class RegenerationGraph:
         workflow.add_node("tool_executor", self.node_tool_executor)
         workflow.add_node("reflect", self.node_reflect)
         workflow.add_node("strategy", self.node_strategy)
+        workflow.add_node("merger", self.node_merger)
 
         hyp_graph = build_hypothesis_graph()
         workflow.add_node("hypothesize", hyp_graph)
@@ -170,8 +175,10 @@ class RegenerationGraph:
             "model": "model",
             "end": END,
             "verifier": "verifier",
-            "reflect": "reflect"
+            "reflect": "reflect",
+            "merge": "merger"
         })
+        workflow.add_conditional_edges("merger", route_next, {"verify": "verifier"})
         workflow.add_conditional_edges("reflect", route_next, {
             "model": "model",
             "hypothesize": "hypothesize"
