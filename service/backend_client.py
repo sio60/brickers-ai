@@ -298,3 +298,21 @@ async def get_full_report(days: int = 7) -> dict | None:
     except Exception as e:
         print(f"  \u26a0\ufe0f [BackendClient] Full Report Fail: {e}")
     return None
+
+
+async def get_product_intelligence(days: int = 7) -> dict | None:
+    """백엔드로부터 제품 인텔리전스(퍼널, 품질, 이탈지점) 데이터를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/product-intelligence",
+                params={"days": days},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                print("  \u2705 [BackendClient] Product Intelligence Fetched")
+                return resp.json()
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Product Intelligence Fail: {e}")
+    return None

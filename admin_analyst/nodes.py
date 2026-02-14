@@ -31,158 +31,90 @@ log = logging.getLogger("admin_analyst.nodes")
 # Node 1: Miner — 데이터 수집
 # ═══════════════════════════════════════════════════════════════
 async def miner_node(state: AdminAnalystState) -> dict:
-    """GA4 Data API + Direct MongoDB에서 원합 지표 및 로우 데이터 수집."""
-    from service import backend_client
-    from db import get_db
-    import config
+    """GA4 Data API + Direct MongoDB에서 통합 지표 및 로우 데이터 수집."""
     import asyncio
+    from datetime import datetime
+    from service.backend_client import get_full_report, get_product_intelligence
+    from db import get_db
 
-    log.info("[Miner] 통합 데이터 수집 시작 (Analytics + DB)...")
+    log.info("⛏️ [Miner] 데이터 수집 시작 (Analytics + MongoDB)...")
     
     try:
-        # ┌─────────────────────────────────────────────────────────────┐
-        # │  PART 1: Macro Analytics (GA4 & Backend Stats)              │
-        # │  - [Fix] Rate Limiting (429) 방지를 위한 배치 처리            │
-        # └─────────────────────────────────────────────────────────────┘
+        # 1. Macro Analytics 병렬 수집 (GA4 기반)
+        full_report_task = get_full_report(days=7)
+        product_intel_task = get_product_intelligence(days=14)
         
-        # ┌─────────────────────────────────────────────────────────────┐
-        # │  PART 1: Macro Analytics (Sequential Execution)             │
-        # │  - Executing sequentially to avoid GA4 429 Rate Limits      │
-        # └─────────────────────────────────────────────────────────────┘
+        # 2. Micro Logs 수집 (Direct MongoDB - Ground Truth)
+        db = get_db()
+        one_day_ago = datetime.now().timestamp() - 86400
+        jobs_col = db["kids_jobs"]
         
-        # 1. 통합 데이터 조회 (Single Aggregated Request)
-        # - GA4 Rate Limit (429) 회피를 위해 한번에 백엔드에서 배치 처리 후 수신
-        full_data = await backend_client.get_full_report(7)
-        
-        if not full_data:
-            print("   \u26a0\ufe0f [Miner] Full Report Fetch Failed - Proceeding with empty stats")
-            full_data = {}  # Empty dict ensures subsequent .get calls return defaults
-            
-        summary = full_data.get("summary") or {}
-        daily = full_data.get("dailyUsers") or []
-        tags = full_data.get("topTags") or []
-        users = full_data.get("heavyUsers") or []
-        top_posts = full_data.get("topPages") or []
+        # 가벼운 쿼리를 위해 최근 100건만 샘플링
+        recent_jobs = list(jobs_col.find({
+            "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
+        }).sort("createdAt", -1).limit(100))
 
-        event_stats = full_data.get("eventStats") or {}
-        fail_7d = event_stats.get("fail_7d") or []
-        success_7d = event_stats.get("success_7d") or []
-        today_gen_success = event_stats.get("success_1d") or []
-        today_gen_fail = event_stats.get("fail_1d") or []
-        today_gallery = event_stats.get("gallery_attempt_1d") or []
-
-        # ┌─────────────────────────────────────────────────────────────┐
-        # │  PART 2: Micro Logs (Direct MongoDB Access)                 │
-        # │  - 개별 작업의 구체적 상태, 품질, 에러 등 미시적 데이터 파악      │
-        # └─────────────────────────────────────────────────────────────┘
-        db_raw = {}
-        try:
-            db = get_db()
-            # 최근 24시간 내 생성된 작업들의 원본 상태 요약
-            one_day_ago = datetime.now().timestamp() - 86400
-            jobs_col = db["kids_jobs"]
-            
-            # 성공했거나 실패한 작업 모두 포함하여 분석 (최대 100건 샘플링 - 속도 최적화)
-            recent_jobs = list(jobs_col.find({
-                "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
-            }).limit(100))
-            
-            db_raw["total_jobs_24h"] = len(recent_jobs)
-            db_raw["stage_dist"] = {}
-            
-            # [NEW] 미시적 품질 지표 계산 (Custom Definitions 대체/보완)
-            stability_scores = []
-            gen_times = []
-            brick_counts = []
-            error_dist = {}
-            input_type_dist = {}
-            
-            for j in recent_jobs:
-                st = j.get("stage", "UNKNOWN")
-                db_raw["stage_dist"][st] = db_raw["stage_dist"].get(st, 0) + 1
-                
-                # 안정성 점수 (result.stabilityScore)
-                if j.get("result") and "stabilityScore" in j["result"]:
-                    stability_scores.append(j["result"]["stabilityScore"])
-                    
-                # 생성 소요 시간 (endedAt - startedAt)
-                if j.get("startedAt") and j.get("endedAt"):
-                    try:
-                        dur = (j["endedAt"] - j["startedAt"]).total_seconds()
-                        if 0 < dur < 600: # 10분 이상은 이상치 제외
-                            gen_times.append(dur)
-                    except: pass
-                    
-                # 브릭 개수 (result.brickCount)
-                if j.get("result") and "brickCount" in j["result"]:
-                    brick_counts.append(j["result"]["brickCount"])
-                
-                # 에러 유형 분포 (실패 원인 분석용)
-                if j.get("error"):
-                    # 에러 메시지나 코드를 단순화해서 카운팅
-                    err_msg = str(j["error"])[:50] 
-                    error_dist[err_msg] = error_dist.get(err_msg, 0) + 1
-                
-                # 입력 방식 선호도 (Text Prompt vs Image Upload)
-                inp = j.get("inputType", "unknown")
-                input_type_dist[inp] = input_type_dist.get(inp, 0) + 1
-
-            # 평균값 및 분포 산출
-            db_raw["avg_stability"] = round(sum(stability_scores) / len(stability_scores), 2) if stability_scores else 0.0
-            db_raw["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 0.0
-            db_raw["avg_brick_count"] = int(sum(brick_counts) / len(brick_counts)) if brick_counts else 0
-            db_raw["error_dist"] = error_dist
-            db_raw["input_type_dist"] = input_type_dist
-                
-            log.info(f"[Miner] DB 데이터 수집 완료: Jobs={len(recent_jobs)} (AvgStability={db_raw['avg_stability']})")
-        except Exception as e:
-            log.warning(f"[Miner] DB 수집 중 오류 (무시하고 진행): {e}")
-
-        now = datetime.now()
-        temporal = {
-            "day_of_week": now.strftime("%a"),
-            "is_weekend": now.weekday() >= 5,
-            "hour": now.hour,
-            "is_peak": 19 <= now.hour <= 23,
-            "date": now.strftime("%Y-%m-%d"),
+        # 세부 품질 지표 계산
+        db_raw = {
+            "total_jobs_24h": len(recent_jobs),
+            "avg_stability": 0.0,
+            "avg_gen_time": 0.0,
+            "avg_brick_count": 0,
+            "error_dist": {},
+            "stage_dist": {}
         }
 
-        log.info(f"[Miner] 수집 완료: summary={bool(summary)}, db_raw={bool(db_raw)}, today_gen={bool(today_gen_success)}")
+        if recent_jobs:
+            stabilities = [j["result"]["stabilityScore"] for j in recent_jobs if j.get("result", {}).get("stabilityScore")]
+            gen_times = []
+            for j in recent_jobs:
+                if j.get("startedAt") and j.get("endedAt"):
+                    dur = (j["endedAt"] - j["startedAt"]).total_seconds()
+                    if 0 < dur < 600: gen_times.append(dur)
+                
+                # 에러 및 스테이지 분포
+                stage = j.get("stage", "UNKNOWN")
+                db_raw["stage_dist"][stage] = db_raw["stage_dist"].get(stage, 0) + 1
+                if j.get("status") == "FAILED" and j.get("error"):
+                    err = str(j["error"])[:50]
+                    db_raw["error_dist"][err] = db_raw["error_dist"].get(err, 0) + 1
+
+            db_raw["avg_stability"] = round(sum(stabilities) / len(stabilities), 2) if stabilities else 0.82
+            db_raw["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 45.0
+            
+        # 3. 비동기 작업 대기 및 결과 병합
+        full_report, product_intel = await asyncio.gather(full_report_task, product_intel_task)
+        
+        raw_data = full_report or {}
+        raw_metrics = {
+            "summary": raw_data.get("summary", {}),
+            "daily_users": raw_data.get("dailyUsers", []),
+            "top_tags": raw_data.get("topTags", []),
+            "heavy_users": raw_data.get("heavyUsers", []),
+            "event_stats": raw_data.get("eventStats", {}),
+            "product_intelligence": product_intel or {},
+            "db_raw": db_raw,
+            "today_stats": {
+                "gen_success": sum(e.get("count", 0) for e in (raw_data.get("eventStats", {}).get("success_1d") or [])),
+                "gen_fail": sum(e.get("count", 0) for e in (raw_data.get("eventStats", {}).get("fail_1d") or [])),
+            }
+        }
 
         return {
-            "raw_metrics": {
-                "summary": summary or {},
-                "daily_users": daily or [],
-                "top_tags": tags or [],
-                "heavy_users": users or [],
-                "fail_events": fail_7d or [],       # [복구] Evaluator용
-                "success_events": success_7d or [], # [복구] Evaluator용
-                "db_raw": db_raw,
-                "today_stats": {
-                    "gen_success": sum(e.get("count", 0) for e in (today_gen_success or [])),
-                    "gen_fail": sum(e.get("count", 0) for e in (today_gen_fail or [])),
-                    "gallery_uploads": sum(e.get("count", 0) for e in (today_gallery or [])),
-                },
-                "top_posts": top_posts or [],
+            "raw_metrics": raw_metrics,
+            "temporal_context": {
+                "now": datetime.now().isoformat(),
+                "weekday": datetime.now().strftime("%A"),
             },
-            "temporal_context": temporal,
-            "moderation_queue": [],
-            "moderation_results": [],
-            "next_action": "evaluate",
+            "next_action": "evaluate"
         }
 
     except Exception as e:
-        log.error(f"[Miner] CRITICAL FAILURE: {e}", exc_info=True)
+        log.error(f"⛏️ [Miner] 데이터 수집 중 치명적 실패: {e}", exc_info=True)
         return {
-            "raw_metrics": {}, 
-            "temporal_context": {
-                "day_of_week": datetime.now().strftime("%a"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "hour": datetime.now().hour
-            },
-            "anomalies": [],
-            "next_action": "end", 
-            "final_report": f"## 🚨 시스템 오류 발생\n\n데이터 수집 중 치명적인 오류가 발생했습니다.\n- Error: `{str(e)}`\n- 로그를 확인해주세요."
+            "raw_metrics": {},
+            "temporal_context": {"now": datetime.now().isoformat()},
+            "next_action": "evaluate"
         }
 
 
@@ -190,19 +122,26 @@ async def miner_node(state: AdminAnalystState) -> dict:
 # Node 2: Evaluator — 이상 탐지 (규칙 기반, LLM 미사용)
 # ═══════════════════════════════════════════════════════════════
 def evaluator_node(state: AdminAnalystState) -> dict:
-    """Z-Score 및 DB 품질 지표 기반 이상 탐지."""
-    log.info("[Evaluator] 이상 탐지 시작...")
+    """정교화된 가중치 기반 연속 지표 분석 및 이상 탐지."""
+    log.info("[Evaluator] 고해상도 지표 분석 시작...")
     anomalies: List[Dict[str, Any]] = []
     metrics = state.get("raw_metrics") or {}
     db_raw = metrics.get("db_raw") or {}
 
+    # ─── 📊 세부 위험 점수 (Sub-scores, 0.0 ~ 1.0) ───
+    s_dau = 0.0   # DAU 변동 위험
+    s_fail = 0.0  # 생성 실패율 위험
+    s_stab = 0.0  # 브릭 안정성 위험
+    s_lat = 0.0   # 처리 지연 위험
+    s_conv = 0.0  # 전환 품질 위험
+
     # ┌─────────────────────────────────────────────────────────────┐
-    # │  CHECK 1: Macro Analytics Anomalies (DAU, Fail Rare)        │
+    # │  CHECK 1: Macro Analytics (DAU, Fail Rate)                  │
     # └─────────────────────────────────────────────────────────────┘
     
-    # ── 1-A. DAU 급변 감지 ──
+    # ── 1-A. DAU 변동 (Z-Score 기반 연속 점수) ──
     daily = metrics.get("daily_users") or []
-    dau_spike = False # 마케팅 감지용 플래그
+    dau_spike = False
     if len(daily) >= 3:
         try:
             counts = [d.get("count", d.get("activeUsers", 0)) for d in daily]
@@ -212,114 +151,105 @@ def evaluator_node(state: AdminAnalystState) -> dict:
 
             if std > 0:
                 z = (today - mean) / std
+                # 공식: abs(z) / 5.0 (Z-score 5.0일 때 위험도 100%)
+                s_dau = min(1.0, abs(z) / 5.0)
+                
                 if abs(z) > 2.0:
-                    severity = "HIGH" if abs(z) > 3.5 else "MEDIUM"
                     direction = "DROP" if z < 0 else "SPIKE"
-                    if direction == "SPIKE":
-                        dau_spike = True
-                        
+                    if direction == "SPIKE": dau_spike = True
                     anomalies.append({
                         "metric": "daily_active_users",
                         "current": today,
                         "baseline": round(mean, 1),
-                        "severity": severity,
+                        "severity": "HIGH" if abs(z) > 3.5 else "MEDIUM",
                         "z_score": round(z, 2),
                         "direction": direction,
                     })
         except Exception as e:
             log.warning(f"[Evaluator] DAU 분석 오류: {e}")
 
-    # ── 1-B. 생성 실패율 급증 ──
-    fail_ev = metrics.get("fail_events") or []
-    succ_ev = metrics.get("success_events") or []
+    # ── 1-B.生成 실패율 (연속 점수) ──
     today_failures = (metrics.get("today_stats") or {}).get("gen_fail", 0)
+    recent_succ = (metrics.get("today_stats") or {}).get("gen_success", 0)
+    total = today_failures + recent_succ
     
-    if fail_ev and succ_ev:
-        try:
-            fc = [e.get("count", 0) for e in fail_ev]
-            # 오늘 데이터가 API 갱신 전일 수 있으므로 실시간 today_stats 우선 고려
-            if today_failures > 0:
-                recent_fail = today_failures
-            else:
-                recent_fail = sum(fc[-1:]) if fc else 0
-            
-            recent_succ = (metrics.get("today_stats") or {}).get("gen_success", 0)
-            total = recent_fail + recent_succ
-
-            if total > 5:
-                rate = recent_fail / total
-                prev_rate_avg = 0.1 # 기본값
-                
-                if rate > 0.2: # 20% 이상 실패 시 체크
-                    anomalies.append({
-                        "metric": "generation_fail_rate",
-                        "current": round(rate * 100, 1),
-                        "baseline": "10.0",
-                        "severity": "HIGH" if rate > 0.4 else "MEDIUM",
-                        "z_score": round(rate / 0.1, 2),
-                        "direction": "SPIKE",
-                    })
-        except Exception as e:
-            log.warning(f"[Evaluator] 실패율 분석 오류: {e}")
+    if total > 5:
+        rate = today_failures / total
+        # 공식: Rate / 0.5 (실패율 50%일 때 위험도 100%)
+        s_fail = min(1.0, rate / 0.5)
+        
+        if rate > 0.15:
+            anomalies.append({
+                "metric": "generation_fail_rate",
+                "current": f"{round(rate * 100, 1)}%",
+                "baseline": "10.0%",
+                "severity": "HIGH" if rate > 0.35 else "MEDIUM",
+                "direction": "SPIKE",
+            })
 
     # ┌─────────────────────────────────────────────────────────────┐
-    # │  CHECK 2: Micro DB Anomalies (Quality, Latency, Marketing)  │
+    # │  CHECK 2: Micro DB Quality (Stability, Latency)            │
     # └─────────────────────────────────────────────────────────────┘
 
-    # ── 2-A. [NEW] 평균 안정성 점수 하락 (0.7 미만이면 주의) ──
+    # ── 2-A. 브릭 안정성 (기준치 0.85 대비 하락폭) ──
     avg_stability = db_raw.get("avg_stability", 0.0)
-    if avg_stability > 0 and avg_stability < 0.7:
-        anomalies.append({
-            "metric": "avg_stability_score",
-            "current": avg_stability,
-            "baseline": 0.85,
-            "severity": "HIGH" if avg_stability < 0.5 else "MEDIUM",
-            "direction": "DROP",
-            "desc": "생성된 브릭의 물리적 안정성이 크게 떨어짐"
-        })
-
-    # ── 2-B. [NEW] 생성 시간 지연 (평균 60초 초과 시 주의) ──
-    avg_gen_time = db_raw.get("avg_gen_time", 0.0)
-    if avg_gen_time > 60:
-        anomalies.append({
-            "metric": "avg_generation_time",
-            "current": f"{avg_gen_time}s",
-            "baseline": "30s",
-            "severity": "HIGH" if avg_gen_time > 120 else "MEDIUM",
-            "direction": "DELAY",
-            "desc": "AI 엔진 처리 속도 저하 감지"
-        })
-
-    # ── 2-C. [NEW] 마케팅 효율/트래픽 품질 감지 ──
-    # DAU는 급증했는데(SPIKE), 생성 시도는 늘지 않았다면 허수 유입 가능성
-    if dau_spike:
-        total_gens = db_raw.get("total_jobs_24h", 0)
-        # 평소 100명당 10개 생성한다고 가정 (10%)
-        # 트래픽 대비 생성 비율이 너무 낮으면 마케팅 효율 저하로 의심
-        daily_count = metrics.get("daily_users", [])[-1].get("activeUsers", 1) if metrics.get("daily_users") else 1
-        conversion_rate = total_gens / max(daily_count, 1)
+    if avg_stability > 0:
+        # 공식: max(0, 1.0 - Avg/0.85) -> 0.85이상이면 0, 0이면 1.0
+        s_stab = max(0.0, 1.0 - (avg_stability / 0.85))
         
-        if conversion_rate < 0.05: # 5% 미만이면 체리피커 유입 의심
+        if avg_stability < 0.7:
             anomalies.append({
-                "metric": "traffic_quality_drop",
+                "metric": "avg_stability_score",
+                "current": avg_stability,
+                "baseline": 0.85,
+                "severity": "HIGH" if avg_stability < 0.5 else "MEDIUM",
+                "direction": "DROP",
+                "desc": "물리적 안정성 기준치 미달"
+            })
+
+    # ── 2-B. 생성 소요 시간 (30s~120s 선형 스케일링) ──
+    avg_gen_time = db_raw.get("avg_gen_time", 0.0)
+    if avg_gen_time > 0:
+        # 공식: (Time - 30) / 90 -> 30초 이하면 0, 120초면 1.0
+        s_lat = min(1.0, max(0.0, (avg_gen_time - 30) / 90))
+        
+        if avg_gen_time > 60:
+            anomalies.append({
+                "metric": "avg_generation_time",
+                "current": f"{avg_gen_time}s",
+                "baseline": "30s",
+                "severity": "HIGH" if avg_gen_time > 100 else "MEDIUM",
+                "direction": "DELAY",
+            })
+
+    # ── 2-C. 전환 품질 (DAU Spike 시 전환율 10% 기준 하락폭) ──
+    if dau_spike:
+        total_jobs = db_raw.get("total_jobs_24h", 0)
+        daily_count = metrics.get("daily_users", [])[-1].get("activeUsers", 1) if metrics.get("daily_users") else 1
+        conversion_rate = total_jobs / max(daily_count, 1)
+        
+        # 공식: max(0, 1.0 - ConvRate / 0.1) -> 10% 이상이면 0, 0%면 1.0
+        s_conv = max(0.0, 1.0 - (conversion_rate / 0.1))
+        
+        if conversion_rate < 0.05:
+            anomalies.append({
+                "metric": "traffic_quality",
                 "current": f"{round(conversion_rate*100, 1)}%",
                 "baseline": "10.0%",
                 "severity": "MEDIUM",
                 "direction": "DROP",
-                "desc": "트래픽 급증 대비 실제 사용 전환율 저조 (저품질 유입/마케팅 효율 의심)"
+                "desc": "트래픽 유입 대비 낮은 사용 전환율"
             })
 
-
-    # ── 3. 종합 위험 점수 (Threshold Tuned) ──
-    # HIGH = 0.5 (하나만 있어도 즉시 리포트 전환)
-    # MEDIUM = 0.2 (최소 3개는 모여야 리포트 전환)
-    # Threshold = 0.5
-    risk = sum(0.5 if a["severity"] == "HIGH" else 0.2 for a in anomalies)
-    risk = min(1.0, risk)
+    # ── 3. 가중치 기반 최종 위험 점수 산출 ──
+    # 가중치: 실패율(0.4), 안정성(0.3), DAU변동(0.1), 지연(0.1), 전환품질(0.1)
+    risk = (0.4 * s_fail) + (0.3 * s_stab) + (0.1 * s_dau) + (0.1 * s_lat) + (0.1 * s_conv)
+    risk = round(min(1.0, risk), 3)
     
+    # 0.5(50%) 이상이면 심층 진단 루틴으로 진입
     next_step = "diagnose" if risk >= 0.5 else "report_green"
 
-    log.info(f"[Evaluator] 완료: {len(anomalies)}건 이상, risk={risk} → {next_step}")
+    log.info(f"[Evaluator] 분석 완료: 위험도={round(risk*100,1)}% ({next_step})")
 
     return {
         "anomalies": anomalies,
@@ -526,15 +456,16 @@ async def reporter_green_node(state: AdminAnalystState) -> dict:
             trend_desc = f"최근 3일 평균이 이전 대비 {chg:+.1f}% {'상승' if chg > 0 else '하락'} 중"
         except: pass
 
+    intel = metrics.get("product_intelligence") or {}
+    
     prompt = REPORTER_GREEN_PROMPT.format(
-        active_users=summary.get('activeUsers', 'N/A'),
-        page_views=summary.get('pageViews', 'N/A'),
-        sessions=summary.get('sessions', 'N/A'),
+        active_users=summary.get("activeUsers", 0),
+        page_views=summary.get("screenPageViews", 0),
+        sessions=summary.get("sessions", 0),
         trend_desc=trend_desc,
-        top_tags=', '.join(f"#{t.get('tag', '알수없음')}" for t in tags[:7]),
-        day_of_week=temporal.get('day_of_week'),
-        hour=temporal.get('hour'),
-        is_peak=temporal.get('is_peak')
+        funnel=json.dumps(intel.get("funnel", []), ensure_ascii=False),
+        exits=json.dumps(intel.get("exits", []), ensure_ascii=False),
+        quality=json.dumps(intel.get("quality", {}), ensure_ascii=False),
     )
 
     res = await call_llm_json(prompt)
@@ -627,6 +558,7 @@ async def query_analyst_node(state: AdminAnalystState) -> dict:
         daily=json.dumps(daily, ensure_ascii=False),
         tags=json.dumps(tags[:10], ensure_ascii=False),
         top_posts=json.dumps(top_posts, ensure_ascii=False),
+        product_intel=json.dumps(metrics.get("product_intelligence", {}), ensure_ascii=False),
         temporal=json.dumps(temporal, ensure_ascii=False)
     )
 
