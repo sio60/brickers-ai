@@ -17,6 +17,7 @@ frozenlist==1.8.0
 fsspec==2026.1.0
 google-auth==2.47.0
 google-genai==1.46.0
+google-generativeai
 h11==0.16.0
 httpcore==1.0.9
 httptools==0.7.1

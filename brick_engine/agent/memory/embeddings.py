@@ -27,15 +27,20 @@ def _load_hf_model():
 
         try:
             from transformers import AutoTokenizer, AutoModel
-            try:
-                import config
-            except ImportError:
-                return
-            model_name = getattr(config, "HF_EMBED_MODEL", "intfloat/multilingual-e5-small")
+            import config
+            
+            # config.HF_EMBED_MODEL이 함수나 다른 객체로 오인되지 않도록 강제 문자열 변환 및 검증
+            raw_model_name = getattr(config, "HF_EMBED_MODEL", "intfloat/multilingual-e5-small")
+            
+            if callable(raw_model_name): # 만약 메서드가 왔다면 기본값 사용
+                model_name = "intfloat/multilingual-e5-small"
+            else:
+                model_name = str(raw_model_name)
+                
             logger.info(f"Loading HF embedding model: {model_name}")
             _hf_tokenizer = AutoTokenizer.from_pretrained(model_name)
             _hf_model = AutoModel.from_pretrained(model_name)
-            logger.info("HF embedding model loaded")
+            logger.info("HF embedding model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load HF model: {e}")
 
