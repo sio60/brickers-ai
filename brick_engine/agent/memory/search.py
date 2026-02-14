@@ -196,6 +196,7 @@ def search_success_and_failure(
     min_score: float = 0.5,
     verification_metrics: Dict[str, Any] = None,
     shape_metrics: Dict[str, Any] = None,
+    subject_name: str = None,
 ) -> Dict[str, List[Dict]]:
     """성공/실패 사례를 구분하여 검색"""
     results = {"success": [], "failure": []}
@@ -204,6 +205,7 @@ def search_success_and_failure(
         collection_exps, vector_index_name, use_vector,
         observation, limit=limit*3, min_score=min_score,
         verification_metrics=verification_metrics,
+        subject_name=subject_name
     )
 
     for case in candidates:

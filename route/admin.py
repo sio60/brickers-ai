@@ -214,7 +214,7 @@ class SystemLogRequest(BaseModel):
 
 # ... (middle parts omitted, keeping existing code) ...
 
-@router.post("/archive/system")
+@router.post("/ai-admin/archive/system")
 async def archive_system_log(request: SystemLogRequest):
     """
     [NEW] Archive system-level logs to 'system_logs' collection.
@@ -390,7 +390,7 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
         raise HTTPException(status_code=500, detail=f"Analysis Failed: {str(e)}")
 
 
-@router.post("/archive")
+@router.post("/ai-admin/archive")
 async def archive_log(request: ArchiveLogRequest):
     """
     Archive job logs to MongoDB.
@@ -492,7 +492,7 @@ async def archive_log(request: ArchiveLogRequest):
 
 
 
-@router.get("/archived/{job_id}", response_model=ArchivedLogResponse)
+@router.get("/ai-admin/archived/{job_id}", response_model=ArchivedLogResponse)
 async def get_archived_log(job_id: str):
     """
     Fetch archived logs from MongoDB.
