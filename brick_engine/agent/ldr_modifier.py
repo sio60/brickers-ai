@@ -635,36 +635,15 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
     # 불안정 브릭 인덱스 set
     unstable_set = set(int(uid) for uid in unstable_ids if uid is not None)
 
-    # 2. 경계 탐지: 불안정 브릭과 인접한 안정 브릭 찾기
-    boundary_indices = set()  # 분해 대상 브릭의 인덱스
-
-    # 스터드 위치 → 브릭 인덱스 매핑
-    stud_to_brick = {}
-    for brick in all_bricks:
-        positions = _get_brick_stud_positions(brick)
-        for pos in positions:
-            # (x, y, z)를 반올림하여 키 생성
-            key = (round(pos[0], 1), round(pos[1], 1), round(pos[2], 1))
-            stud_to_brick[key] = brick["brick_idx"]
+    # 2. 불안정 브릭만 분해 대상으로 설정 (안정 브릭은 절대 건드리지 않음)
+    boundary_indices = set()
 
     for brick in all_bricks:
         if brick["brick_idx"] not in unstable_set:
             continue
 
-        # 불안정 브릭의 모든 스터드 위치에서 인접 탐색
-        positions = _get_brick_stud_positions(brick)
-        for px, py, pz in positions:
-            # 상하좌우 인접 위치 체크 (같은 Y에서 X±20, Z±20)
-            for dx, dz in [(STUD_SPACING, 0), (-STUD_SPACING, 0),
-                           (0, STUD_SPACING), (0, -STUD_SPACING)]:
-                adj_key = (round(px + dx, 1), round(py, 1), round(pz + dz, 1))
-                adj_idx = stud_to_brick.get(adj_key)
-                if adj_idx is not None and adj_idx not in unstable_set:
-                    # 안정 브릭 발견 → 경계
-                    boundary_indices.add(adj_idx)
-
-            # 불안정 브릭 자체도 분해 대상
-            boundary_indices.add(brick["brick_idx"])
+        # 불안정 브릭만 분해 대상 (안정 브릭은 건드리지 않음)
+        boundary_indices.add(brick["brick_idx"])
 
     # 3. 경계 브릭 분해 (1xN → N × 1x1)
     lines_to_delete = set()
