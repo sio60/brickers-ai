@@ -64,7 +64,7 @@ def save_memory_to_db(model_id: str, memory: Dict):
 # 메인 루프
 # ============================================================================
 
-def regeneration_loop(
+async def regeneration_loop(
     glb_path: str,
     output_ldr_path: str,
     subject_name: str = "Unknown Object",
@@ -153,7 +153,8 @@ def regeneration_loop(
 
     # 실행
     _log("GENERATE", "브릭 배치를 미세 조정하고 있어요.")
-    final_state = app.invoke(initial_state)
+    # [ASYNC CHANGE] invoke -> ainvoke
+    final_state = await app.ainvoke(initial_state)
 
     _log("VERIFY", "현 설계가 반복 조립에도 안정적인지 확인 중이에요.")
 
