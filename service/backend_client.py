@@ -126,6 +126,8 @@ async def send_agent_trace(
         "status": status,
         "input": input_data,
         "output": output_data,
+        "inputData": input_data,   # Backend 호환성 추가
+        "outputData": output_data, # Backend 호환성 추가
         "durationMs": duration_ms
     }
 
