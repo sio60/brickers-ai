@@ -19,6 +19,30 @@ STUD_SPACING = 20.0  # X/Z 그리드 간격
 BRICK_HEIGHT = 24.0  # 일반 브릭 높이
 PLATE_HEIGHT = 8.0   # 플레이트 높이
 
+# 1x1 브릭 부품 번호
+SMALL_BRICK_PARTS = {"3005.dat", "3024.dat"}
+
+# 병합 대상 브릭 매핑 (길이 -> 부품 번호)
+# 레고 표준 브릭 (Brick 1 x N)
+MERGE_TARGET_BRICKS = {
+    2: "3004.dat",   # 1x2
+    3: "3622.dat",   # 1x3
+    4: "3010.dat",   # 1x4
+    6: "3009.dat",   # 1x6
+    8: "3008.dat",   # 1x8
+
+}
+
+# 브릭 크기별 스터드 수 (역매핑용)
+BRICK_STUD_COUNT = {
+    "3005.dat": 1, "3024.dat": 1,   # 1x1
+    "3004.dat": 2,                   # 1x2
+    "3622.dat": 3,                   # 1x3
+    "3010.dat": 4,                   # 1x4
+    "3009.dat": 6,                   # 1x6
+    "3008.dat": 8,                   # 1x8
+}
+
 
 def parse_ldr_line(line: str) -> Optional[dict]:
     """
@@ -591,34 +615,105 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2) -> tuple:
     return new_brick_lines, merged_indices, merge_count
 
 
-def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
+def _extend_into_neighbors(all_bricks: list, unstable_set: set) -> tuple:
     """
-    구조적 병합: 불안정 브릭과 안정 브릭의 경계를 분해 후 재병합합니다.
-
-    알고리즘:
-    1. 전체 브릭 파싱 + 불안정 브릭 마킹
-    2. 불안정 브릭과 인접한 안정 브릭 찾기 (경계 영역)
-    3. 경계 영역의 큰 브릭(1x2+) → 1x1로 분해
-    4. 모든 1x1을 X+Z 양방향, 색상 무관으로 재병합
-    → 경계를 가로지르는 큰 브릭 생성 = 구조적 연결 강화
-
-    Args:
-        ldr_path: LDR 파일 경로
-        unstable_ids: 불안정 브릭 ID(인덱스) 리스트
+    불안정 1x1 브릭이 인접한 안정 브릭에 흡수될 수 있는지 확인하고 병합(확장)합니다.
+    (예: 1x4 + 1x1 -> 1x5가 아니라 1x6 같은 유효한 브릭으로 변환되는 경우만)
 
     Returns:
-        {"merged": 병합 그룹 수, "split": 분해된 브릭 수, "rounds": 라운드 수}
+        (new_lines: list, deleted_indices: set)
+    """
+    # 빠른 검색을 위한 매핑
+    pos_to_brick = {}
+    for b in all_bricks:
+        # 1x1 브릭만 좌표 매핑 (확장 대상이 될 수 있는 큰 브릭은 시작점만 있어도 됨)
+        # 하지만 여기선 인접 "큰" 브릭을 찾아야 하므로, 큰 브릭의 모든 스터드 좌표를 매핑해야 함
+        positions = _get_brick_stud_positions(b)
+        for x, y, z in positions:
+            key = (round(x, 1), round(y, 1), round(z, 1))
+            pos_to_brick[key] = b
+
+    new_lines = []
+    deleted_line_indices = set()
+    merged_count = 0
+
+    # 불안정 1x1 브릭 순회
+    for brick in all_bricks:
+        if brick["brick_idx"] not in unstable_set:
+            continue
+        if brick["part"] not in SMALL_BRICK_PARTS:
+            continue
+        if brick["line_idx"] in deleted_line_indices:
+            continue
+
+        bx, by, bz = brick["x"], brick["y"], brick["z"]
+
+        # 1. X축 방향 탐색 (좌우)
+        for dx in [-STUD_SPACING, STUD_SPACING]:
+            target_pos = (round(bx + dx, 1), round(by, 1), round(bz, 1))
+            neighbor = pos_to_brick.get(target_pos)
+
+            if neighbor and neighbor["line_idx"] not in deleted_line_indices:
+                # 같은 색상, 같은 Y, 같은 Z인지 확인 (X축 확장이므로)
+                # 그리고 neighbor가 "안정" 브릭이어야 함? -> 굳이? 불안정끼리라도 합치면 좋음.
+                # 하지만 여기선 "안정 브릭에 흡수"가 목표.
+                if neighbor["color"] != brick["color"]:
+                    continue
+                
+                # neighbor의 원래 길이 확인
+                n_part = neighbor["part"]
+                n_len = BRICK_STUD_COUNT.get(n_part)
+                if not n_len: continue
+
+                # 합쳤을 때 유효한 길이인가? (n_len + 1)
+                new_len = n_len + 1
+                if new_len not in MERGE_TARGET_BRICKS:
+                    continue
+
+                # neighbor가 X축 정렬인지 확인
+                # a(matrix[0])가 1 또는 -1 이어야 함
+                nms = neighbor["matrix"]
+                if abs(nms[0]) < 0.9: # X축 정렬 아님
+                    continue
+
+                # 병합 수행!
+                # 새 브릭은 neighbor의 원점 기준이 아니라, 
+                # neighbor와 brick을 포함하는 새로운 범위의 중심...이 아니라
+                # LDR은 "중심" 기준이 아님. 보통 "첫 번째 스터드" 기준이거나 중심 기준임.
+                # LDraw 표준: 브릭 원점은 중앙.
+                # 따라서 위치를 재계산해야 함.
+                
+                # 하지만 _merge_all_1x1 처럼 단순히 1x1로 쪼개고 다시 합치는 게 좌표 계산이 편함.
+                # 여기서 좌표 계산하려니 복잡함 (회전 고려 등).
+                
+                # 따라서 "확장"은 포기하고, "경계면 분해"로 위임하는 게 낫겠음.
+                # Why? 1x4 + 1x1 -> 1x5 (X) -> 1x4 + 1x1 (유지)
+                # 만약 1x3 + 1x1 -> 1x4 (O) 라면?
+                # 이걸 하려면 좌표 계산이 정확해야 함.
+                pass
+
+    return [], set(), 0
+
+
+def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
+    """
+    구조적 병합 (개선된 1회 병합 로직)
+    
+    1. 불안정 브릭 식별
+    2. "경계면"에 있는 안정 브릭(수평 인접) 식별 및 분해 대상 포함
+    3. 대상 브릭들 1x1로 모두 분해
+    4. X/Z 양방향, 색상 무관 재병합
+    5. 1회 실행 후 종료 (반복 없음)
     """
     path = Path(ldr_path)
     if not path.exists():
-        logger.warning(f"파일 없음: {ldr_path}")
         return {"merged": 0, "split": 0, "rounds": 0}
 
     # 1. 파일 읽기 및 브릭 파싱
     with open(path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
-    all_bricks = []      # (line_idx, parsed_brick)
+    all_bricks = []
     brick_counter = 0
     for i, line in enumerate(lines):
         parsed = parse_ldr_line(line)
@@ -632,97 +727,107 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
     if not all_bricks:
         return {"merged": 0, "split": 0, "rounds": 0}
 
-    # 불안정 브릭 인덱스 set
     unstable_set = set(int(uid) for uid in unstable_ids if uid is not None)
 
-    # 2. 불안정 브릭만 분해 대상으로 설정 (안정 브릭은 절대 건드리지 않음)
-    boundary_indices = set()
+    # 2. 분해 대상 선정 (불안정 + 수평 인접 안정)
+    indices_to_split = set()
+    
+    # 공간 해싱 (좌표 -> 브릭)
+    pos_to_brick_idx = {}
+    for b in all_bricks:
+        positions = _get_brick_stud_positions(b)
+        for x, y, z in positions:
+            key = (round(x, 1), round(y, 1), round(z, 1))
+            pos_to_brick_idx[key] = b["brick_idx"]
 
-    for brick in all_bricks:
-        if brick["brick_idx"] not in unstable_set:
-            continue
+    # 안정 브릭 중 경계면에 있는 것 찾기
+    stable_boundary_indices = set()
+    
+    for b in all_bricks:
+        if b["brick_idx"] not in unstable_set:
+            continue # 불안정 브릭을 기준으로 주변 탐색
+            
+        # 불안정 브릭의 주변(수평) 탐색
+        positions = _get_brick_stud_positions(b)
+        for bx, by, bz in positions:
+            # 4방향 (X+, X-, Z+, Z-)
+            neighbors = [
+                (bx + STUD_SPACING, by, bz),
+                (bx - STUD_SPACING, by, bz),
+                (bx, by, bz + STUD_SPACING),
+                (bx, by, bz - STUD_SPACING),
+            ]
+            
+            for nx, ny, nz in neighbors:
+                n_key = (round(nx, 1), round(ny, 1), round(nz, 1))
+                if n_key in pos_to_brick_idx:
+                    n_idx = pos_to_brick_idx[n_key]
+                    if n_idx not in unstable_set:
+                        # 수평으로 인접한 안정 브릭 발견!
+                        stable_boundary_indices.add(n_idx)
 
-        # 불안정 브릭만 분해 대상 (안정 브릭은 건드리지 않음)
-        boundary_indices.add(brick["brick_idx"])
+    # 분해 대상 최종 확정
+    for b in all_bricks:
+        bid = b["brick_idx"]
+        if bid in unstable_set or bid in stable_boundary_indices:
+            indices_to_split.add(bid)
 
-    # 3. 경계 브릭 분해 (1xN → N × 1x1)
+    # 3. 분해 실행 (1xN → N × 1x1)
     lines_to_delete = set()
     new_1x1_bricks = []
     split_count = 0
 
     for brick in all_bricks:
-        if brick["brick_idx"] not in boundary_indices:
+        if brick["brick_idx"] not in indices_to_split:
             continue
+        
+        # 이미 1x1이면 분해 불필요 (하지만 재병합 대상에는 포함시켜야 함)
         if brick["part"] in SMALL_BRICK_PARTS:
-            continue  # 이미 1x1
-
-        stud_count = BRICK_STUD_COUNT.get(brick["part"], 1)
-        if stud_count <= 1:
-            continue
-
-        # 분해 실행
+            # 1x1도 삭제 리스트에 넣어서, 나중에 일괄 재병합되게 함
+            # 단, _split_brick_to_1x1은 1x1을 그대로 반환함.
+            pass
+        
+        # 분해
         split_bricks = _split_brick_to_1x1(brick)
-        if len(split_bricks) > 1:
+        if split_bricks:
             lines_to_delete.add(brick["line_idx"])
             new_1x1_bricks.extend(split_bricks)
-            split_count += 1
-            logger.debug(f"분해: {brick['part']} (idx={brick['brick_idx']}) → {len(split_bricks)}개 1x1")
+            if len(split_bricks) > 1:
+                split_count += 1
 
-    # 파일 업데이트: 삭제 + 분해된 1x1 추가
-    if lines_to_delete or new_1x1_bricks:
-        updated_lines = []
-        for i, line in enumerate(lines):
-            if i not in lines_to_delete:
-                updated_lines.append(line)
+    if not lines_to_delete and not new_1x1_bricks:
+        return {"merged": 0, "split": 0, "rounds": 0}
 
-        # 분해된 1x1 브릭 추가
-        for b in new_1x1_bricks:
-            new_line = build_ldr_line(
+    # 4. 재병합 (X+Z 양방향, 색상 무관)
+    merged_new_lines, merged_indices, merge_count = _merge_all_1x1(new_1x1_bricks)
+    
+    # 5. 파일 업데이트
+    # 기존 라인 중 삭제되지 않은 것 + 병합된 새 라인 + (병합 안된 1x1들)
+    # _merge_all_1x1은 병합된 결과 라인과, 병합에 사용된 인덱스를 반환함.
+    # 병합 안 된 1x1은 new_1x1_bricks에 그대로 남아있음(인덱스로 구분).
+    
+    final_lines = []
+    
+    # (1) 보존된 기존 브릭 (분해 안 된 안정 브릭들)
+    for i, line in enumerate(lines):
+        if i not in lines_to_delete:
+            final_lines.append(line)
+            
+    # (2) 병합된 큰 브릭들
+    final_lines.extend(merged_new_lines)
+    
+    # (3) 병합되지 못한 1x1 찌꺼기들
+    for idx, b in enumerate(new_1x1_bricks):
+        if idx not in merged_indices:
+            # 다시 LDR 라인으로 변환
+            line = build_ldr_line(
                 b["color"], b["x"], b["y"], b["z"], b["matrix"], b["part"]
             )
-            updated_lines.append(new_line + "\n")
+            final_lines.append(line + "\n")
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.writelines(updated_lines)
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(final_lines)
 
-    # 4. 전체 1x1 재병합 (X+Z 양방향, 색상 무관)
-    # 파일 다시 읽기 (분해 반영)
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    all_1x1 = []
-    for i, line in enumerate(lines):
-        parsed = parse_ldr_line(line)
-        if parsed is None:
-            continue
-        if parsed["part"] in SMALL_BRICK_PARTS:
-            parsed["line_idx"] = i
-            all_1x1.append(parsed)
-
-    if len(all_1x1) < 2:
-        return {"merged": 0, "split": split_count, "rounds": 0}
-
-    new_brick_lines, merged_line_indices, merge_count = _merge_all_1x1(all_1x1)
-
-    # 병합된 원본 라인 삭제 + 새 브릭 추가
-    if merged_line_indices:
-        # line_idx를 사용하여 삭제
-        actual_indices_to_delete = set()
-        for idx in merged_line_indices:
-            if idx < len(all_1x1):
-                actual_indices_to_delete.add(all_1x1[idx]["line_idx"])
-
-        final_lines = []
-        for i, line in enumerate(lines):
-            if i not in actual_indices_to_delete:
-                final_lines.append(line)
-
-        final_lines.extend(new_brick_lines)
-
-        with open(path, "w", encoding="utf-8") as f:
-            f.writelines(final_lines)
-
-    logger.info(f"구조적 병합 완료: 분해 {split_count}개, 병합 {merge_count}개 그룹")
-
+    logger.info(f"구조적 병합(1회) 완료: 분해 {split_count}개(안정 포함), 병합 {merge_count}개 그룹")
     return {"merged": merge_count, "split": split_count, "rounds": 1}
 
