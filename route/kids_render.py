@@ -294,17 +294,18 @@ async def process_kids_request_internal(
                 step_start = time.time()
                 _log(f"[STEP 1/5] Gemini 이미지 보정 및 태그 추출 시작... (lang={language})")
                 await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
-                corrected_bytes, ai_subject, ai_tags = await render_one_image_async(img_bytes, "image/png", language=language)
+                corrected_bytes, ai_subject, ai_category, ai_tags = await render_one_image_async(img_bytes, "image/png", language=language)
 
                 final_subject = subject or ai_subject
 
                 corrected_path = out_req_dir / "corrected.png"
                 await _write_bytes_async(corrected_path, corrected_bytes)
                 corrected_url = to_generated_url(corrected_path, out_dir=out_req_dir)
-                _log(f"[STEP 1/5] Gemini 완료 | Subject: {final_subject} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
+                _log(f"[STEP 1/5] Gemini 완료 | Subject: {final_subject} | Category: {ai_category} | Tags: {ai_tags} | {time.time()-step_start:.2f}s")
                 # await _async_archive() # [Restored comment]
                 
                 await update_job_suggested_tags(job_id, ai_tags)
+                await update_job_category(job_id, ai_category)
  
                 # [NEW] 배경 생성 요청 (Screenshot Server로 위임)
                 for _bg_attempt in range(1, 4):
@@ -610,7 +611,8 @@ async def process_kids_request_internal(
                 "bomUrl": bom_url,
                 "pdfUrl": pdf_url,
                 "subject": final_subject,
-                "tags": ai_tags,
+                "suggestedTags": ai_tags, # [Fix] Rename to match backend expectations
+                "imageCategory": ai_category, # [New]
                 "parts": int(result.get("parts", 0)),
                 "finalTarget": int(result.get("final_target", 0)),
                 "lmmLatency": int(brickify_elapsed * 1000), # [New] ms 단위 변환
