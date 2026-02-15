@@ -42,6 +42,25 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
         print(f"   \u26a0\ufe0f [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
 
 
+async def update_job_category(job_id: str, category: str) -> None:
+    """Backend에 Gemini가 추출한 image_category 저장 (실패해도 무시)"""
+    if not category:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.patch(
+                f"{BACKEND_URL}/api/kids/jobs/{job_id}/category",
+                json={"category": category},
+                headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
+            )
+            if resp.status_code >= 400:
+                print(f"   \u26a0\ufe0f [Category] Backend 응답 에러: Status={resp.status_code} | Body={resp.text}")
+            else:
+                print(f"   \u2705 [Category] 저장 성공: Status={resp.status_code} | Category={category}")
+    except Exception as e:
+        print(f"   \u26a0\ufe0f [Category] 저장 실패 (통신 오류) | category={category} | error={str(e)}")
+
+
 def make_agent_log_sender(job_id: str):
     """CoScientist 에이전트 로그 전송 콜백 (sync context용)"""
     import requests

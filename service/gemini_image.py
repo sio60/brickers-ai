@@ -25,9 +25,9 @@ Requirements:
 - Maintain the overall shape and proportions of the subject
 
 [METADATA_REQUEST]
-Also, identify the subject in a single word and provide 3-5 relevant hashtags.
-Format: SUBJECT: <word> | TAGS: <tag1>, <tag2>, ...
-Example: SUBJECT: Pikachu | TAGS: Pokemon, Kids, Brick, Yellow
+Also, identify the subject in a single word, categorize it (e.g., Animal, Character, Vehicle, Food, Object, etc.), and provide 3-5 relevant hashtags.
+Format: SUBJECT: <word> | CATEGORY: <word> | TAGS: <tag1>, <tag2>, ...
+Example: SUBJECT: Pikachu | CATEGORY: Character | TAGS: Pokemon, Kids, Brick, Yellow
 """
 
 
@@ -64,16 +64,16 @@ def _decode_if_base64_image(data: bytes | str) -> bytes:
     return data if isinstance(data, (bytes, bytearray)) else s.encode("utf-8")
 
 
-def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, list[str]]:
+def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, str, list[str]]:
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if not gemini_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
 
     lang_instruction = ""
     if language == "ko":
-        lang_instruction = "\n[IMPORTANT] The SUBJECT and TAGS representing the analysis result MUST be in KOREAN."
+        lang_instruction = "\n[IMPORTANT] The SUBJECT, CATEGORY and TAGS representing the analysis result MUST be in KOREAN."
     elif language == "ja":
-        lang_instruction = "\n[IMPORTANT] The SUBJECT and TAGS representing the analysis result MUST be in JAPANESE."
+        lang_instruction = "\n[IMPORTANT] The SUBJECT, CATEGORY and TAGS representing the analysis result MUST be in JAPANESE."
     
     final_prompt = PROMPT_NANO_BANANA + lang_instruction
 
@@ -129,8 +129,9 @@ def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") ->
         except Exception:
             pass
 
-    # Metadata parsing (SUBJECT / TAGS)
+    # Metadata parsing (SUBJECT / CATEGORY / TAGS)
     subject = "Object"
+    category = "Etc" # Default
     tags = ["Kids", "Brick"]
 
     try:
@@ -141,15 +142,19 @@ def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") ->
             s_part = meta_text.split("SUBJECT:")[1].split("|")[0].strip()
             if s_part:
                 subject = s_part
+        if "CATEGORY:" in meta_text:
+            c_part = meta_text.split("CATEGORY:")[1].split("|")[0].strip()
+            if c_part:
+                category = c_part
         if "TAGS:" in meta_text:
             t_part = meta_text.split("TAGS:")[1].strip()
             tags = [t.strip() for t in t_part.replace("#", "").split(",") if t.strip()]
     except Exception as e:
         print(f"[Gemini Meta] Tag parse error: {e}")
 
-    return out_bytes, subject, tags
+    return out_bytes, subject, category, tags
 
 
-async def render_one_image_async(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, list[str]]:
+async def render_one_image_async(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, str, list[str]]:
     """Gemini 호출은 동기라서 thread로 래핑"""
     return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime, language)
