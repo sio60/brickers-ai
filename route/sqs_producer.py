@@ -71,6 +71,9 @@ async def send_result_message(
     final_target: int = 0,
     tags: list[str] = None,
     background_url: str = "",
+    est_cost: float = None, # [New]
+    token_count: int = None, # [New]
+    stability_score: int = None, # [New]
     error_message: Optional[str] = None,
 ) -> None:
     """
@@ -87,6 +90,9 @@ async def send_result_message(
         parts: 파츠 수
         final_target: 최종 타겟
         tags: AI가 추출한 태그 목록
+        background_url: 배경 이미지 URL
+        est_cost: 예상 비용
+        token_count: 토큰 수
         error_message: 실패 시 에러 메시지
     """
     if not SQS_ENABLED:
@@ -124,6 +130,14 @@ async def send_result_message(
             message["errorMessage"] = error_message or "Unknown error"
             log("   - success=False")
             log(f"   - errorMessage: {error_message}")
+
+        # [Changed] Send Cost & Token info regardless of success
+        if est_cost is not None:
+            message["estCost"] = est_cost
+        if token_count is not None:
+            message["tokenCount"] = token_count
+        if stability_score is not None:
+            message["stabilityScore"] = stability_score
 
         log(f"   - queueUrl: {SQS_RESULT_QUEUE_URL}")
 

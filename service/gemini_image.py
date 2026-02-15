@@ -152,9 +152,15 @@ def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") ->
     except Exception as e:
         print(f"[Gemini Meta] Tag parse error: {e}")
 
-    return out_bytes, subject, category, tags
+    # [NEW] Token Usage Extraction
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    if hasattr(resp, "usage_metadata") and resp.usage_metadata:
+        usage["input_tokens"] = resp.usage_metadata.prompt_token_count
+        usage["output_tokens"] = resp.usage_metadata.candidates_token_count
+
+    return out_bytes, subject, category, tags, usage
 
 
-async def render_one_image_async(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, str, list[str]]:
+async def render_one_image_async(img_bytes: bytes, mime: str, language: str = "en") -> tuple[bytes, str, str, list[str], dict]:
     """Gemini 호출은 동기라서 thread로 래핑"""
     return await anyio.to_thread.run_sync(_render_one_image_sync, img_bytes, mime, language)

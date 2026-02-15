@@ -163,6 +163,31 @@ async def regeneration_loop(
     # [ASYNC CHANGE] invoke -> ainvoke
     final_state = await app.ainvoke(initial_state)
 
+    # [NEW] Token Usage & Cost Injection
+    if llm_client and hasattr(llm_client, "usage"):
+        usage = llm_client.usage
+        report = final_state.get("final_report", {})
+        if "final_metrics" not in report:
+            report["final_metrics"] = {}
+        
+        # Inject Tokens
+        report["final_metrics"]["token_usage"] = usage
+        
+        # Calculate Estimated Cost (USD)
+        # Gemini 1.5 Flash: Input $0.075/1M, Output $0.30/1M
+        # Tripo Base: $0.30 (Assumption)
+        input_cost = usage["input_tokens"] * 0.000000075
+        output_cost = usage["output_tokens"] * 0.00000030
+        tripo_cost = 0.30
+        
+        total_cost = input_cost + output_cost + tripo_cost
+        report["final_metrics"]["est_cost"] = round(total_cost, 5)
+        
+        # Update state
+        final_state["final_report"] = report
+        
+        _log("COST", f"예상 비용: ${total_cost:.4f} (Tokens: {usage['input_tokens']}/{usage['output_tokens']})")
+
     _log("VERIFY", "현 설계가 반복 조립에도 안정적인지 확인 중이에요.")
 
     # Evolver Post-Processing
