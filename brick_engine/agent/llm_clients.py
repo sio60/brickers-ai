@@ -148,6 +148,7 @@ class GroqClient(BaseLLMClient):
             )
         self.model = model
         self._client = None
+        self.usage = {"input_tokens": 0, "output_tokens": 0} # [NEW]
     
     def _get_client(self):
         """Groq 클라이언트 lazy 초기화"""
@@ -180,7 +181,57 @@ class GroqClient(BaseLLMClient):
             max_tokens=2048,
         )
         
+        # [NEW] Token Usage Logging
+        if hasattr(response, "usage") and response.usage:
+            self.usage["input_tokens"] += response.usage.prompt_tokens
+            self.usage["output_tokens"] += response.usage.completion_tokens
+            logger.debug(f"[Groq] Usage Updated: {self.usage}")
+        
         return response.choices[0].message.content
+
+# ... (OpenAIClient update) ...
+
+    def __init__(self, model_name: str = None, api_key: str = None):
+        try:
+            from openai import OpenAI
+            self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+            if not self.api_key:
+                logger.warning("OPENAI_API_KEY is not set.")
+                
+            self.client = OpenAI(api_key=self.api_key)
+            # Use environment variable as default if model_name is not provided
+            default_model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+            self.model_name = model_name or default_model
+            self.usage = {"input_tokens": 0, "output_tokens": 0} # [NEW]
+        except ImportError:
+            logger.error("OpenAI library not installed. Please install 'openai'.")
+            self.client = None
+
+    def _call_api(self, messages: List[Dict[str, str]], json_mode: bool = False) -> str:
+        if not self.client:
+            return "" if not json_mode else "{}"
+            
+        try:
+            params = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": 0.7,
+            }
+            if json_mode:
+                params["response_format"] = {"type": "json_object"}
+                
+            response = self.client.chat.completions.create(**params)
+            
+            # [NEW] Token Usage Logging
+            if hasattr(response, "usage") and response.usage:
+                self.usage["input_tokens"] += response.usage.prompt_tokens
+                self.usage["output_tokens"] += response.usage.completion_tokens
+                logger.debug(f"[OpenAI] Usage Updated: {self.usage}")
+
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"OpenAI API Call Failed: {e}")
+            raise e
     
     def generate_json(self, prompt: str, system_prompt: str = "") -> Dict[str, Any]:
         """
@@ -237,6 +288,7 @@ class GeminiClient(BaseLLMClient):
             )
         self.model_name = model
         self._model = None
+        self.usage = {"input_tokens": 0, "output_tokens": 0} # [NEW]
 
     def _get_model(self):
         """LangChain 기반 Gemini 모델 lazy 초기화"""
@@ -283,6 +335,13 @@ class GeminiClient(BaseLLMClient):
                 
                 # API 호출
                 response = llm.invoke(messages)
+                
+                # [NEW] Token Usage Logging
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    self.usage["input_tokens"] += response.usage_metadata.get("input_tokens", 0)
+                    self.usage["output_tokens"] += response.usage_metadata.get("output_tokens", 0)
+                    logger.debug(f"Usage Updated: {self.usage}")
+
                 content = response.content
                 
                 # content가 리스트인 경우 (멀티파트 등) 문자열로 변환
