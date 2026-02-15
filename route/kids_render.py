@@ -45,6 +45,7 @@ from service.background_composer import generate_background_async
 from service.backend_client import (
     update_job_stage,
     update_job_suggested_tags,
+    update_job_category,
     make_agent_log_sender,
     send_agent_log,
     send_agent_trace,
