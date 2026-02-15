@@ -51,12 +51,25 @@ def _generate_lesson_llm(
     Returns:
         tuple: (lesson 텍스트, lesson_tag)
     """
-    # 간략화된 정보
-    before_brick_list = f"부유: {before_state.get('floating', 0)}개, 충돌: {before_state.get('collision', 0)}개"
-    after_brick_list = f"부유: {after_state.get('floating', 0)}개, 충돌: {after_state.get('collision', 0)}개"
+    # 수치 변화량 계산
+    bf = before_state.get('floating', 0)
+    af = after_state.get('floating', 0)
+    bc = before_state.get('collision', 0)
+    ac = after_state.get('collision', 0)
+    bq = before_state.get('vision_quality', 0) or 0
+    aq = after_state.get('vision_quality', 0) or 0
+    bp = before_state.get('vision_problems', 0)
+    ap = after_state.get('vision_problems', 0)
 
-    before_vision = f"품질: {before_state.get('vision_quality', 'N/A')}, 문제: {before_state.get('vision_problems', 0)}개"
-    after_vision = f"품질: {after_state.get('vision_quality', 'N/A')}, 문제: {after_state.get('vision_problems', 0)}개"
+    df = af - bf
+    dc = ac - bc
+    dq = aq - bq
+
+    before_brick_list = f"floating={bf}, collision={bc}"
+    after_brick_list = f"floating={af}({df:+d}), collision={ac}({dc:+d})"
+
+    before_vision = f"quality={bq}, problems={bp}"
+    after_vision = f"quality={aq}({dq:+d}), problems={ap}"
 
     context = REFLECT_PROMPT.format(
         strategy=strategy,
@@ -80,13 +93,20 @@ def _generate_lesson_llm(
     except Exception as e:
         print(f"  [WARNING] LLM 회고 실패: {e}")
 
-    # fallback: 규칙 기반 lesson
+    # fallback: 규칙 기반 lesson (한글 수치 포함)
+    STRATEGY_KR = {
+        "SYMMETRY_FIX": "대칭수정", "RELOCATE": "위치이동", "ROTATE": "회전",
+        "REBUILD": "재구축", "SELECTIVE_REMOVE": "선택삭제", "BRIDGE": "브릿지",
+        "ADD_SUPPORT": "지지대추가", "ROLLBACK": "롤백",
+    }
+    kr = STRATEGY_KR.get(strategy, strategy)
+    delta_str = f"부유 {bf}→{af}({df:+d}), 충돌 {bc}→{ac}({dc:+d}), 품질 {bq}→{aq}({dq:+d})"
     if vision_improved and not collision_worsened:
-        return f"SUCCESS: {strategy} 전략이 효과적이었음", "SUCCESS"
+        return f"{kr} {delta_str}. 개선 성공", "SUCCESS"
     elif collision_worsened:
-        return f"FAILED: {strategy} 전략이 충돌을 악화시킴", "FAILED"
+        return f"{kr} {delta_str}. 충돌 악화로 실패", "FAILED"
     else:
-        return f"INSIGHT: {strategy} 전략의 효과가 불분명함", "INSIGHT"
+        return f"{kr} {delta_str}. 수치 변화 없음", "INSIGHT"
 
 
 def _summarize_lessons(lessons: list) -> list:
