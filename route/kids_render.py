@@ -720,7 +720,8 @@ async def process(request: KidsProcessRequest):
             "pdfUrl": result.get("pdfUrl"), # [New]
             "backgroundUrl": result.get("backgroundUrl"),
             "subject": result["subject"],
-            "tags": result["tags"],
+            "tags": result["suggestedTags"],
+            "imageCategory": result.get("imageCategory"),
             "parts": result["parts"],
             "finalTarget": result["finalTarget"],
             "lmmLatency": result.get("lmmLatency"), # [New]
