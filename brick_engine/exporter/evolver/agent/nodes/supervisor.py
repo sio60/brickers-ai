@@ -73,6 +73,10 @@ def _get_valid_strategies(state: AgentState) -> List[str]:
         if state["memory"]["consecutive_failures"] >= 2:
             strategies.add("ADD_SUPPORT")
 
+    # Collision(충돌) → 겹침 해소를 위한 전략 추가
+    if state.get("collision_count", 0) > 0:
+        strategies.update(["SELECTIVE_REMOVE", "RELOCATE"])
+
     # 아무 전략도 없으면 종료 신호
     if not strategies:
         return []

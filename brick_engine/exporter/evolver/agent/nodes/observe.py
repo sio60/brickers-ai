@@ -128,6 +128,9 @@ def node_observe(state: AgentState) -> AgentState:
                 print(f"  [Vision] Render failed, skipping")
                 vision_quality_score = 50
 
+        except ImportError as e:
+            print(f"  [Vision] Skipped - 렌더러 미설치 ({e}), 물리 검증만 진행합니다.")
+            vision_quality_score = 50
         except Exception as e:
             print(f"  [Vision] Error: {e}")
             vision_quality_score = 50

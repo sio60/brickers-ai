@@ -60,6 +60,8 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             result_content = f"파라미터가 업데이트되었습니다. ({args})"
             next_step = "generator"
             state['params'] = new_params
+            # 재생성 시 병합 상태 리셋 (다시 병합 단계를 거치도록)
+            state['merged'] = False
 
         elif tool_name == "RemoveBricks":
             brick_ids = args.get('brick_ids', [])

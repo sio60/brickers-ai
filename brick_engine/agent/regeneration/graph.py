@@ -20,6 +20,7 @@ from .nodes.verifier import node_verifier
 from .nodes.model import node_model
 from .nodes.tool_executor import node_tool_executor
 from .nodes.reflect import node_reflect
+from .nodes.merger import node_merger
 
 
 class RegenerationGraph:
@@ -56,13 +57,37 @@ class RegenerationGraph:
         from service.backend_client import send_agent_trace
 
         start_ts = time.time()
-        # Input snapshot (lite version)
-        input_snap = {
-            "attempts": state.get("attempts"),
-            "next_action": state.get("next_action"),
-            "params": state.get("params", {}),
-            # "messages": [m.content[:50] + "..." for m in state.get("messages", [])] # Too heavy?
-        }
+        # Input snapshot (Enriched for Admin UI)
+        def serialize_state(s):
+            """에이전트 상태를 JSON 직렬화 가능한 형태로 변환"""
+            if not isinstance(s, dict):
+                return str(s)
+            
+            clean_state = {}
+            for k, v in s.items():
+                if k == 'messages':
+                    # 메시지 내역을 읽기 쉬운 포맷으로 변환
+                    clean_state[k] = [
+                        {
+                            "role": "assistant" if "AI" in str(type(m)) else ("user" if "Human" in str(type(m)) else "system"),
+                            "content": m.content if hasattr(m, 'content') else str(m)
+                        } for m in v[-5:] # 최근 5개 메시지만
+                    ]
+                elif k in ['hypothesis_maker', 'verifier']: # 직렬화 불가능한 객체 제외
+                    continue
+                elif k in ['verification_raw_result', 'floating_bricks_ids', 'floating_ids', 'fallen_ids']:
+                    # 수백 개의 브릭 데이터는 요약정보만 표시 (가독성 보호)
+                    count = len(v) if isinstance(v, list) else (len(v.get('issues', [])) if isinstance(v, dict) else 0)
+                    clean_state[k] = f"[Filtered: {count} items for readability]"
+                elif isinstance(v, list) and len(v) > 20: # 너무 긴 리스트는 잘라냄
+                    clean_state[k] = [serialize_state(x) for x in v[:20]] + [f"... and {len(v)-20} more"]
+                elif isinstance(v, (str, int, float, bool, list, dict)) or v is None:
+                    clean_state[k] = v
+                else:
+                    clean_state[k] = str(v)
+            return clean_state
+
+        input_snap = serialize_state(state)
         
         status = "SUCCESS"
         output_snap = {}
@@ -75,7 +100,7 @@ class RegenerationGraph:
                 # Run sync node in thread to avoid blocking loop
                 result = await anyio.to_thread.run_sync(func, self, state)
             
-            output_snap = result if isinstance(result, dict) else {"result": str(result)}
+            output_snap = serialize_state(result) if isinstance(result, dict) else {"result": str(result)}
             return result
         
         except Exception as e:
@@ -123,6 +148,9 @@ class RegenerationGraph:
     async def node_reflect(self, state):
         return await self._trace("node_reflect", node_reflect, state)
 
+    async def node_merger(self, state):
+        return await self._trace("node_merger", node_merger, state)
+
     # --- Build Graph ---
 
     def build(self):
@@ -134,6 +162,7 @@ class RegenerationGraph:
         workflow.add_node("tool_executor", self.node_tool_executor)
         workflow.add_node("reflect", self.node_reflect)
         workflow.add_node("strategy", self.node_strategy)
+        workflow.add_node("merger", self.node_merger)
 
         hyp_graph = build_hypothesis_graph()
         workflow.add_node("hypothesize", hyp_graph)
@@ -146,8 +175,10 @@ class RegenerationGraph:
             "model": "model",
             "end": END,
             "verifier": "verifier",
-            "reflect": "reflect"
+            "reflect": "reflect",
+            "merge": "merger"
         })
+        workflow.add_conditional_edges("merger", route_next, {"verify": "verifier"})
         workflow.add_conditional_edges("reflect", route_next, {
             "model": "model",
             "hypothesize": "hypothesize"

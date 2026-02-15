@@ -4,6 +4,8 @@ brick-judge/physics
 """
 
 import json
+import os
+import sys
 from enum import Enum
 from dataclasses import dataclass
 from typing import List, Optional, TYPE_CHECKING
@@ -90,7 +92,27 @@ def _parse_rust_issues(json_str: str, bricks: List["Brick"] = None) -> List[Issu
 
 def full_judge(model: "ParsedModel") -> List[Issue]:
     json_str = _bricks_to_json(model.bricks)
-    result = _rust_module.full_judge_json(json_str)
+    
+    # Rust 모듈의 stdout 로그 억제 (OS 레벨 리다이렉션)
+    try:
+        # 1. 현재 stdout FD 백업
+        fd = sys.stdout.fileno()
+        saved_stdout = os.dup(fd)
+        
+        try:
+            # 2. stdout을 devnull로 교체
+            with open(os.devnull, 'w') as fnull:
+                os.dup2(fnull.fileno(), fd)
+                # 3. Rust 함수 실행
+                result = _rust_module.full_judge_json(json_str)
+        finally:
+            # 4. stdout 복구
+            os.dup2(saved_stdout, fd)
+            os.close(saved_stdout)
+    except Exception:
+        # 리다이렉션 실패 시 (환경 특성 등) 그냥 실행
+        result = _rust_module.full_judge_json(json_str)
+
     return _parse_rust_issues(result, model.bricks)
 
 

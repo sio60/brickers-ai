@@ -27,17 +27,24 @@ def _load_hf_model():
 
         try:
             from transformers import AutoTokenizer, AutoModel
-            try:
-                import config
-            except ImportError:
-                return
-            model_name = getattr(config, "HF_EMBED_MODEL", "intfloat/multilingual-e5-small")
+            import config
+            
+            # config.HF_EMBED_MODEL이 함수나 다른 객체로 오인되지 않도록 강제 문자열 변환 및 검증
+            raw_model_name = getattr(config, "HF_EMBED_MODEL", "intfloat/multilingual-e5-small")
+            
+            if callable(raw_model_name): # 만약 메서드가 왔다면 기본값 사용
+                model_name = "intfloat/multilingual-e5-small"
+            else:
+                model_name = str(raw_model_name)
+                
             logger.info(f"Loading HF embedding model: {model_name}")
             _hf_tokenizer = AutoTokenizer.from_pretrained(model_name)
             _hf_model = AutoModel.from_pretrained(model_name)
-            logger.info("HF embedding model loaded")
+            logger.info("HF embedding model loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load HF model: {e}")
+            logger.error(f"Failed to load HF model: {type(e).__name__}: {e}")
+            # 로딩 실패 시 sentinel 값 설정하여 매번 재시도 방지
+            _hf_model = False
 
 
 def get_embedding(text: str, max_retries: int = 2) -> List[float]:
@@ -58,7 +65,7 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
     except Exception as e:
         logger.warning(f"HF embedding failed: {e}")
 
-    # Fallback: Gemini API
+    # Fallback: Gemini API (새 SDK: google-genai)
     for attempt in range(max_retries):
         try:
             try:
@@ -66,14 +73,17 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
             except ImportError:
                 break
             if getattr(config, "GEMINI_API_KEY", ""):
-                import google.generativeai as genai
-                genai.configure(api_key=config.GEMINI_API_KEY)
-                result = genai.embed_content(
-                    model="models/text-embedding-004",
-                    content=text,
-                    task_type="retrieval_document"
+                from google import genai
+                from google.genai import types
+                client = genai.Client(
+                    api_key=config.GEMINI_API_KEY,
+                    http_options=types.HttpOptions(api_version='v1')
                 )
-                return result['embedding']
+                result = client.models.embed_content(
+                    model="text-embedding-004",
+                    contents=text
+                )
+                return result.embeddings[0].values
         except Exception as e:
             logger.warning(f"Gemini embedding attempt {attempt+1} failed: {e}")
             if attempt < max_retries - 1:
