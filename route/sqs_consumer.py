@@ -225,8 +225,6 @@ async def _job_worker():
                 # # Start Auto-Flush Task
                 # flusher_task = asyncio.create_task(_auto_flush_logs())
 
-                # Kids 렌더링 실행 (순차 — 이 작업이 끝나야 다음 작업 시작)
-                # [CHANGE] Pass external buffer
                 result = await process_kids_request_internal(
                     job_id=job_id,
                     source_image_url=source_image_url,
@@ -237,38 +235,56 @@ async def _job_worker():
                     external_log_buffer=job_log_buffer, # [NEW]
                 )
 
-                log(f"✅ AI 렌더링 완료!", user_email=user_email)
-                log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
-                log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
-                log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
-                log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
+                if result.get("success", True) is False:
+                    # [NEW] Handle Explicit Failure Return (with partial cost)
+                    log(f"❌ [Worker] 렌더링 실패 (Graceful Return) | error={result.get('error')}", user_email=user_email)
+                    await send_result_message(
+                        job_id=job_id,
+                        success=False,
+                        error_message=result.get("error", "Unknown error"),
+                        est_cost=result.get("estCost"),
+                        token_count=result.get("tokenCount"),
+                    )
+                    delete_message(receipt_handle)
+                    _TOTAL_REQUESTS_FAILED += 1
+                    await archive_job_logs(job_id, list(job_log_buffer), status="FAILED")
+                else:
+                    # [Existing] Success Logic
+                    log(f"✅ AI 렌더링 완료!", user_email=user_email)
+                    log(f"   - correctedUrl: {result.get('correctedUrl', '')[:60]}...")
+                    log(f"   - modelUrl: {result.get('modelUrl', '')[:60]}...")
+                    log(f"   - ldrUrl: {result.get('ldrUrl', '')[:60]}...")
+                    log(f"   - parts: {result.get('parts')}, finalTarget: {result.get('finalTarget')}", user_email=user_email)
 
-                # RESULT 메시지 전송 (성공)
-                log("📤 [Worker] RESULT 메시지 전송 중...")
-                await send_result_message(
-                    job_id=job_id,
-                    success=True,
-                    corrected_url=result["correctedUrl"],
-                    glb_url=result["modelUrl"],
-                    ldr_url=result["ldrUrl"],
-                    bom_url=result["bomUrl"],
-                    pdf_url=result.get("pdfUrl", ""),
-                    parts=result["parts"],
-                    final_target=result["finalTarget"],
-                    tags=result.get("tags", []),
-                    background_url=result.get("backgroundUrl", ""),
-                )
+                    # RESULT 메시지 전송 (성공)
+                    log("📤 [Worker] RESULT 메시지 전송 중...")
+                    await send_result_message(
+                        job_id=job_id,
+                        success=True,
+                        corrected_url=result["correctedUrl"],
+                        glb_url=result["modelUrl"],
+                        ldr_url=result["ldrUrl"],
+                        bom_url=result["bomUrl"],
+                        pdf_url=result.get("pdfUrl", ""),
+                        parts=result["parts"],
+                        final_target=result["finalTarget"],
+                        tags=result.get("tags", []),
+                        background_url=result.get("backgroundUrl", ""),
+                        est_cost=result.get("estCost"), # [New]
+                        token_count=result.get("tokenCount"), # [New]
+                        stability_score=result.get("stabilityScore"), # [New]
+                    )
 
-                delete_message(receipt_handle)
-                _TOTAL_REQUESTS_COMPLETED += 1
+                    delete_message(receipt_handle)
+                    _TOTAL_REQUESTS_COMPLETED += 1
 
-                log(f"✅ [Worker] 처리 완료 | jobId={job_id} | "
-                    f"완료: {_TOTAL_REQUESTS_COMPLETED} | 실패: {_TOTAL_REQUESTS_FAILED}",
-                    user_email=user_email)
-                log("=" * 60, user_email=user_email)
-                
-                # [NEW] Archive Final State (Success)
-                await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
+                    log(f"✅ [Worker] 처리 완료 | jobId={job_id} | "
+                        f"완료: {_TOTAL_REQUESTS_COMPLETED} | 실패: {_TOTAL_REQUESTS_FAILED}",
+                        user_email=user_email)
+                    log("=" * 60, user_email=user_email)
+                    
+                    # [NEW] Archive Final State (Success)
+                    await archive_job_logs(job_id, list(job_log_buffer), status="SUCCESS")
 
                 # finally:
                 #     # 작업 종료 시 플러셔 정리
