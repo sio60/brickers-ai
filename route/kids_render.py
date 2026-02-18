@@ -693,12 +693,12 @@ async def process_kids_request_internal(
                         "token_count": result.get("token_count"), # [NEW]
                     },
                 }
-                # CoScientist 사용 시 추가 정보
-                if used_coscientist:
+                # CoScientist 사용 시 추가 정보 (Fallback이어도 기록이 있으면 포함)
+                if used_coscientist or report.get("total_attempts", 0) > 0:
                     pipeline_summary["coscientist"] = {
-                        "success": report.get("success"),
-                        "total_attempts": report.get("total_attempts"),
-                        "message": report.get("message", ""),
+                        "success": report.get("success", False),
+                        "total_attempts": report.get("total_attempts", 0),
+                        "message": report.get("message", "CoScientist failed, fallback to basic brickify"),
                         "tool_usage": report.get("tool_usage", {}),
                     }
                 await _trace("PipelineSummary", "SUCCESS", "Pipeline Complete", {}, pipeline_summary, int(total_elapsed * 1000))
