@@ -20,6 +20,7 @@ class IntelligenceService:
         # 1. Analytics (거시)
         summary = await backend_client.get_analytics_summary(days)
         tags = await backend_client.get_top_tags(days, limit=10)
+        keywords = await backend_client.get_top_keywords(days, limit=10) # [NEW]
         
         # 2. Database (미시)
         db_stats = {}
@@ -40,6 +41,7 @@ class IntelligenceService:
             "timestamp": datetime.now().isoformat(),
             "analytics_summary": summary,
             "popular_trends": tags,
+            "popular_keywords": keywords, # [NEW]
             "db_raw_insights": {
                 "total_jobs_24h": db_stats.get("total_recent_jobs", 0),
                 "failure_count": len(db_stats.get("error_jobs", [])),

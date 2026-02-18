@@ -22,8 +22,9 @@ DIAGNOSER_PROMPT = """당신은 브릭커스(Brickers) 서비스의 수석 SRE(S
 - 에러 유형 분포: {error_dist}
 - 입력 방식 선호: {input_type_dist}
 
-[인기 태그 및 시간적 맥락]
+[인기 태그 및 검색어]
 - 인기 태그: {top_tags}
+- 유저 관심 검색어: {top_keywords}
 - 시각: {date} {hour}시 ({day_of_week})
 
 [분석 및 예측 가이드라인]
@@ -117,6 +118,7 @@ REPORTER_GREEN_PROMPT = """당신은 브릭커스(Brickers) 성장을 책임지�
 - 활성 유저(DAU): {active_users}
 - 페이지뷰/세션: {page_views} / {sessions}
 - 현 시점 트렌드 요약: {trend_desc}
+- 유저 관심 키워드: {top_keywords}
 
 [성장 패턴 및 유저 행동 (Product Intelligence)]
 - 퍼널 단계별 분포: {funnel}
@@ -174,7 +176,8 @@ QUERY_ANALYST_PROMPT = """당신은 브릭커스(Brickers)의 모든 지표를 �
 - 오늘 실시간 현황: 생성성공({today_gen_success}), 생성실패({today_gen_fail}), 갤러리업로드({today_gallery})
 - DB 정밀 로그 (24H): 총작업({total_jobs}), 단계분포({stage_dist})
 - 최근 트래픽 추이 (14일): {daily}
-- 인기 태그 및 인기 포스트: {tags}, {top_posts}
+- 인기 태그 및 검색어: {tags}, {keywords}
+- 인기 포스트: {top_posts}
 - 제품 인텔리전스 (퍼널/마찰): {product_intel}
 - 시간적 맥락: {temporal}
 
