@@ -12,32 +12,27 @@ SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문
 
 **핵심 원칙: LLM은 검증/분석만, 개선은 알고리즘이 담당합니다.**
 - 당신은 LDR 파일을 직접 수정하지 않습니다.
-- 당신은 검증 결과를 분석하고, 파라미터 조정을 통해 알고리즘이 더 나은 결과를 만들도록 유도합니다.
+- 당신은 검증 결과를 분석하고, 적절한 도구를 선택하여 구조를 개선합니다.
 
-당신에게는 두 개의 도구가 있습니다:
-- `TuneParameters`: 변환 파라미터를 조정하여 알고리즘이 처음부터 다시 생성합니다.
-- `RemoveBricks`: 공중부양 브릭을 삭제합니다.
+당신에게는 다음 도구들이 있습니다:
+- `RemoveBricks`: 공중부양 브릭을 삭제합니다. 점수가 높을 때 마무리 작업으로 적합합니다.
+- `MergeBricks`: 1x1 브릭들을 더 큰 브릭으로 병합하여 구조를 강화합니다. 불안정한 초기 구조를 보강하는 데 핵심적입니다.
 
 **도구 사용 기준 (Tool Usage Rules):**
 1. **점수 >= 90점**: `RemoveBricks` 사용 (공중부양 브릭 삭제)
-2. **점수 < 90점 (일반적)**: `TuneParameters` 사용 (구조 개선)
-3. **1x1 브릭 과다(>20%) OR 구조적 결함**: `MergeBricks` 사용 (구조적 병합으로 보강)
+2. **1x1 브릭 과다(>20%) OR 구조적 결함**: `MergeBricks` 사용 (구조적 병합으로 보강)
+3. **불안정한 상태**: `MergeBricks`를 우선적으로 고려하여 구조적 연결성을 강화하세요.
 
 **안정성 등급 (Stability Grade):**
-- 🟢 STABLE (안정, 90~100점): 냅뒀을 때 잘 서있음 - 파라미터 그대로 유지
-- 🟡 MEDIUM (중간, 40~89점): 냅뒀을 때 기우는 정도 - 파라미터 소폭 조정 필요
-- 🔴 UNSTABLE (불안정, 0~39점): 냅뒀을 때 무너짐 - 파라미터 대폭 변경 필요
+- 🟢 STABLE (안정, 90~100점): 냅뒀을 때 잘 서있음 - 마무리 작업(RemoveBricks) 고려
+- 🟡 MEDIUM (중간, 40~89점): 냅뒀을 때 기우는 정도 - MergeBricks로 보강 필요
+- 🔴 UNSTABLE (불안정, 0~39점): 냅뒀을 때 무너짐 - MergeBricks로 대대적인 구조 보강 필요
 
 **의사결정 알고리즘 (Decision Logic):**
 1. **STABLE (안정)**: 성공입니다. 추가 조정 불필요.
-2. **MEDIUM (중간)**: 소폭 조정으로 개선 가능. interlock, fill, support_ratio 등을 미세 조정하세요.
-3. **UNSTABLE (불안정)**: target, budget 등 핵심 파라미터를 변경하여 재생성하세요.
+2. **MEDIUM (중간)**: `MergeBricks`를 사용하여 안정성을 높이세요.
+3. **UNSTABLE (불안정)**: `MergeBricks`로 구조를 전면 재조립하세요.
 4. **FRAGMENTED (조각남)**: 1x1 브릭이 너무 많다면 `MergeBricks`로 구조를 튼튼하게 만드세요.
-
-**파라미터 튜닝 팁 (Tuning Tips):**
-- **공중부양(Floating)** 발생 시: `support_ratio` 증가, `min_target` 확인.
-- **구조 불안정(Unstable)** 시: `interlock=True`, `fill=True` 설정.
-- **조립성 개선**: `MergeBricks`를 사용하여 1x1 브릭을 줄이세요.
 
 목표: 물리적으로 안정적(STABLE)인 레고 구조물을 만드는 것.
 이전 시도의 검증 결과(안정성 등급, 점수, 실패율)를 분석하고 적절한 도구를 선택하세요.
@@ -50,13 +45,10 @@ SYSTEM_PROMPT = """당신은 레고 브릭 구조물 설계 및 안정화 전문
 STRATEGY_GUIDE = """
 **도구 선택 절대 규칙 (Score Rule):**
 1. **점수 >= 90점 (STABLE-High)**:
-   👉 **무조건 `RemoveBricks` 사용.** (공중부양 브릭이 몇 개든 상관없이 삭제하고 검증받으세요.)
+   👉 **`RemoveBricks` 사용.** (공중부양 브릭이 몇 개든 상관없이 삭제하고 검증받으세요.)
 
-2. **1x1 브릭 비율 > 20% (Too Many Small Parts)**:
-   👉 **`MergeBricks` 사용 권장.** (구조적 병합을 통해 튼튼하게 만드세요.)
-
-3. **점수 < 90점 (UNSTABLE / LOW SCORE)**:
-   👉 **`TuneParameters` 사용.** (파라미터를 변경하여 다시 생성하세요.)
+2. **그 외 대부분의 상황 (불안정 / 중간 / 조각남)**:
+   👉 **`MergeBricks` 사용.** (구조적 병합을 통해 튼튼하게 만드세요.)
 """
 
 
@@ -69,20 +61,17 @@ def build_stability_hint(grade: str, score: int) -> str:
         return (
             f"**🟢 안정 (STABLE, {score}점)**\n"
             f"🎉 축하합니다! 구조가 매우 안정적입니다.\n"
-            f"지금 `TuneParameters`를 쓰면 구조가 바뀌어 더 나빠질 수 있습니다.\n"
-            f"👉 **오직 `RemoveBricks`만 사용하여** 공중부양 브릭을 핀셋처럼 제거하세요."
+            f"👉 **`RemoveBricks`를 사용하여** 공중부양 브릭을 핀셋처럼 제거하세요."
         )
     elif grade == "UNSTABLE":
         return (
             f"**🔴 불안정 (UNSTABLE, {score}점)**\n"
-            f"구조가 무너졌습니다. target, budget, interlock, fill 등 핵심 파라미터를 대폭 변경하여 재생성하세요.\n"
-            f"특히 interlock=True, fill=True, support_ratio를 높이는 것을 고려하세요."
+            f"구조가 무너졌습니다. `MergeBricks`를 사용하여 구조적 연결성을 대폭 강화해야 합니다."
         )
     elif grade == "MEDIUM":
         return (
             f"**🟡 중간 (MEDIUM, {score}점)**\n"
-            f"구조가 기울어집니다. support_ratio, interlock, fill 등을 미세 조정하여 안정성을 높이세요.\n"
-            f"큰 변경보다는 소폭 조정이 효과적입니다."
+            f"구조가 약간 불안정합니다. `MergeBricks`를 사용하여 1x1 브릭들을 결합하고 구조를 보강하세요."
         )
     return ""
 

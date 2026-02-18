@@ -20,7 +20,7 @@ def node_model(graph, state) -> Dict[str, Any]:
     print("\n[Co-Scientist] 상황 분석 중...")
     graph._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")
 
-    tools = [TuneParameters, RemoveBricks, MergeBricks]
+    tools = [RemoveBricks, MergeBricks] # TuneParameters 일시 비활성화
 
 
     messages_to_send = state['messages'][:]
@@ -155,8 +155,8 @@ def node_model(graph, state) -> Dict[str, Any]:
 
             if tool_name == "RemoveBricks":
                 graph._log("MODEL", "구조가 거의 완성되었습니다! 불안정한 브릭들만 핀셋으로 도려낼게요.")
-            elif tool_name == "TuneParameters":
-                graph._log("MODEL", "현재 파라미터로는 한계가 있네요. 새로운 관점에서 설계를 다시 시도해 보겠습니다.")
+            # elif tool_name == "TuneParameters":
+            #     graph._log("MODEL", "현재 파라미터로는 한계가 있네요. 새로운 관점에서 설계를 다시 시도해 보겠습니다.")
             elif tool_name == "MergeBricks":
                 graph._log("MODEL", "브릭이 너무 조각나 있네요. 튼튼한 구조로 합병 작업을 진행합니다.")
 
@@ -173,7 +173,7 @@ def node_model(graph, state) -> Dict[str, Any]:
                 return {"messages": [response], "next_action": "end"}
             else:
                 print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 재지시 중...")
-                error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. TuneParameters로 파라미터를 조정하여 알고리즘이 더 안정적인 구조를 생성하도록 하세요."
+                error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. MergeBricks 또는 RemoveBricks를 사용하여 구조를 수정하세요."
                 hint = HumanMessage(content=error_feedback)
                 return {"messages": [response, hint], "next_action": "model"}
 
