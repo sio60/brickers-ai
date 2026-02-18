@@ -501,6 +501,7 @@ async def process_kids_request_internal(
 
                 # CoScientist regeneration_loop 시도 → 실패 시 단순 brickify fallback
                 used_coscientist = False
+                metrics = {}
                 try:
                     regen_loop_fn, gemini_cls = load_agent_modules()
                     _log("[CoScientist] LLM 재생성 에이전트 활성화")
