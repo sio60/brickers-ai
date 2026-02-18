@@ -712,20 +712,20 @@ async def process_kids_request_internal(
 
             # Ensure background URL ready before returning
             # Ensure background requested log
+            # [NEW] Initial Model URL (for comparison)
+            initial_ldr_url = None
+            initial_model_path = report.get("initial_model_path")
+            if initial_model_path:
+                try:
+                    p = Path(initial_model_path)
+                    if p.exists():
+                        # out_brick_dir 내부에 있으므로 out_dir 지정
+                        initial_ldr_url = to_generated_url(p, out_dir=out_brick_dir)
+                except Exception as e:
+                    _log(f"초기 모델 URL 생성 실패: {e}")
+
             if background_requested:
                 _log("   Background generation requested to Screenshot Server")
-
-                # [NEW] Initial Model URL (for comparison)
-                initial_ldr_url = None
-                initial_model_path = report.get("initial_model_path")
-                if initial_model_path:
-                    try:
-                        p = Path(initial_model_path)
-                        if p.exists():
-                            # out_brick_dir 내부에 있으므로 out_dir 지정
-                            initial_ldr_url = to_generated_url(p, out_dir=out_brick_dir)
-                    except Exception as e:
-                        _log(f"초기 모델 URL 생성 실패: {e}")
 
             return {
                 "success": True, # [NEW] Explicit success flag
