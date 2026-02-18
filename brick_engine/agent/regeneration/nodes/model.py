@@ -14,16 +14,46 @@ from ..rag_ranker import rerank_and_filter_cases
 
 def node_model(graph, state) -> Dict[str, Any]:
     """LLM이 상황을 분석하고 도구를 선택하는 노드"""
-    from ...agent_tools import TuneParameters, RemoveBricks
+    from ...agent_tools import TuneParameters, RemoveBricks, MergeBricks
     from ...memory_utils import memory_manager
 
     print("\n[Co-Scientist] 상황 분석 중...")
     graph._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")
 
-    tools = [TuneParameters, RemoveBricks]
+    tools = [TuneParameters, RemoveBricks, MergeBricks]
+
+
+    messages_to_send = state['messages'][:]
+    
+    # --- [New] 1x1 브릭 비율 분석 및 MergeBricks 권장 로직 ---
+    ldr_path = state.get('ldr_path')
+    merged_flag = state.get('merged', False)
+    
+    if ldr_path and not merged_flag:
+        try:
+            total_bricks = 0
+            small_bricks = 0
+            with open(ldr_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip().startswith('1 '): # 브릭 정의 라인
+                        total_bricks += 1
+                        if "3005.dat" in line:
+                            small_bricks += 1
+            
+            if total_bricks > 0:
+                ratio = small_bricks / total_bricks
+                if ratio > 0.2: # 20% 이상이면 경고
+                    warning_msg = (
+                        f"⚠️ **1x1 브릭 비율 경고 ({ratio*100:.1f}%)**\n"
+                        f"현재 구조물에 1x1 브릭이 너무 많아 구조적 안정성이 떨어질 위험이 큽니다.\n"
+                        f"👉 **`MergeBricks` 도구를 사용하여 불안정 부위를 구조적으로 보강하세요.**"
+                    )
+                    messages_to_send.append(SystemMessage(content=warning_msg))
+                    print(f"  [Hint] 1x1 ratio {ratio:.2f} > 0.2 -> MergeBricks 추천")
+        except Exception as e:
+            print(f"  [Error] LDR 분석 중 오류: {e}")
 
     # --- 전략 가이드 주입 ---
-    messages_to_send = state['messages'][:]
     messages_to_send.append(SystemMessage(content=STRATEGY_GUIDE))
 
     # --- Memory 정보 주입 (RAG) ---
@@ -127,6 +157,8 @@ def node_model(graph, state) -> Dict[str, Any]:
                 graph._log("MODEL", "구조가 거의 완성되었습니다! 불안정한 브릭들만 핀셋으로 도려낼게요.")
             elif tool_name == "TuneParameters":
                 graph._log("MODEL", "현재 파라미터로는 한계가 있네요. 새로운 관점에서 설계를 다시 시도해 보겠습니다.")
+            elif tool_name == "MergeBricks":
+                graph._log("MODEL", "브릭이 너무 조각나 있네요. 튼튼한 구조로 합병 작업을 진행합니다.")
 
             return {"messages": [response], "next_action": "tool"}
         else:

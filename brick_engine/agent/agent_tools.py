@@ -42,6 +42,23 @@ class RemoveBricks(BaseModel):
     reasoning: str = Field(..., description="삭제 이유 (예: '점수 92점이나 공중부양 브릭 2개 발생하여 제거')")
 
 
+class MergeBricks(BaseModel):
+    """
+    불안정한 브릭들을 구조적으로 보강하기 위해 병합 작업을 수행합니다.
+    
+    [동작 방식]
+    1. 검증 결과에서 '불안정(Floating/Isolated)'으로 판명된 브릭을 식별합니다.
+    2. 해당 브릭과 인접한 안정적인 브릭들을 1x1 단위로 분해합니다.
+    3. 분해된 브릭들을 색상과 관계없이 가장 튼튼한 방향(X/Z축)으로 재조립(Merge)합니다.
+    
+    [주의사항]
+    - 1x1 플레이트(3024)는 불안정하므로 생성하지 않습니다. 오직 브릭(Brick)으로만 병합합니다.
+    - 1x1 브릭 비율이 높거나 구조적 결함이 있을 때 사용하세요.
+    """
+    strategy: str = Field("structural", description="[Deprecated] 병합 전략 (현재는 항상 'structural'로 고정되어 무시됨).")
+    reasoning: str = Field(..., description="병합을 선택한 이유 (예: '1x1 브릭 과다 및 Floating 브릭 발생으로 구조 보강 필요')")
+
+
 # --- Infrastructure Tools ---
 
 class CheckDBStatus(BaseModel):
