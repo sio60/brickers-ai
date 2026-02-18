@@ -181,6 +181,8 @@ class ProcessResp(BaseModel):
     lmmLatency: Optional[int] = None # [New] AI 생성 시간 (ms)
     estCost: Optional[float] = None # [New] 예상 비용 (USD)
     tokenCount: Optional[int] = None # [New] 총 토큰 수
+    stabilityScore: Optional[int] = None
+    initialLdrUrl: Optional[str] = None # [New] 초기 모델 URL (비교용)
 
 
 
@@ -711,11 +713,24 @@ async def process_kids_request_internal(
             if background_requested:
                 _log("   Background generation requested to Screenshot Server")
 
+                # [NEW] Initial Model URL (for comparison)
+                initial_ldr_url = None
+                initial_model_path = report.get("initial_model_path")
+                if initial_model_path:
+                    try:
+                        p = Path(initial_model_path)
+                        if p.exists():
+                            # out_brick_dir 내부에 있으므로 out_dir 지정
+                            initial_ldr_url = to_generated_url(p, out_dir=out_brick_dir)
+                    except Exception as e:
+                        _log(f"초기 모델 URL 생성 실패: {e}")
+
             return {
                 "success": True, # [NEW] Explicit success flag
                 "correctedUrl": corrected_url,
                 "modelUrl": model_url,
                 "ldrUrl": ldr_url,
+                "initialLdrUrl": initial_ldr_url, # [NEW]
                 "bomUrl": bom_url,
                 "pdfUrl": pdf_url,
                 "subject": final_subject,
