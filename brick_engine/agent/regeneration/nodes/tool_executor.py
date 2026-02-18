@@ -76,6 +76,51 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
                     next_step = "verifier"
                 else:
                     result_content = "브릭 삭제에 실패했습니다. (ID를 찾을 수 없거나 이미 삭제됨)"
+                    
+        elif tool_name == "MergeBricks":
+            # [전략 통합] 사용자 요청에 따라 무조건 'structural_merge' (구조적 병합) 수행
+            # 불안정 브릭(Floating, Isolated)을 식별하여 그 주변을 분해/재조립함
+            
+            raw_result = state.get('verification_raw_result', {})
+            issues = raw_result.get('issues', [])
+            
+            # 불안정 브릭 ID 추출
+            unstable_ids = []
+            for issue in issues:
+                if issue.get('type') in ['floating', 'isolated', 'unstable_base']:
+                    if issue.get('brick_id'):
+                        unstable_ids.append(issue['brick_id'])
+            
+            # 중복 제거
+            unstable_ids = list(set(unstable_ids))
+            
+            if not unstable_ids:
+                # 불안정 브릭이 없으면 전체 1x1 브릭을 대상으로 단순 병합 시도 (Fallback)
+                print("  [Merge] 불안정 브릭 없음 -> 단순 병합(simple) Fallback")
+                merge_stats = ldr_modifier.merge_small_bricks(state['ldr_path'], min_merge_count=2)
+                if merge_stats.get('merged', 0) > 0:
+                    result_content = f"구조적 문제는 없으나, 1x1 브릭 {merge_stats['merged']}개 그룹을 단순 병합하여 정리했습니다."
+                    next_step = "verifier"
+                else:
+                    result_content = "병합할 불안정 브릭이나 1x1 브릭 그룹을 찾지 못했습니다."
+            else:
+                try:
+                    print(f"  [Merge] 구조적 병합 시작 (Target: {len(unstable_ids)} unstable bricks)")
+                    struct_stats = ldr_modifier.structural_merge(state['ldr_path'], unstable_ids)
+                    
+                    merged_cnt = struct_stats.get('merged', 0)
+                    split_cnt = struct_stats.get('split', 0)
+                    
+                    if merged_cnt > 0 or split_cnt > 0:
+                        result_content = f"구조적 병합 완료: 불안정 부위 {split_cnt}곳을 분해하고 {merged_cnt}개 그룹으로 재조립하여 보강했습니다."
+                        next_step = "verifier"
+                        state['merged'] = True # 병합 완료 플래그
+                    else:
+                        result_content = "구조적 병합을 시도했으나 변경된 부분이 없습니다."
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    result_content = f"구조적 병합 중 오류 발생: {e}"
         else:
             result_content = f"알 수 없는 도구: {tool_name}"
 
