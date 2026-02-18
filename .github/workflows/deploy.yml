@@ -29,8 +29,8 @@ jobs:
 
     env:
       REPO_DIR: /Users/byeonjihwan/Documents/brickers/brickers-ai
-      COMPOSE_DIR: /Users/byeonjihwan/Documents/brickers/local-configs/brickers-ai
-      COMPOSE_FILE: /Users/byeonjihwan/Documents/brickers/local-configs/brickers-ai/docker-compose-mac.yml
+      COMPOSE_DIR: /Users/byeonjihwan/Documents/brickers/brickers-ai
+      COMPOSE_FILE: /Users/byeonjihwan/Documents/brickers/brickers-ai/docker-compose-mac.yml
 
     steps:
       - name: Determine target

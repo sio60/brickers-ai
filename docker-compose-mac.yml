@@ -1,0 +1,114 @@
+# docker-compose-mac.yml — Mac Studio 통합 (AI + Blueprint + Screenshot + Tunnel)
+# deploy.yml에서 자동 사용됨. 수동 실행 시:
+#   docker compose -f docker-compose-mac.yml up --build
+#
+# 주의: environment 섹션은 env_file 값을 덮어쓰므로,
+#       .env.local에 이미 정의된 변수는 여기에 넣지 마세요.
+
+services:
+  # ✅ AI Server (port 8000)
+  ai-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    image: brickers-ai:mac
+    container_name: brickers-ai-mac
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.local
+    volumes:
+      - ./route:/app/route
+      - ./service:/app/service
+      - ./brick_engine:/app/brick_engine
+      - ./chat:/app/chat
+      - ./app.py:/app/app.py
+      - ./config.py:/app/config.py
+      - ./public:/app/public
+      - ./vectordb:/app/vectordb
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+    networks:
+      - brickers-ai-net
+
+  # ✅ Blueprint PDF Server (port 8001)
+  blueprint:
+    build:
+      context: ./blueprint
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    image: brickers-blueprint:mac
+    container_name: brickers-blueprint-mac
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env.local
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+    networks:
+      - brickers-ai-net
+
+  # ✅ Screenshot Server API (port 8002)
+  screenshot-api:
+    build:
+      context: ./screenshot-server
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    image: brickers-screenshot:mac
+    container_name: brickers-screenshot-api-mac
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env.local
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+    command: ["python3", "-u", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8002"]
+    networks:
+      - brickers-ai-net
+
+  # ✅ Screenshot Celery Worker
+  screenshot-worker:
+    image: brickers-screenshot:mac
+    container_name: brickers-screenshot-worker-mac
+    restart: unless-stopped
+    depends_on:
+      - screenshot-api
+    env_file:
+      - .env.local
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+    command: ["celery", "-A", "celery_app", "worker",
+              "--loglevel=info", "--concurrency=1", "--pool=solo",
+              "-Q", "celery-screenshots"]
+    networks:
+      - brickers-ai-net
+
+  # ✅ Cloudflare Tunnel (EC2 Backend → Mac AI Server 연결)
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: brickers-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://ai-server:8000
+    depends_on:
+      - ai-server
+    networks:
+      - brickers-ai-net
+
+networks:
+  brickers-ai-net:
+    driver: bridge
+
+volumes:
+  hf_cache:
