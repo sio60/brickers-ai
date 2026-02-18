@@ -26,7 +26,27 @@ def node_generator(graph, state) -> Dict[str, Any]:
         final_target = result.get('final_target', 0)
 
         print(f"  [OK] 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
-        return {"attempts": state['attempts'] + 1, "next_action": "verify"}
+        
+        # [NEW] 초기 모델 백업 (비교용)
+        initial_ldr_path = state.get("initial_ldr_path")
+        if state['attempts'] == 0:
+            import shutil
+            from pathlib import Path
+            
+            p = Path(state['ldr_path'])
+            initial_path = p.parent / f"{p.stem}_initial{p.suffix}"
+            try:
+                shutil.copy2(p, initial_path)
+                initial_ldr_path = str(initial_path)
+                print(f"  [Backup] 초기 모델 백업 완료: {initial_path.name}")
+            except Exception as e:
+                print(f"  [Warning] 초기 모델 백업 실패: {e}")
+
+        return {
+            "attempts": state['attempts'] + 1, 
+            "next_action": "verify",
+            "initial_ldr_path": initial_ldr_path # State 업데이트
+        }
 
     except Exception as e:
         print(f"  [Error] 변환 실패: {e}")
