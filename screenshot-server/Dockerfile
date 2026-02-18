@@ -13,6 +13,8 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
+    libcurl4-openssl-dev \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -36,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libosmesa6 libgl1-mesa-glx libglu1-mesa \
     libx11-6 libxext6 libxrender1 libfuse2 \
     libharfbuzz0b libfontconfig1 \
+    libcurl4 \
     wget unzip \
     && rm -rf /var/lib/apt/lists/*
 
