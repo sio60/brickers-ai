@@ -6,7 +6,7 @@ import os
 
 from celery import Celery
 
-app = Celery("screenshot_worker")
+app = Celery("screenshot_worker", include=["tasks"])
 
 app.conf.update(
     broker_url="sqs://",
