@@ -42,7 +42,7 @@ def node_merger(graph, state) -> Dict[str, Any]:
         
         initial_unstable_ids = []
         for issue in initial_issues:
-            if issue.issue_type.value in ('floating', 'isolated', 'top_only'):
+            if issue.issue_type.value in ('floating', 'isolated'):
                 if issue.brick_id is not None:
                     initial_unstable_ids.append(issue.brick_id)
         
@@ -80,32 +80,31 @@ def node_merger(graph, state) -> Dict[str, Any]:
         
         new_unstable_ids = []
         for issue in new_issues:
-            if issue.issue_type.value in ('floating', 'isolated', 'top_only'):
+            if issue.issue_type.value in ('floating', 'isolated'):
                 if issue.brick_id is not None:
                     new_unstable_ids.append(issue.brick_id)
         
         new_unstable_count = len(set(new_unstable_ids))
         print(f"  📊 병합 후 불안정 브릭: {new_unstable_count}개 (변화: {new_unstable_count - initial_unstable_count:+d})")
 
-        # 4. 롤백 판단
-        # 불안정 브릭이 줄지 않았거나 오히려 늘었다면 롤백
-        # 단, 병합된 그룹(merged_count)이 많으면 구조적 단순화 효과가 있으므로
-        # 불안정 수가 '크게' 늘지 않았다면(예: +5% 이내) 허용할 수도 있음.
-        # 하지만 안전하게 가기 위해 "증가하면 무조건 롤백" 정책 적용.
-        
+        # 4. 롤백 판단 (제거됨: 사용자의 요청에 따라 개선되지 않더라도 병합 결과 유지)
         if new_unstable_count > initial_unstable_count:
-            print(f"  ⚠️ 병합 후 불안정성 악화! 롤백합니다.")
-            with open(ldr_path, 'w', encoding='utf-8') as f:
-                f.write(original_content)
+            print(f"  ⚠️ 병합 후 불안정성 증가({initial_unstable_count} -> {new_unstable_count})했으나, 요청에 따라 병합 유지.")
+            graph._log("MERGE", f"병합 후 불안정 브릭이 {initial_unstable_count}개에서 {new_unstable_count}개로 늘었지만, 설계를 유지할게요.")
             
-            graph._log("MERGE", "병합했더니 더 불안해져서 취소했어요.")
+            merge_msg = (
+                f"[병합 유지(불안정 증가)]\n"
+                f"- 분해: {split_count}개\n"
+                f"- 병합: {merged_count}개 그룹\n"
+                f"- 불안정 브릭: {initial_unstable_count} → {new_unstable_count} (⚠️ 증가)\n"
+            )
             return {
-                "merged": False,
-                "messages": [HumanMessage(content=f"[병합 롤백] 병합 후 불안정 브릭 증가({initial_unstable_count} -> {new_unstable_count}). 원본 복원됨.")],
+                "merged": True,
+                "messages": [HumanMessage(content=merge_msg)],
                 "next_action": "verify"
             }
         
-        # 성공
+        # 성공 (불안정 감소 또는 동일)
         print(f"  ✅ 병합 성공: 분해 {split_count}개, 병합 {merged_count}개 그룹")
         graph._log("MERGE", f"병합 성공! 불안정 브릭이 {initial_unstable_count}개에서 {new_unstable_count}개로 변했어요.")
         
@@ -126,19 +125,11 @@ def node_merger(graph, state) -> Dict[str, Any]:
         print(f"  ⚠️ 병합 중 오류: {e}")
         import traceback
         traceback.print_exc()
-        # 오류 시 안전하게 롤백 시도 (파일이 손상됐을 수도 있으니)
-        try:
-            if 'original_content' in locals():
-                with open(ldr_path, 'w', encoding='utf-8') as f:
-                    f.write(original_content)
-                print("  오류 발생으로 롤백됨.")
-        except:
-            pass
-            
-        graph._log("MERGE", "병합 중 오류가 발생해서 취소했어요.")
+        
+        graph._log("MERGE", f"병합 중 오류가 발생했지만 현재 상태를 유지할게요: {e}")
         return {
             "merged": False,
-            "messages": [HumanMessage(content=f"[병합 오류] {e}. 롤백됨.")],
+            "messages": [HumanMessage(content=f"[병합 오류] {e}. 현재 상태로 진행합니다.")],
             "next_action": "verify"
         }
 

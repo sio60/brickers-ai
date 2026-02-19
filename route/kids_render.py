@@ -181,6 +181,8 @@ class ProcessResp(BaseModel):
     lmmLatency: Optional[int] = None # [New] AI 생성 시간 (ms)
     estCost: Optional[float] = None # [New] 예상 비용 (USD)
     tokenCount: Optional[int] = None # [New] 총 토큰 수
+    stabilityScore: Optional[int] = None
+    initialLdrUrl: Optional[str] = None # [New] 초기 모델 URL (비교용)
 
 
 
@@ -501,6 +503,9 @@ async def process_kids_request_internal(
 
                 # CoScientist regeneration_loop 시도 → 실패 시 단순 brickify fallback
                 used_coscientist = False
+                metrics = {}
+                report = {} # [FIX] Ensure report exists for fallback cases
+
                 try:
                     regen_loop_fn, gemini_cls = load_agent_modules()
                     _log("[CoScientist] LLM 재생성 에이전트 활성화")
@@ -688,12 +693,12 @@ async def process_kids_request_internal(
                         "token_count": result.get("token_count"), # [NEW]
                     },
                 }
-                # CoScientist 사용 시 추가 정보
-                if used_coscientist:
+                # CoScientist 사용 시 추가 정보 (Fallback이어도 기록이 있으면 포함)
+                if used_coscientist or report.get("total_attempts", 0) > 0:
                     pipeline_summary["coscientist"] = {
-                        "success": report.get("success"),
-                        "total_attempts": report.get("total_attempts"),
-                        "message": report.get("message", ""),
+                        "success": report.get("success", False),
+                        "total_attempts": report.get("total_attempts", 0),
+                        "message": report.get("message", "CoScientist failed, fallback to basic brickify"),
                         "tool_usage": report.get("tool_usage", {}),
                     }
                 await _trace("PipelineSummary", "SUCCESS", "Pipeline Complete", {}, pipeline_summary, int(total_elapsed * 1000))
@@ -707,6 +712,18 @@ async def process_kids_request_internal(
 
             # Ensure background URL ready before returning
             # Ensure background requested log
+            # [NEW] Initial Model URL (for comparison)
+            initial_ldr_url = None
+            initial_model_path = report.get("initial_model_path")
+            if initial_model_path:
+                try:
+                    p = Path(initial_model_path)
+                    if p.exists():
+                        # out_brick_dir 내부에 있으므로 out_dir 지정
+                        initial_ldr_url = to_generated_url(p, out_dir=out_brick_dir)
+                except Exception as e:
+                    _log(f"초기 모델 URL 생성 실패: {e}")
+
             if background_requested:
                 _log("   Background generation requested to Screenshot Server")
 
@@ -715,6 +732,7 @@ async def process_kids_request_internal(
                 "correctedUrl": corrected_url,
                 "modelUrl": model_url,
                 "ldrUrl": ldr_url,
+                "initialLdrUrl": initial_ldr_url, # [NEW]
                 "bomUrl": bom_url,
                 "pdfUrl": pdf_url,
                 "subject": final_subject,

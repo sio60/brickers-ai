@@ -195,6 +195,19 @@ async def regeneration_loop(
         file_size = Path(output_ldr_path).stat().st_size
         print(f"[DEBUG] LDR File exists before Evolver: {output_ldr_path} (Size: {file_size} bytes)")
 
+        # [NEW] Pre-Evolver Merging (1x1 브릭 병합)
+        try:
+            from ..ldr_modifier import merge_small_bricks
+            print("\n[Pre-Processing] Evolver 전달 전 1x1 브릭 병합 시도...")
+            merge_stats = merge_small_bricks(output_ldr_path, min_merge_count=2)
+            if merge_stats.get("merged", 0) > 0:
+                print(f"[Pre-Processing] ✅ {merge_stats['merged']}개 그룹 병합 완료 (Total: {merge_stats['original_count']} -> {merge_stats['new_count']})")
+                _log("EVOLVE", f"안정을 위해 {merge_stats['merged']}곳을 미리 보강했어요.")
+            else:
+                print("[Pre-Processing] 병합할 브릭 없음")
+        except Exception as e:
+            print(f"[Pre-Processing] ⚠️ 병합 중 오류 발생 (무시하고 진행): {e}")
+
         _log("EVOLVE", "형태와 효율 사이의 균형을 맞추고 있어요.")
         print("\n[Evolver] 형태 개선 에이전트 실행 중...")
         evolver_result = run_evolver_subprocess(output_ldr_path, glb_path)
@@ -264,11 +277,21 @@ async def regeneration_loop(
             "success": report_data.get("success", False),
             "total_attempts": report_data.get("total_attempts", final_state.get("attempts", 0)),
             "final_metrics": report_data.get("final_metrics", {}),
+            # [NEW] Pre-Processing & Evolver Stats
+            "pre_process_merge": merge_stats if 'merge_stats' in locals() else None,
+            "evolver_result": evolver_result if 'evolver_result' in locals() else None,
         }
         save_memory_to_db(model_id, mem)
     except Exception as e:
         print(f"⚠️ [Memory] 저장 중 오류: {e}")
 
     _log("COMPLETE", "설계가 완료됐어요. 다음 단계로 넘어가도 좋아요.")
+
+    # [NEW] 초기 모델 경로를 최종 리포트에 포함 (프론트엔드 비교용)
+    if final_state.get("initial_ldr_path"):
+        if "final_report" not in final_state:
+            final_state["final_report"] = {}
+        final_state["final_report"]["initial_model_path"] = final_state["initial_ldr_path"]
+        print(f"[Pipeline] Initial Model Path added to report: {final_state['initial_ldr_path']}")
 
     return final_state
