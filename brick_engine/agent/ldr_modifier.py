@@ -674,6 +674,7 @@ def _merge_rect_pass(bricks: list, group_by_color: bool) -> tuple:
     # 단, 병합 후보에는 넣지 않더라도 final_bricks에는 무조건 들어가야 함.
     # 하지만 여기선 groups에 다 넣고, groups 순회 시에 처리하는 게 안전.
     
+    final_bricks = []
     for i, b in enumerate(bricks):
         # part -> dimensions
         rows, cols = BRICK_DIMENSIONS.get(b["part"], (1, 1))
@@ -701,7 +702,6 @@ def _merge_rect_pass(bricks: list, group_by_color: bool) -> tuple:
         key = (b["y"], b["color"] if group_by_color else -1, mat_tuple)
         groups[key].append((i, b))
         
-    final_bricks = []
     used_indices = set()
     merge_count = 0
     
