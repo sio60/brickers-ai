@@ -42,7 +42,7 @@ def node_merger(graph, state) -> Dict[str, Any]:
         
         initial_unstable_ids = []
         for issue in initial_issues:
-            if issue.issue_type.value in ('floating', 'isolated', 'top_only'):
+            if issue.issue_type.value in ('floating', 'isolated'):
                 if issue.brick_id is not None:
                     initial_unstable_ids.append(issue.brick_id)
         
@@ -80,7 +80,7 @@ def node_merger(graph, state) -> Dict[str, Any]:
         
         new_unstable_ids = []
         for issue in new_issues:
-            if issue.issue_type.value in ('floating', 'isolated', 'top_only'):
+            if issue.issue_type.value in ('floating', 'isolated'):
                 if issue.brick_id is not None:
                     new_unstable_ids.append(issue.brick_id)
         

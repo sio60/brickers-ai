@@ -89,3 +89,4 @@ class AgentState(TypedDict):
 
     # [시스템 컨텍스트]
     job_id: str
+    initial_ldr_path: Optional[str] # [NEW] 초기 생성 LDR 백업 경로
