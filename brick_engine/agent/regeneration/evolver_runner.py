@@ -2,6 +2,7 @@
 # Evolver Post-Processing (서브프로세스 방식)
 # ============================================================================
 
+import os
 import sys
 import subprocess
 import shutil
@@ -31,10 +32,12 @@ def run_evolver_subprocess(ldr_path: str, glb_path: str = None) -> dict:
     if glb_path and Path(glb_path).exists():
         cmd.append(str(glb_path))
 
+    timeout_sec = int(os.environ.get("EVOLVER_TIMEOUT_SEC", "120"))
+
     try:
         result = subprocess.run(
             cmd,
-            timeout=300,
+            timeout=timeout_sec,
             cwd=str(evolver_script.parent),
         )
 
@@ -49,6 +52,6 @@ def run_evolver_subprocess(ldr_path: str, glb_path: str = None) -> dict:
             return {"success": False, "reason": "No evolved file generated"}
 
     except subprocess.TimeoutExpired:
-        return {"success": False, "reason": "Timeout (5min)"}
+        return {"success": False, "reason": f"Timeout ({timeout_sec}s)"}
     except Exception as e:
         return {"success": False, "reason": str(e)}
