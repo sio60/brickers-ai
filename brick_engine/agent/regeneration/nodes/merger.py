@@ -52,7 +52,7 @@ def node_merger(graph, state) -> Dict[str, Any]:
         if initial_unstable_count == 0:
             print("  ✅ 이미 안정적임. 병합 스킵.")
             return {
-                "merged": False,
+                "merged": True,
                 "messages": [HumanMessage(content="[병합 스킵] 이미 안정적인 구조입니다.")],
                 "next_action": "verify"
             }
@@ -66,7 +66,7 @@ def node_merger(graph, state) -> Dict[str, Any]:
         if merged_count == 0 and split_count == 0:
             print("  ⏹️ 병합 가능한 구조가 아님.")
             return {
-                "merged": False,
+                "merged": True,
                 "messages": [HumanMessage(content="[병합 결과] 병합 가능한 브릭이 없습니다.")],
                 "next_action": "verify"
             }
@@ -128,7 +128,7 @@ def node_merger(graph, state) -> Dict[str, Any]:
         
         graph._log("MERGE", f"병합 중 오류가 발생했지만 현재 상태를 유지할게요: {e}")
         return {
-            "merged": False,
+            "merged": True,
             "messages": [HumanMessage(content=f"[병합 오류] {e}. 현재 상태로 진행합니다.")],
             "next_action": "verify"
         }
