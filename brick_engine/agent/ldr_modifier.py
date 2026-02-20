@@ -254,30 +254,43 @@ def _get_brick_stud_positions(brick: dict) -> list:
     # TODO: 2xN 브릭의 정확한 모든 스터드 위치 계산 (현재는 길이 방향만 처리)
 
     # 회전 행렬 a(matrix[0])와 g(matrix[6])으로 길이 방향 판별
+    # ldr_modifier.py 상단에 정의된 BRICK_DIMENSIONS에서 행/열 정보를 가져옴
+    rows, cols = BRICK_DIMENSIONS.get(part, (1, stud_count))
+    
+    matrix = brick["matrix"]
     a = matrix[0]  
     g = matrix[6]  
 
-    # [FIX] LDraw 원점(중앙) 기준 스터드 오프셋 계산 (정중앙 정렬 보장)
-    start_offset = -(stud_count - 1) * STUD_SPACING / 2.0
+    # [COORD FIX] LDraw 원점(중앙) 시프트 계산
+    # Rows=Z, Cols=X (LDraw 기본 방향)
+    z_start = -(rows - 1) * STUD_SPACING / 2.0
+    x_start = -(cols - 1) * STUD_SPACING / 2.0
+    
     positions = []
     
-    for i in range(stud_count):
-        step = start_offset + (i * STUD_SPACING)
-        # 1xN 브릭의 경우 스터드 간격은 STUD_SPACING
-        if abs(a) > 0.5:
-            # X축 방향 정렬 (Identity 등)
-            dx = step * (1 if a > 0 else -1)
-            # [COORD FIX] 좌표 정수화 (Integer Snapping)
-            positions.append((int(round(brick["x"] + dx)), int(round(brick["y"])), int(round(brick["z"]))))
-        elif abs(g) > 0.5:
-            # Z축 방향 정렬 (RotateY90 등)
-            dz = step * (1 if g > 0 else -1)
-            positions.append((int(round(brick["x"])), int(round(brick["y"])), int(round(brick["z"] + dz))))
-        else:
-            # 회전이 복잡한 경우 (일단 중앙점만 반환하여 안전성 유지)
-            positions.append((int(round(brick["x"])), int(round(brick["y"])), int(round(brick["z"]))))
-            if i == 0: break 
+    # 2차원 스터드 그리드 순회 (RotY 등에 따른 월드 좌표 변환)
+    for r in range(rows):
+        for c in range(cols):
+            # 로컬 옵셋 (중앙 기준)
+            local_dz = z_start + (r * STUD_SPACING)
+            local_dx = x_start + (c * STUD_SPACING)
+            
+            # 행렬 (a, b, c, d, e, f, g, h, i) 활용 (x', y', z' = [M] * [local] + [pos])
+            # 하지만 90도 회전 브릭이 대부분이므로 단순화된 사영 로직 사용
+            if abs(a) > 0.5: # X축이 메인 (Identity 등)
+                # local_dx 는 X, local_dz 는 Z 방향 유지
+                wx = brick["x"] + (local_dx * (1 if a > 0 else -1))
+                wz = brick["z"] + (local_dz * (1 if matrix[8] > 0 else -1))
+            elif abs(g) > 0.5: # Z축이 메인 (RotY90 등)
+                # local_dx 가 Z방향이 됨, local_dz 가 X방향이 됨
+                wx = brick["x"] + (local_dz * (-1 if g > 0 else 1))
+                wz = brick["z"] + (local_dx * (1 if g > 0 else -1))
+            else:
+                # 복잡한 회전은 중앙점만 반환 (안전성)
+                return [(int(round(brick["x"])), int(round(brick["y"])), int(round(brick["z"])))]
 
+            positions.append((int(round(wx)), int(round(brick["y"])), int(round(wz))))
+            
     return positions
 
 
@@ -1036,62 +1049,52 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                 # [FIX] 보수적 병합: 최대 1x4로 제한
                 eff_max = int(max_len) if max_len is not None else 4
                 seq_len = min(seq_len, eff_max)
-                    
                 merged_any = False
                 while seq_len >= min_merge_count:
-                    # [ANCHOR CHECK] 색상 무관 병합 시, 결과물에 최소 하나 이상의 '안정 브릭'이 포함되어야 함
-                    if not group_by_color and anchor_indices:
-                        has_anchor = any(orig_idx in anchor_indices for orig_idx, _ in sequence[:seq_len])
-                        if not has_anchor:
-                            seq_len -= 1
-                            continue
-
                     if seq_len in target_mapping:
                         first_brick = sequence[0][1]
                         last_brick = sequence[seq_len - 1][1]
+
+                        # [ANCHOR CHECK] 색상 무관 병합 시에만 적용
+                        # 동일 색상이면 지지점 없이도 병합 허용 (사용자 요청)
+                        if not group_by_color and anchor_indices:
+                            has_anchor = any(orig_idx in anchor_indices for orig_idx, _ in sequence[:seq_len])
+                            if not has_anchor:
+                                colors = [rb["color"] for _, rb in sequence[:seq_len]]
+                                all_same_color = len(set(colors)) == 1
+                                if not all_same_color:
+                                    seq_len -= 1
+                                    continue
                         
                         center_x = (first_brick["x"] + last_brick["x"]) / 2
                         center_y = first_brick["y"]
                         center_z = (first_brick["z"] + last_brick["z"]) / 2
                         
-                        # [FIX] Matrix 정규화: X축 병합은 무조건 Identity 행렬 강제
                         identity_mat = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 
-                        # [COLOR VOLUME PRIORITY]
-                        # 1순위: _orig_vol 최대값인 브릭들의 색상
-                        # 2순위: 그 중에서 _priority_color 있는 브릭
-                        # 3순위: 다수결
-                        
                         max_vol = 0
                         for _, rb in sequence[:seq_len]:
                             v = rb.get("_orig_vol", 1)
                             if v > max_vol:
                                 max_vol = v
                                 
-                        # 최대 부피를 가진 후보군 추출
                         candidates = [rb for _, rb in sequence[:seq_len] if rb.get("_orig_vol", 1) == max_vol]
-                        
-                        # 후보군 중에서 불안정 브릭 필터링
                         priority_candidates = [rb for rb in candidates if rb.get("_priority_color")]
-                        
                         target_group = priority_candidates if priority_candidates else candidates
                         
-                        # 다수결
                         target_colors = [rb["color"] for rb in target_group]
                         final_color = Counter(target_colors).most_common(1)[0][0]
                         
                         has_priority = any(rb.get("_priority_color") for _, rb in sequence[:seq_len])
 
-                        # 객체 생성 (문자열 아님)
                         new_brick = {
                             "part": target_mapping[seq_len],
                             "color": final_color,
-                            # [COORD FIX] 좌표 정수화
                             "x": int(round(center_x)), 
                             "y": int(round(center_y)), 
                             "z": int(round(center_z)),
                             "matrix": identity_mat,
-                            "_orig_vol": max_vol # 병합된 브릭은 구성원 중 최대 부피를 상속
+                            "_orig_vol": max_vol
                         }
                         if has_priority:
                             new_brick["_priority_color"] = True
@@ -1110,8 +1113,6 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                 if not merged_any:
                     i = j if j > i + 1 else i + 1
                 else:
-                    # [FIX] 병합된 경우, already_merged에 포함된 인덱스를 건너뛰어야 함
-                    # i를 다음 처리할 인덱스로 이동
                     while i < len(z_items):
                         idx_next, _ = z_items[i]
                         if idx_next not in already_merged:
@@ -1155,28 +1156,28 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                 seq_len = len(sequence)
                 eff_max = int(max_len) if max_len is not None else 4
                 seq_len = min(seq_len, eff_max)
-                    
                 merged_any = False
                 while seq_len >= min_merge_count:
-                    # [ANCHOR CHECK] Z방향
-                    if not group_by_color and anchor_indices:
-                        has_anchor = any(orig_idx in anchor_indices for orig_idx, _ in sequence[:seq_len])
-                        if not has_anchor:
-                            seq_len -= 1
-                            continue
-
                     if seq_len in target_mapping:
                         first_brick = sequence[0][1]
                         last_brick = sequence[seq_len - 1][1]
+
+                        # [ANCHOR CHECK] Z방향
+                        if not group_by_color and anchor_indices:
+                            has_anchor = any(orig_idx in anchor_indices for orig_idx, _ in sequence[:seq_len])
+                            if not has_anchor:
+                                colors = [rb["color"] for _, rb in sequence[:seq_len]]
+                                all_same_color = len(set(colors)) == 1
+                                if not all_same_color:
+                                    seq_len -= 1
+                                    continue
                         
                         center_x = (first_brick["x"] + last_brick["x"]) / 2
                         center_y = first_brick["y"]
                         center_z = (first_brick["z"] + last_brick["z"]) / 2
                         
-                        # [FIX] Matrix 정규화: Z축 병합은 무조건 RotateY(90) 행렬 강제
                         rotate_y_90 = [0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0]
                         
-                        # [COLOR VOLUME PRIORITY] Z축
                         max_vol = 0
                         for _, rb in sequence[:seq_len]:
                             v = rb.get("_orig_vol", 1)
@@ -1195,7 +1196,6 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                         new_brick = {
                             "part": target_mapping[seq_len],
                             "color": final_color,
-                            # [COORD FIX] 좌표 정수화
                             "x": int(round(center_x)), 
                             "y": int(round(center_y)), 
                             "z": int(round(center_z)),
@@ -1210,7 +1210,7 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                         for idx_s, _ in sequence[:seq_len]:
                             already_merged.add(idx_s)
                             merged_indices.add(idx_s)
-                            all_merged_indices.add(idx_s) # [FIX] 전체 병합 집합에도 추가
+                            all_merged_indices.add(idx_s)
                         merge_count += 1
                         merged_any = True
                         break
@@ -1219,8 +1219,6 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                 if not merged_any:
                     i = j if j > i + 1 else i + 1
                 else:
-                    # [FIX] 병합된 경우, already_merged에 포함된 인덱스를 건너뛰어야 함
-                    # i를 다음 처리할 인덱스로 이동
                     while i < len(x_items):
                         idx_next, _ = x_items[i]
                         if idx_next not in already_merged:
@@ -1417,7 +1415,8 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
                         # -> [IMPROVED] 1xN 브릭(1x2, 1x3 등)도 참여하도록 확장하여 결합력 강화
                         neighbor_brick = idx_to_brick.get(n_idx)
                         if neighbor_brick:
-                            # BRICK_DIMENSIONS를 확인하여 1xN 모양이면 병합 후보로 인정
+                            # [FIX] 이미 튼튼한 규격(2x2 이상)을 가진 안정 브릭은 분해에서 '제외'
+                            # 오직 1xN 형태만 분해하여 병합 재료로 사용
                             rows, cols = BRICK_DIMENSIONS.get(neighbor_brick["part"], (0, 0))
                             if rows == 1: 
                                 stable_boundary_indices.add(n_idx)
