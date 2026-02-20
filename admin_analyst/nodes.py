@@ -382,6 +382,12 @@ async def strategist_node(state: AdminAnalystState) -> dict:
 async def content_miner_node(state: AdminAnalystState) -> dict:
     """백엔드에서 아직 처리되지 않은 최근 댓글/게시글 수집."""
     from service import backend_client
+
+    # 이미 검열이 완료된 경우 재실행 방지 (사이클당 1회만)
+    if state.get("moderation_results"):
+        log.info("[ContentMiner] 이미 검열 완료 — 스킵")
+        return {"next_action": "guard"}
+
     log.info("[ContentMiner] 검열 대상 수집 시작...")
 
     # 최근 1일 내의 미검열 콘텐츠 최대 10개 수집 (속도 최적화)

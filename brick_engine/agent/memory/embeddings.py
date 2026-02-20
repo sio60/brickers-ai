@@ -77,7 +77,7 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
                 from google.genai import types
                 client = genai.Client(
                     api_key=config.GEMINI_API_KEY,
-                    http_options=types.HttpOptions(api_version='v1')
+                    http_options=types.HttpOptions(api_version='v1beta')
                 )
                 result = client.models.embed_content(
                     model="text-embedding-004",
