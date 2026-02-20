@@ -88,8 +88,10 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             unstable_ids = []
             for issue in issues:
                 if issue.get('type') in ['floating', 'isolated', 'unstable_base', 'top_only']:
-                    if issue.get('brick_id'):
-                        unstable_ids.append(issue['brick_id'])
+                    # [BUG FIX] issue.get('brick_id')가 0일 경우 False로 평가되어 누락되는 문제 해결
+                    bid = issue.get('brick_id')
+                    if bid is not None:
+                        unstable_ids.append(bid)
             
             # 중복 제거
             unstable_ids = list(set(unstable_ids))
