@@ -114,51 +114,7 @@ async def node_draft_creator(state: HypothesisState) -> Dict[str, Any]:
         "round_count": round_num,
         "debate_history": history
     }
-
-# 3. GPT를 활용한 실패 사례 기반 비평 노드 (1:3 비율)
-async def node_critic(state: HypothesisState) -> Dict[str, Any]:
-    """실패 사례 3개를 바탕으로 GPT가 가설의 취약점을 비평합니다."""
-    round_num = state.get("round_count", 0)
-    job_id = state.get("job_id", "offline")
-
-    print(f"\n 🛡️  [Round {round_num}] GPT 비평가의 리스크 심층 분석 (1:3 티키타카)")
-    await send_agent_log(job_id, "critic_review", f"실패 사례와 비교하며 가설의 취약점을 분석하고 있습니다... (Round {round_num})")
     
-    failure_cases = state.get("failure_cases", [])
-    draft = state.get("draft_hypothesis", {})
-    observation = state.get("observation", "")
-    hypothesis_maker = state.get("hypothesis_maker")
-    
-    # 해당 라운드에 사용할 실패 사례 3개 선택
-    start_idx = (round_num - 1) * 3
-    current_failures = failure_cases[start_idx : start_idx + 3]
-    
-    # 실패 사례가 부족하면 순환하여 사용
-    if not current_failures and failure_cases:
-        current_failures = failure_cases[:3]
-    
-    failure_text = "\n".join([f"- 실측 실패 패턴: {c.get('verification', {}).get('numerical_analysis', 'Unknown failure')}" for c in current_failures]) or "알려진 실패 사례 없음."
-    
-    prompt = get_critic_prompt(failure_text, json.dumps(draft), observation)
-    
-    # GPT(Critic) 호출
-    if hypothesis_maker.gpt_client:
-        feedback = await asyncio.to_thread(hypothesis_maker.gpt_client.generate, prompt)
-    else:
-        # GPT 클라이언트가 없는 경우 Gemini로 대체하여 토론 유지
-        feedback = await asyncio.to_thread(hypothesis_maker.gemini_client.generate, "[GPT 비평가 대역] " + prompt)
-        
-    print(f"  🔥 GPT 비평: \"{feedback[:100]}...\"")
-    await send_agent_log(job_id, "critic_review", "비평가가 가설에 대한 피드백을 완료했습니다.")
-    
-    history = state.get("debate_history", [])
-    history.append(f"Round {round_num} GPT Critic: {feedback}")
-    
-    return {
-        "critique_feedback": feedback,
-        "debate_history": history
-    }
-
 # 4. 최종 확정 노드
 async def node_refiner(state: HypothesisState) -> Dict[str, Any]:
     """모든 토론 결과를 종합하여 최종 실행 가설을 확정합니다."""
