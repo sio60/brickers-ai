@@ -22,6 +22,7 @@ class AnalyticsAgentService:
         summary = await backend_client.get_analytics_summary(days)
         daily_users = await backend_client.get_daily_users(days)
         top_tags = await backend_client.get_top_tags(days, limit=10)
+        top_keywords = await backend_client.get_top_keywords(days, limit=10) # [NEW]
         heavy_users = await backend_client.get_heavy_users(days, limit=5)
         
         if not summary:
@@ -39,6 +40,9 @@ class AnalyticsAgentService:
 
 [Popular Brick Tags (Top 10)]
 {top_tags}
+
+[Popular Search Keywords (Top 10)]
+{top_keywords}
 
 [Key Active Users (Top 5)]
 {heavy_users}
