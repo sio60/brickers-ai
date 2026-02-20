@@ -87,9 +87,11 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             # 불안정 브릭 ID 추출 (top_only 포함: 아래 지지 없음)
             unstable_ids = []
             for issue in issues:
-                if issue.get('type') in ['floating', 'isolated', 'unstable_base', 'top_only']:
-                    # [BUG FIX] issue.get('brick_id')가 0일 경우 False로 평가되어 누락되는 문제 해결
-                    bid = issue.get('brick_id')
+                # [BUG FIX] issue_type 케이스 불일치 방지 및 brick_id 0 누락 해결
+                itype = issue.get('type', '').lower()
+                bid = issue.get('brick_id')
+                
+                if itype in ['floating', 'isolated', 'unstable_base']:
                     if bid is not None:
                         unstable_ids.append(bid)
             
@@ -97,7 +99,37 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             unstable_ids = list(set(unstable_ids))
             
             if not unstable_ids:
-                # 불안정 브릭이 없으면 전체 1x1 브릭을 대상으로 단순 병합 시도 (Fallback)
+                # [STRATEGY] 불안정 브릭은 없으나, 모델이 너무 파편화(많은 1x1/1x2)된 경우 강제 병합 수행
+                # 파편화 지표: small_brick_ratio (verifier에서 제공)
+                small_ratio = raw_result.get('small_brick_ratio', 0)
+                
+                if small_ratio > 0.05: # 5% 이상이면 파편화로 간주
+                    print(f"  [Merge] 구조적 문제는 없으나 파편화율({small_ratio:.1%})이 높아 공격적 병합(Aggressive)을 수행합니다.")
+                    
+                    # 모든 1x1 및 1x2 브릭을 분해/재병합 대상으로 선정
+                    import brick_engine.agent.ldr_modifier as mod
+                    fragmented_ids = []
+                    try:
+                        with open(state['ldr_path'], 'r', encoding='utf-8') as f:
+                            lines = f.readlines()
+                        
+                        target_parts = {"3005.dat", "3024.dat", "3004.dat", "3023.dat"}
+                        brick_idx = 0
+                        for line in lines:
+                            p = mod.parse_ldr_line(line)
+                            if p:
+                                if p['part'] in target_parts:
+                                    fragmented_ids.append(brick_idx)
+                                brick_idx += 1
+                                
+                        if fragmented_ids:
+                            unstable_ids = fragmented_ids
+                            print(f"  [Merge] 파편화 브릭 {len(unstable_ids)}개를 재결합 대상으로 선정했습니다.")
+                    except Exception as e:
+                        print(f"  ⚠️ 파편화 분석 중 오류: {e}")
+
+            if not unstable_ids:
+                # 정말로 병합할 게 아무것도 없는 경우 (Fallback)
                 print("  [Merge] 불안정 브릭 없음 -> 단순 병합(simple) Fallback")
                 merge_stats = ldr_modifier.merge_small_bricks(state['ldr_path'], min_merge_count=2) # group_by_color=True (기본값)
                 if merge_stats.get('merged', 0) > 0:
