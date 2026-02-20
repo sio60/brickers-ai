@@ -117,8 +117,8 @@ def search_similar_cases(
                 "index": vector_index_name,
                 "path": "embedding",
                 "queryVector": query_vector,
-                "numCandidates": limit * 10,
-                "limit": limit * 2
+                "numCandidates": limit * 2,  # 기존 limit * 10에서 2배수만 탐색 (속도 5배 향상)
+                "limit": limit
             }
         },
         {
@@ -201,7 +201,7 @@ def search_success_and_failure(
 
     candidates = search_similar_cases(
         collection_exps, vector_index_name, use_vector,
-        observation, limit=limit*3, min_score=min_score,
+        observation, limit=limit, min_score=min_score,
         verification_metrics=verification_metrics,
         subject_name=subject_name
     )
