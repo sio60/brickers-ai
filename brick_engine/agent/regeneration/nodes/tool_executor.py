@@ -36,9 +36,9 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
         else:
             consecutive_same_tool = 1
 
-        if consecutive_same_tool >= 3:
+        if consecutive_same_tool >= 10:
             print(f"  ⚠️ 경고: {tool_name}을(를) {consecutive_same_tool}회 연속 사용 중!")
-            warning_msg = f"'{tool_name}'을(를) 3회 연속 사용했습니다. 다른 전략을 고려해주세요."
+            warning_msg = f"'{tool_name}'을(를) 10회 연속 사용했습니다. 다른 전략을 고려해주세요."
             tool_results.append(ToolMessage(content=warning_msg, tool_call_id=tool_call_id))
             return {
                 "messages": tool_results,
@@ -81,7 +81,7 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             # [전략 통합] 사용자 요청에 따라 무조건 'structural_merge' (구조적 병합) 수행
             # 불안정 브릭(Floating, Isolated)을 식별하여 그 주변을 분해/재조립함
             
-            raw_result = state.get('verification_raw_result', {})
+            raw_result = state.get('verification_raw_result') or {}
             issues = raw_result.get('issues', [])
             
             # 불안정 브릭 ID 추출 (top_only 포함: 아래 지지 없음)
