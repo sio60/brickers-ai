@@ -974,43 +974,20 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
     merged_indices = set()
     merge_count = 0
 
-    # 레이어(Y) + 부품타입(Brick/Plate) [+ 색상]별 그룹화
-    layer_groups = defaultdict(list)
-    for idx, brick in enumerate(bricks):
-        if brick["part"] not in {"3005.dat", "3024.dat"}:
-            continue
-        is_p = _is_plate(brick["part"])
-        
-        if group_by_color:
-            key = (brick["y"], is_p, brick["color"])
-        else:
-            key = (brick["y"], is_p)
-            
-        layer_groups[key].append((idx, brick))
-
-    for key, group in layer_groups.items():
-        if len(group) < min_merge_count:
-            # 병합 대상 아니면 그대로 유지 (나중에 추가)
-            for idx, brick in group:
-                generated_bricks.append(brick)
-            continue
-        
-        # Plate/Brick에 따른 병합 테이블 결정
-        is_p = key[1]
     merged_indices = set()
     generated_bricks = []
     
     # [FIX] 그룹별 병합이지만, 전체 병합된 인덱스는 공유해야 함 (마지막에 중복 추가 방지)
     all_merged_indices = set()
 
-    # 그룹화 (색상별 or 전체) - Plate 여부도 포함
+    # 그룹화 (Y좌표별, 색상별 or 전체) - Plate 여부도 포함
     groups = defaultdict(list)
     for i, b in enumerate(bricks):
         is_p = _is_plate(b["part"])
         if group_by_color:
-            groups[(b["color"], is_p)].append((i, b))
+            groups[(b["y"], b["color"], is_p)].append((i, b))
         else:
-            groups[("all", is_p)].append((i, b))
+            groups[(b["y"], "all", is_p)].append((i, b))
 
     for key, group in groups.items():
         if len(group) < min_merge_count:
@@ -1020,7 +997,7 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
         already_merged = set()
         
         # Plate/Brick에 따른 병합 테이블 결정
-        is_p = key[1]
+        is_p = key[-1]
         target_mapping = PLATE_MERGE_TARGETS if is_p else MERGE_TARGET_BRICKS
 
         # --- X 방향 병합 (같은 Z에서) ---
@@ -1436,11 +1413,14 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
                 if n_key in pos_to_brick_idx:
                     n_idx = pos_to_brick_idx[n_key]
                     if n_idx not in unstable_set:
-                        # [FIX] 오직 1x1 브릭/플레이트만 주변 병합에 참여하도록 제한
-                        # 대형 안정 브릭을 쪼개는 것을 방지하여 충돌 차단
+                        # [FIX] 오직 1x1 브릭/플레이트만 주변 병합에 참여하도록 제한했으나,
+                        # -> [IMPROVED] 1xN 브릭(1x2, 1x3 등)도 참여하도록 확장하여 결합력 강화
                         neighbor_brick = idx_to_brick.get(n_idx)
-                        if neighbor_brick and neighbor_brick["part"] in SMALL_BRICK_PARTS:
-                            stable_boundary_indices.add(n_idx)
+                        if neighbor_brick:
+                            # BRICK_DIMENSIONS를 확인하여 1xN 모양이면 병합 후보로 인정
+                            rows, cols = BRICK_DIMENSIONS.get(neighbor_brick["part"], (0, 0))
+                            if rows == 1: 
+                                stable_boundary_indices.add(n_idx)
 
     # 3. 분해 대상 선정
     # 3. 분해 대상 선정 (불안정 브릭 + 1x1 인접 안정 브릭)
@@ -1483,11 +1463,11 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
     if not lines_to_delete and not new_1x1_bricks:
         return {"merged": 0, "split": 0, "rounds": 0}
 
-    # 4. 재병합 (X+Z 양방향, 색상 무관, 최대길이 2로 제한, Anchor 필수 포함)
+    # 4. 재병합 (X+Z 양방향, 색상 무관, 최대길이 4로 확장, Anchor 필수 포함)
     merged_new_lines, merged_indices, merge_count = _merge_all_1x1(
         new_1x1_bricks, 
         group_by_color=False, 
-        max_len=2, 
+        max_len=4, 
         anchor_indices=anchor_indices
     )
     

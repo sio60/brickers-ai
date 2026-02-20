@@ -38,9 +38,37 @@ def node_verifier(graph, state) -> Dict[str, Any]:
         # brick_judge로 물리 검증 수행
         issues = full_judge(model)
 
-        # unstable_base는 점수 계산에서 제외 (경고만 표시)
-        score_issues = [i for i in issues if i.issue_type.value != 'unstable_base']
-        score = calc_score_from_issues(score_issues, total_bricks)
+        # -- 부피 기반 점수 계산 로직 도입 --
+        total_volume = 0.0
+        problem_brick_ids = set()
+        
+        # 모델의 모든 브릭 부피의 합 계산
+        for b in model.bricks:
+            # 부피 = width * depth * height (각각 고유 ldu 단위)
+            vol = b.width * b.depth * b.height
+            total_volume += vol
+            
+        # unstable_base 제외한 이슈 브릭 선별
+        for i in issues:
+            if i.issue_type.value != 'unstable_base' and i.brick_id is not None:
+                # top_only는 문제긴 하지만 무게에 큰 영향을 안주는 경우도 있음 (하지만 기존 설계상 문제로 간주)
+                if i.issue_type.value != 'top_only':
+                    problem_brick_ids.add(i.brick_id)
+
+        problem_volume = 0.0
+        # id 기준으로 다시 순회
+        if problem_brick_ids:
+            for b in model.bricks:
+                if b.id in problem_brick_ids:
+                    problem_volume += (b.width * b.depth * b.height)
+
+        # 안정성 점수
+        if total_volume > 0:
+            score = int(100.0 * (1.0 - (problem_volume / total_volume)))
+        else:
+            score = 100
+            
+        score = max(0, min(100, score))
 
         # 이슈 분석
         floating_count = sum(1 for i in issues if i.issue_type.value == 'floating')
