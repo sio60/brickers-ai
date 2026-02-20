@@ -52,6 +52,8 @@ class RegenerationGraph:
         import time
         import anyio
         import asyncio
+        from service.backend_client import send_agent_trace
+
         start_ts = time.time()
         # Input snapshot (Enriched for Admin UI)
         def serialize_state(s):
@@ -105,7 +107,19 @@ class RegenerationGraph:
             raise e
         finally:
             duration = int((time.time() - start_ts) * 1000)
-            print(f"  [Trace] {node_name} ({status}) {duration}ms")
+            if self.job_id != "offline":
+                # Fire and forget trace sending
+                asyncio.create_task(
+                    send_agent_trace(
+                        self.job_id,
+                        step="TRACE",
+                        node_name=node_name,
+                        status=status,
+                        input_data=input_snap,
+                        output_data=output_snap,
+                        duration_ms=duration
+                    )
+                )
 
     # --- Node method wrappers ---
     # 각 노드 로직은 nodes/ 패키지에 분리되어 있고,
