@@ -60,6 +60,8 @@ def _setup_vision_paths():
 
 def node_observe(state: AgentState) -> AgentState:
     """Observe current model state with brick_judge + 대칭 분석"""
+    from ..config import log_sse
+    log_sse("EVOLVER_OBSERVE", "구조가 안정됐어요. 이제 전체 형태를 살펴볼게요.")
     print(f"\n[OBSERVE] Iteration {state['iteration']}")
 
     # 첫 iteration에서 MongoDB 메모리 로드
@@ -92,8 +94,8 @@ def node_observe(state: AgentState) -> AgentState:
         try:
             evolver_dir = _setup_vision_paths()
 
-            from vision_analyzer import find_problems, analyze_multi_angle
-            from ldr_renderer import render_model_multi_angle
+            from ..tools.vision_analyzer import find_problems, analyze_multi_angle
+            from ..tools.ldr_renderer import render_model_multi_angle
 
             VISION_ANGLES = ["FRONT", "BACK", "RIGHT", "BOTTOM", "FRONT_RIGHT"]
             images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)

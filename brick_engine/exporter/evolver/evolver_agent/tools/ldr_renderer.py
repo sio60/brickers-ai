@@ -156,7 +156,7 @@ def render_ldr_multi_angle(
     height: int = 512
 ) -> Dict[str, str]:
     """
-    LDR 파일을 7방향에서 렌더링하고 base64로 반환
+    LDR 파일을 지정된 방향에서 렌더링하고 base64로 반환
     각 이미지에 방향 라벨 표시됨
 
     Args:
@@ -192,7 +192,7 @@ def render_ldr_multi_angle(
 def render_model_multi_angle(model, parts_db, angles: List[str] = None,
                              width: int = 512, height: int = 512) -> Dict[str, str]:
     """
-    BrickModel을 7방향에서 렌더링
+    BrickModel을 지정된 방향에서 렌더링
 
     Args:
         model: BrickModel 객체

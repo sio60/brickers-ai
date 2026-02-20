@@ -1,7 +1,7 @@
 """대칭 분석 및 고립 브릭 탐지/삭제"""
 from typing import Dict, Any, List, TYPE_CHECKING
 
-from .constants import (
+from ..constants import (
     BRICK_HEIGHT, PLATE_HEIGHT, LDU_PER_STUD, PLATE_PART_IDS,
     SYMMETRY_TOLERANCE, SYMMETRY_CENTER_MARGIN, SPARSE_LAYER_THRESHOLD,
 )

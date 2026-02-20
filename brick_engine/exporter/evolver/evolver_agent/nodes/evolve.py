@@ -39,8 +39,8 @@ def _get_vision_modules():
     """Vision 관련 모듈 지연 로드 (최초 1회만)"""
     if not _vision_modules:
         try:
-            from vision_analyzer import map_to_coordinates, find_reference_part, plan_rebuild
-            from ldr_renderer import render_model_multi_angle
+            from ..tools.vision_analyzer import map_to_coordinates, find_reference_part, plan_rebuild
+            from ..tools.ldr_renderer import render_model_multi_angle
             _vision_modules["map_to_coordinates"] = map_to_coordinates
             _vision_modules["find_reference_part"] = find_reference_part
             _vision_modules["plan_rebuild"] = plan_rebuild
@@ -652,6 +652,8 @@ HANDLERS: Dict[str, Callable] = {
 
 def node_evolve(state: AgentState) -> AgentState:
     """단일 전략 실행"""
+    from ..config import log_sse
+    log_sse("EVOLVER_APPLY", "선택된 방법으로 브릭 위치를 조정하고 있어요.")
     strategy = state.get("strategy", "")
     proposals = state.get("proposals", [])
 

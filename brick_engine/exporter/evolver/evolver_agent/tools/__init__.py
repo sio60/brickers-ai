@@ -8,7 +8,7 @@ CoScientist 원칙:
 """
 
 # --- 상수 ---
-from .constants import (
+from ..constants import (
     BRICK_HEIGHT,
     PLATE_HEIGHT,
     LDU_PER_STUD,
