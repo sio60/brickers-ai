@@ -2,6 +2,7 @@
 # 메인 오케스트레이션: regeneration_loop
 # ============================================================================
 
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -58,6 +59,10 @@ def save_memory_to_db(model_id: str, memory: Dict):
 
     except Exception as e:
         print(f"  [Memory] DB save failed: {e}")
+
+
+def _is_truthy(value: Optional[str]) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 # ============================================================================
@@ -191,35 +196,68 @@ async def regeneration_loop(
     _log("VERIFY", "현 설계가 반복 조립에도 안정적인지 확인 중이에요.")
 
     # Evolver Post-Processing
+    report = final_state.get("final_report", {}) or {}
+    final_metrics = report.get("final_metrics", {}) or {}
+
+    # Evolver mode:
+    # - auto (default): run only when result is still unstable
+    # - always: always run
+    # - off: never run
+    evolver_mode = str(os.environ.get("COSCIENTIST_EVOLVER_MODE", "auto")).strip().lower()
+    if _is_truthy(os.environ.get("COSCIENTIST_DISABLE_EVOLVER")):
+        evolver_mode = "off"
+    if evolver_mode not in {"auto", "always", "off"}:
+        evolver_mode = "auto"
+
+    final_success = bool(report.get("success", False))
+    failure_ratio = float(final_metrics.get("failure_ratio", 1.0))
+    should_run_evolver = (
+        evolver_mode == "always"
+        or (
+            evolver_mode == "auto"
+            and (not final_success or failure_ratio > 0.0)
+        )
+    )
+
     if Path(output_ldr_path).exists():
         file_size = Path(output_ldr_path).stat().st_size
         print(f"[DEBUG] LDR File exists before Evolver: {output_ldr_path} (Size: {file_size} bytes)")
+    else:
+        print(f"[DEBUG] LDR File MISSING before Evolver: {output_ldr_path}")
+        should_run_evolver = False
 
-        # [NEW] Pre-Evolver Merging (1x1 브릭 병합)
+    if should_run_evolver:
+        # Pre-Evolver merge pass (optional)
         try:
             from ..ldr_modifier import merge_small_bricks
-            print("\n[Pre-Processing] Evolver 전달 전 1x1 브릭 병합 시도...")
+            print("\n[Pre-Processing] Try merging 1x1 bricks before Evolver...")
             merge_stats = merge_small_bricks(output_ldr_path, min_merge_count=2)
             if merge_stats.get("merged", 0) > 0:
-                print(f"[Pre-Processing] ✅ {merge_stats['merged']}개 그룹 병합 완료 (Total: {merge_stats['original_count']} -> {merge_stats['new_count']})")
-                _log("EVOLVE", f"안정을 위해 {merge_stats['merged']}곳을 미리 보강했어요.")
+                print(
+                    "[Pre-Processing] Merged "
+                    f"{merge_stats['merged']} groups "
+                    f"(Total: {merge_stats['original_count']} -> {merge_stats['new_count']})"
+                )
+                _log("EVOLVE", f"Pre-merge completed: {merge_stats['merged']} groups")
             else:
-                print("[Pre-Processing] 병합할 브릭 없음")
+                print("[Pre-Processing] No mergeable 1x1 groups")
         except Exception as e:
-            print(f"[Pre-Processing] ⚠️ 병합 중 오류 발생 (무시하고 진행): {e}")
+            print(f"[Pre-Processing] Merge failed (continue): {e}")
 
-        _log("EVOLVE", "형태와 효율 사이의 균형을 맞추고 있어요.")
-        print("\n[Evolver] 형태 개선 에이전트 실행 중...")
+        _log("EVOLVE", "Starting Evolver post-processing")
+        print("\n[Evolver] Running Evolver post-processing...")
         evolver_result = run_evolver_subprocess(output_ldr_path, glb_path)
         if evolver_result.get("success"):
-            print("[Evolver] ✅ 형태 개선 완료")
-            _log("EVOLVE", "형태 개선이 완료됐어요. 최종 검토에 들어갈게요.")
+            print("[Evolver] Post-processing completed")
+            _log("EVOLVE", "Evolver post-processing completed")
         else:
             reason = evolver_result.get("reason", "unknown")
-            print(f"[Evolver] ⚠️ 형태 개선 스킵: {reason}")
-            _log("EVOLVE", "형태 개선을 건너뛰고 다음 단계로 넘어갈게요.")
+            print(f"[Evolver] Skipped/failed: {reason}")
+            _log("EVOLVE", "Evolver skipped or failed; keeping current LDR")
     else:
-        print(f"[DEBUG] ❌ LDR File MISSING before Evolver: {output_ldr_path}")
+        skip_reason = f"mode={evolver_mode}, success={final_success}, failure_ratio={failure_ratio:.3f}"
+        print(f"[Evolver] Skipped ({skip_reason})")
+        _log("EVOLVE", f"Evolver skipped ({skip_reason})")
 
     _log("REFLECT", "현재 결과를 기준으로 최종 정리 중이에요.")
 
