@@ -172,8 +172,8 @@ def node_model(graph, state) -> Dict[str, Any]:
                 print("🎉 모든 조건 충족. 종료합니다.")
                 return {"messages": [response], "next_action": "end"}
             else:
-                print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 재지시 중...")
-                error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. MergeBricks 또는 RemoveBricks를 사용하여 구조를 수정하세요."
+                print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 도구 선택을 재지시합니다.")
+                error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. 반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 수정하세요. 도구 없이 종료할 수 없습니다."
                 hint = HumanMessage(content=error_feedback)
                 return {"messages": [response, hint], "next_action": "model"}
 

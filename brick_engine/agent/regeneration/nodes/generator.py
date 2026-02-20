@@ -27,7 +27,7 @@ def node_generator(graph, state) -> Dict[str, Any]:
 
         print(f"  [OK] 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
         
-        # [NEW] 초기 모델 백업 (비교용)
+        # [FIX] 초기 모델 백업 (첫 번째 시도에서만)
         initial_ldr_path = state.get("initial_ldr_path")
         if state['attempts'] == 0:
             import shutil
@@ -42,11 +42,13 @@ def node_generator(graph, state) -> Dict[str, Any]:
             except Exception as e:
                 print(f"  [Warning] 초기 모델 백업 실패: {e}")
 
-        return {
+        result = {
             "attempts": state['attempts'] + 1, 
             "next_action": "verify",
-            "initial_ldr_path": initial_ldr_path # State 업데이트
         }
+        if initial_ldr_path:
+            result["initial_ldr_path"] = initial_ldr_path
+        return result
 
     except Exception as e:
         print(f"  [Error] 변환 실패: {e}")
