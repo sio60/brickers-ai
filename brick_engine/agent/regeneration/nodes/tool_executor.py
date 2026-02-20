@@ -81,7 +81,7 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             # [전략 통합] 사용자 요청에 따라 무조건 'structural_merge' (구조적 병합) 수행
             # 불안정 브릭(Floating, Isolated)을 식별하여 그 주변을 분해/재조립함
             
-            raw_result = state.get('verification_raw_result', {})
+            raw_result = state.get('verification_raw_result') or {}
             issues = raw_result.get('issues', [])
             
             # 불안정 브릭 ID 추출 (top_only 포함: 아래 지지 없음)
