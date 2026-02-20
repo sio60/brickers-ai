@@ -569,6 +569,10 @@ async def process_kids_request_internal(
                     _log(f"[CoScientist] 완료 | 성공={report.get('success', '?')} | 시도={report.get('total_attempts', '?')}회")
 
                 except Exception as cos_err:
+                    import traceback
+                    print("="*40, "COSCIENTIST FATAL ERROR", "="*40)
+                    traceback.print_exc()
+                    print("="*105)
                     _log(f"[CoScientist] 실패, 단순 Brickify로 fallback: {cos_err}")
 
                     # Fallback: 기존 단순 brickify
