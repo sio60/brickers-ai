@@ -22,7 +22,7 @@ from .prompts import (
 # ... (기존 코드: miner_node, evaluator_node 유지)
 
 
-from .llm_utils import call_llm_json
+from .llm_utils import call_llm_json, call_llm_text
 
 log = logging.getLogger("admin_analyst.nodes")
 
