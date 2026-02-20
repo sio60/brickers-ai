@@ -36,9 +36,9 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
         else:
             consecutive_same_tool = 1
 
-        if consecutive_same_tool >= 3:
+        if consecutive_same_tool >= 10:
             print(f"  ⚠️ 경고: {tool_name}을(를) {consecutive_same_tool}회 연속 사용 중!")
-            warning_msg = f"'{tool_name}'을(를) 3회 연속 사용했습니다. 다른 전략을 고려해주세요."
+            warning_msg = f"'{tool_name}'을(를) 10회 연속 사용했습니다. 다른 전략을 고려해주세요."
             tool_results.append(ToolMessage(content=warning_msg, tool_call_id=tool_call_id))
             return {
                 "messages": tool_results,
@@ -88,8 +88,10 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             unstable_ids = []
             for issue in issues:
                 if issue.get('type') in ['floating', 'isolated', 'unstable_base', 'top_only']:
-                    if issue.get('brick_id'):
-                        unstable_ids.append(issue['brick_id'])
+                    # [BUG FIX] issue.get('brick_id')가 0일 경우 False로 평가되어 누락되는 문제 해결
+                    bid = issue.get('brick_id')
+                    if bid is not None:
+                        unstable_ids.append(bid)
             
             # 중복 제거
             unstable_ids = list(set(unstable_ids))
@@ -126,7 +128,6 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             result_content = f"알 수 없는 도구: {tool_name}"
 
         print(f"  결과: {result_content}")
-        graph._log("TOOL", f"조정 결과를 반영하고 있어요. ({result_content[:40]})")
         tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))
 
     return {
