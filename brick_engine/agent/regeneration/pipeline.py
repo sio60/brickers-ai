@@ -74,7 +74,7 @@ async def regeneration_loop(
     output_ldr_path: str,
     subject_name: str = "Unknown Object",
     llm_client: Optional[BaseLLMClient] = None,
-    max_retries: int = 5,
+    max_retries: int = 1,
     acceptable_failure_ratio: float = 0.1,
     gui: bool = False,
     params: Optional[Dict[str, Any]] = None,
