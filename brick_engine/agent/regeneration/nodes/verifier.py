@@ -70,11 +70,20 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             
         score = max(0, min(100, score))
 
-        # 이슈 분석
-        floating_count = sum(1 for i in issues if i.issue_type.value == 'floating')
-        isolated_count = sum(1 for i in issues if i.issue_type.value == 'isolated')
-        top_only_count = sum(1 for i in issues if i.issue_type.value == 'top_only')
+        # 이슈 분석 및 ID 수집
+        floating_bricks = [i for i in issues if i.issue_type.value == 'floating']
+        isolated_bricks = [i for i in issues if i.issue_type.value == 'isolated']
+        top_only_bricks = [i for i in issues if i.issue_type.value == 'top_only']
+        
+        floating_count = len(floating_bricks)
+        isolated_count = len(isolated_bricks)
+        top_only_count = len(top_only_bricks)
         has_unstable_base = any(i.issue_type.value == 'unstable_base' for i in issues)
+
+        # ID 목록 추출
+        floating_brick_ids = [i.brick_id for i in floating_bricks if i.brick_id is not None]
+        # fallen_brick_ids는 현재 구조상 unstable_base가 났을 때 발생하는 것으로 가정하거나 빈 목록 처리
+        fallen_brick_ids = [] 
 
         stable = (
             not has_unstable_base
@@ -83,14 +92,14 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             and top_only_count == 0
         )
 
-        # 피드백 생성 (IDs 없이 count만 사용)
+        # 피드백 생성
         feedback = VerificationFeedback(
             stable=stable,
             total_bricks=total_bricks,
             fallen_bricks=0,
             floating_bricks=floating_count,
-            floating_brick_ids=[],
-            fallen_brick_ids=[],
+            floating_brick_ids=floating_brick_ids,
+            fallen_brick_ids=fallen_brick_ids,
             failure_ratio=(floating_count + isolated_count + top_only_count) / total_bricks if total_bricks > 0 else 0.0,
             stability_score=score,
             stability_grade="STABLE" if stable else ("MEDIUM" if score >= 50 else "UNSTABLE"),
@@ -131,6 +140,8 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             "fallen_count": 0,
             "isolated_count": isolated_count,
             "top_only_count": top_only_count,
+            "floating_brick_ids": floating_brick_ids,
+            "fallen_brick_ids": fallen_brick_ids,
             "has_unstable_base": has_unstable_base,
             "stability_score": score,
             "budget_exceeded": total_bricks > budget,
