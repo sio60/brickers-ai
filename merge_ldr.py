@@ -75,13 +75,13 @@ def main():
             pass
             
         print("\n[최종 결과]")
-        print(f"📊 모델 규모 변화: {stats.get('total_original_count', 0)} -> {stats.get('total_new_count', 0)}")
-        print(f"🧩 소형 브릭(1x1) 변화: {stats.get('small_brick_count', 0)} -> {stats.get('small_brick_new_count', 0)}")
-        print(f"✅ 병합된 그룹 수: {stats.get('merged', 0)}개")
-        print(f"💾 결과 저장: {output_path.absolute()}")
+        print(f"모델 규모 변화: {stats.get('total_original_count', 0)} -> {stats.get('total_new_count', 0)}")
+        print(f"소형 브릭(1x1) 변화: {stats.get('small_brick_count', 0)} -> {stats.get('small_brick_new_count', 0)}")
+        print(f"병합된 그룹 수: {stats.get('merged', 0)}개")
+        print(f"결과 저장: {output_path.absolute()}")
         
     except Exception as e:
-        print(f"\n❌ 작업 중 오류 발생: {e}")
+        print(f"\n작업 중 오류 발생: {e}")
         # import traceback; traceback.print_exc()
 
 if __name__ == "__main__":
