@@ -139,7 +139,7 @@ async def regeneration_loop(
             system_msg,
             HumanMessage(content=f"'{subject_name}' 모델의 물리적 안정성을 최적화하고 LDR 파일을 설계하세요.")
         ],
-        verification_raw_result=None,
+        verification_raw_result={},
         floating_bricks_ids=[],
         verification_errors=0,
         tool_usage_count={},
@@ -166,7 +166,7 @@ async def regeneration_loop(
     # 실행
     _log("GENERATE", "브릭 배치를 미세 조정하고 있어요.")
     # [ASYNC CHANGE] invoke -> ainvoke
-    final_state = await app.ainvoke(initial_state)
+    final_state = await app.ainvoke(initial_state, config={"recursion_limit": 100})
 
     # [NEW] Token Usage & Cost Injection
     if llm_client and hasattr(llm_client, "usage"):
