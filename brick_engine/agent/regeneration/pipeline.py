@@ -14,7 +14,7 @@ from ..memory_utils import memory_manager
 
 from .constants import DEFAULT_PARAMS
 from .graph import RegenerationGraph
-from .evolver_runner import run_evolver_subprocess
+from .evolver_runner import run_evolver
 
 
 # ============================================================================
@@ -246,7 +246,7 @@ async def regeneration_loop(
 
         _log("EVOLVE", "Starting Evolver post-processing")
         print("\n[Evolver] Running Evolver post-processing...")
-        evolver_result = run_evolver_subprocess(output_ldr_path, glb_path)
+        evolver_result = run_evolver(output_ldr_path, glb_path)
         if evolver_result.get("success"):
             print("[Evolver] Post-processing completed")
             _log("EVOLVE", "Evolver post-processing completed")
