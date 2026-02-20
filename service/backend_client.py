@@ -263,6 +263,23 @@ async def get_top_tags(days: int = 30, limit: int = 10) -> list | None:
     return None
 
 
+async def get_top_keywords(days: int = 30, limit: int = 10) -> list | None:
+    """백엔드로부터 실시간 인기 검색어 순위를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/top-keywords",
+                params={"days": days, "limit": limit},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Top Keywords Fail: {e}")
+    return None
+
+
 async def get_heavy_users(days: int = 30, limit: int = 10) -> list | None:
     """백엔드로부터 활동량이 많은 상위 유저 리스트를 가져옵니다."""
     token = os.environ.get("INTERNAL_API_TOKEN", "")
