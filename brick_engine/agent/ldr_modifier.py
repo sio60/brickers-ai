@@ -1413,11 +1413,14 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
                 if n_key in pos_to_brick_idx:
                     n_idx = pos_to_brick_idx[n_key]
                     if n_idx not in unstable_set:
-                        # [FIX] 오직 1x1 브릭/플레이트만 주변 병합에 참여하도록 제한
-                        # 대형 안정 브릭을 쪼개는 것을 방지하여 충돌 차단
+                        # [FIX] 오직 1x1 브릭/플레이트만 주변 병합에 참여하도록 제한했으나,
+                        # -> [IMPROVED] 1xN 브릭(1x2, 1x3 등)도 참여하도록 확장하여 결합력 강화
                         neighbor_brick = idx_to_brick.get(n_idx)
-                        if neighbor_brick and neighbor_brick["part"] in SMALL_BRICK_PARTS:
-                            stable_boundary_indices.add(n_idx)
+                        if neighbor_brick:
+                            # BRICK_DIMENSIONS를 확인하여 1xN 모양이면 병합 후보로 인정
+                            rows, cols = BRICK_DIMENSIONS.get(neighbor_brick["part"], (0, 0))
+                            if rows == 1: 
+                                stable_boundary_indices.add(n_idx)
 
     # 3. 분해 대상 선정
     # 3. 분해 대상 선정 (불안정 브릭 + 1x1 인접 안정 브릭)
@@ -1460,11 +1463,11 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
     if not lines_to_delete and not new_1x1_bricks:
         return {"merged": 0, "split": 0, "rounds": 0}
 
-    # 4. 재병합 (X+Z 양방향, 색상 무관, 최대길이 2로 제한, Anchor 필수 포함)
+    # 4. 재병합 (X+Z 양방향, 색상 무관, 최대길이 4로 확장, Anchor 필수 포함)
     merged_new_lines, merged_indices, merge_count = _merge_all_1x1(
         new_1x1_bricks, 
         group_by_color=False, 
-        max_len=2, 
+        max_len=4, 
         anchor_indices=anchor_indices
     )
     
