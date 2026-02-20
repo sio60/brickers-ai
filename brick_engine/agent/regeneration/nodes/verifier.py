@@ -83,16 +83,13 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             and top_only_count == 0
         )
 
-        # 피드백 생성
-        floating_ids = [str(i.brick_id) for i in issues if i.issue_type.value == 'floating' and i.brick_id is not None]
-        isolated_ids = [str(i.brick_id) for i in issues if i.issue_type.value == 'isolated' and i.brick_id is not None]
-
+        # 피드백 생성 (IDs 없이 count만 사용)
         feedback = VerificationFeedback(
             stable=stable,
             total_bricks=total_bricks,
             fallen_bricks=0,
             floating_bricks=floating_count,
-            floating_brick_ids=floating_ids,
+            floating_brick_ids=[],
             fallen_brick_ids=[],
             failure_ratio=(floating_count + isolated_count + top_only_count) / total_bricks if total_bricks > 0 else 0.0,
             stability_score=score,
@@ -132,8 +129,6 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             "total_bricks": total_bricks,
             "floating_count": floating_count,
             "fallen_count": 0,
-            "floating_ids": floating_ids,
-            "fallen_ids": [],
             "isolated_count": isolated_count,
             "top_only_count": top_only_count,
             "has_unstable_base": has_unstable_base,
@@ -168,7 +163,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             pass
 
         if state['attempts'] >= state['max_retries']:
-            print("💥 최대 시도 횟수 초과.")
+            print("💥 최대 시도 횟수 초과. 마지막 결과를 기록한 뒤 종료합니다.")
             final_report = {
                 "success": False,
                 "total_attempts": state['attempts'],
@@ -176,7 +171,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
                 "final_metrics": current_metrics,
                 "message": "최대 시도 횟수 초과로 종료"
             }
-            return {"next_action": "end", "final_report": final_report}
+            return {"next_action": "reflect", "final_report": final_report, "force_end": True}
 
         # LLM에게 전달할 메시지 보강
         custom_feedback = feedback_text
@@ -199,7 +194,6 @@ def node_verifier(graph, state) -> Dict[str, Any]:
 
         return {
             "verification_raw_result": {"issues": [{"type": i.issue_type.value, "brick_id": i.brick_id} for i in issues]},
-            "floating_bricks_ids": floating_ids,
             "messages": [HumanMessage(content=custom_feedback)],
             "current_metrics": current_metrics,
             "next_action": "reflect"

@@ -31,9 +31,7 @@ def format_context_for_embedding(
 
         f_count = metrics.get("floating_count", 0)
         if f_count > 0:
-            f_ids = metrics.get("floating_ids", [])
-            id_str = f" IDs:{f_ids[:5]}" if f_ids else ""
-            context_parts.append(f"Status: Floating Bricks ({f_count} bricks{id_str})")
+            context_parts.append(f"Status: Floating Bricks ({f_count} bricks)")
 
         fallen_count = metrics.get("fallen_count", 0)
         if fallen_count > 0:
