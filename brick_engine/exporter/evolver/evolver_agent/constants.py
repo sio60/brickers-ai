@@ -30,7 +30,6 @@ LESSONS_THRESHOLD = 10       # lessons 요약 임계값
 MUTATION_STRATEGIES = [
     "RELOCATE",      # 브릭 위치 이동
     "ROTATE",        # 브릭 회전
-    "REBUILD",       # 잘못된 부분 삭제 + 재배치
     "ADD_SUPPORT",   # 지지대 추가
     "SYMMETRY_FIX",  # 대칭 맞추기 (최후순위)
 ]
@@ -40,7 +39,6 @@ MUTATION_STRATEGIES = [
 SHAPE_STRATEGIES = [
     "RELOCATE",      # 1순위: 브릭 위치 이동
     "ROTATE",        # 2순위: 브릭 회전
-    "REBUILD",       # 3순위: 잘못된 부분 삭제 + 재배치
 ]
 
 # 물리적 안정화 전략 (floating 처리) - ADD_SUPPORT는 최후의 수단

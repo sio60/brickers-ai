@@ -522,7 +522,7 @@ async def process_kids_request_internal(
                         output_ldr_path=str(out_ldr),
                         subject_name=final_subject or "Unknown Object",
                         llm_client=gemini_cls(),
-                        max_retries=2, # [Modified] 1 retry (Total 2 attempts) meaning 1 hypothesis loop
+                        max_retries=1,  # 1회 시도
                         acceptable_failure_ratio=0.1,
                         params=regen_params,
                     )
