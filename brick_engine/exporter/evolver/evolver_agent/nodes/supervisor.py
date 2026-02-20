@@ -47,7 +47,7 @@ STRATEGY_MAP = {
     "vision": ["RELOCATE", "ROTATE"],  # SYMMETRY_FIX 제거 - 후순위로 이동
     "symmetry": ["SYMMETRY_FIX"],  # 대칭 문제는 별도로, floating 해결 후 처리
     "floating": ["SELECTIVE_REMOVE", "BRIDGE"],
-    "fallback": ["ADD_SUPPORT", "REBUILD", "SYMMETRY_FIX", "ROLLBACK"],  # SYMMETRY_FIX를 fallback으로 이동
+    "fallback": ["ADD_SUPPORT", "SYMMETRY_FIX", "ROLLBACK"],
 }
 
 
@@ -59,7 +59,6 @@ def _get_valid_strategies(state: AgentState) -> List[str]:
     # Vision 문제 → 형태 전략
     if state.get("vision_problems"):
         strategies.update(STRATEGY_MAP["vision"])
-        strategies.add("REBUILD")  # 풀에는 포함, 프롬프트에서 후순위 처리
 
     # 대칭 문제 → 모델 타입에 따라 동적 판단
     if state.get("symmetry_issues"):
@@ -156,7 +155,6 @@ def _build_context(state: AgentState, valid_strategies: List[str]) -> str:
     strategy_desc = {
         "RELOCATE": "브릭을 올바른 위치로 이동 (형태 개선)",
         "ROTATE": "브릭을 올바른 방향으로 회전 (형태 개선)",
-        "REBUILD": "잘못된 부분 삭제 후 재구축",
         "SYMMETRY_FIX": "빠진 대칭 브릭 추가",
         "SELECTIVE_REMOVE": "불필요한 부유 브릭 삭제",
         "BRIDGE": "부유 클러스터를 안정 부분에 연결",
@@ -178,7 +176,7 @@ def _build_context(state: AgentState, valid_strategies: List[str]) -> str:
 def _get_fallback_strategy(state: AgentState, valid_strategies: List[str]) -> str:
     """LLM 실패 시 fallback 전략 선택"""
     # 우선순위: 형태 > 물리 > 대칭 (SYMMETRY_FIX는 최후순위)
-    priority = ["RELOCATE", "ROTATE", "REBUILD",
+    priority = ["RELOCATE", "ROTATE",
                 "SELECTIVE_REMOVE", "BRIDGE", "ADD_SUPPORT",
                 "SYMMETRY_FIX", "ROLLBACK"]
 
@@ -205,8 +203,6 @@ def _match_target_to_strategy(strategy: str, vision_problems: List[Dict], reason
                    "sideways", "wrong way", "rotated", "facing", "orientation"],
         "RELOCATE": ["detached", "position", "place", "moved", "shifted",
                      "disconnected", "separated", "wrong location", "misplaced"],
-        "REBUILD": ["missing", "broken", "incomplete", "absent", "gone",
-                    "not visible", "없", "빠진", "누락"]
     }
 
     keywords = strategy_keywords.get(strategy, [])
@@ -313,7 +309,7 @@ def node_supervisor(state: AgentState) -> AgentState:
     vision_problems = state.get("vision_problems", [])
     symmetry_issues = state.get("symmetry_issues", [])
 
-    if strategy in ["RELOCATE", "ROTATE", "REBUILD"] and vision_problems:
+    if strategy in ["RELOCATE", "ROTATE"] and vision_problems:
         target = _match_target_to_strategy(strategy, vision_problems, reasoning)
     elif strategy in ["ADD_SUPPORT", "SELECTIVE_REMOVE", "BRIDGE"] and state["floating_bricks"]:
         target = state["floating_bricks"][0]

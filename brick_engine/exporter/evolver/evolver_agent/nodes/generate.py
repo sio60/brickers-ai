@@ -34,7 +34,7 @@ llm = ChatOpenAI(model=LLM_MODEL, temperature=0.7, timeout=LLM_TIMEOUT)
 class ProposalItem(BaseModel):
     """단일 제안 구조"""
     id: str = Field(description="제안 ID (예: relocate_front_1)")
-    type: str = Field(description="제안 유형: relocate, rotate, rebuild, remove, bridge, add_support")
+    type: str = Field(description="제안 유형: relocate, rotate, remove, bridge, add_support")
     description: str = Field(description="제안 설명 (한국어)")
     approach: str = Field(description="접근 방식: conservative, moderate, aggressive")
 
@@ -70,7 +70,7 @@ def _generate_multiple_proposals_llm(state: AgentState, base_context: str) -> li
 2. moderate: 균형 잡힌 접근
 3. aggressive: 큰 변경, 더 나은 결과 가능성
 
-사용 가능한 type: relocate, rotate, rebuild, remove, bridge, add_support
+사용 가능한 type: relocate, rotate, remove, bridge, add_support
 
 모든 응답은 한국어로 해."""
 
