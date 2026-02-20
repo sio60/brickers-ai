@@ -110,6 +110,17 @@ def node_reflect(graph, state) -> Dict[str, Any]:
             print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
 
     print("\n" + "🎓" * 20)
+
+    # force_end 플래그가 있으면 (max_retries 초과) 저장만 하고 종료
+    if state.get("force_end", False):
+        print(" [Reflect] 마지막 결과 기록 완료. 종료합니다.")
+        return {
+            "memory": memory,
+            "observation": f"실패율={curr_failure:.2f}, 공중부양={curr_floating}개, 작은브릭={curr_small_ratio:.2f}",
+            "previous_metrics": current_metrics,
+            "next_action": "end"
+        }
+
     print(" [Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
     print("🎓" * 20)
 
