@@ -1,4 +1,4 @@
-"""OBSERVE Node - Analyze current model state using PhysicalVerifier"""
+"""OBSERVE Node - Analyze current model state using brick_judge (Rust)"""
 from ..state import AgentState
 from ..tools import get_model_state, analyze_symmetry
 from ..config import get_config
@@ -59,7 +59,7 @@ def _setup_vision_paths():
 
 
 def node_observe(state: AgentState) -> AgentState:
-    """Observe current model state with PhysicalVerifier + 대칭 분석"""
+    """Observe current model state with brick_judge + 대칭 분석"""
     print(f"\n[OBSERVE] Iteration {state['iteration']}")
 
     # 첫 iteration에서 MongoDB 메모리 로드
@@ -146,13 +146,12 @@ def node_observe(state: AgentState) -> AgentState:
     print(f"  Collisions: {model_state['collision_count']}")
     print(f"  Removed: {state['total_removed']}/{int(state['original_brick_count'] * MAX_REMOVAL_RATIO)}")
 
-    # Show evidence from PhysicalVerifier (OVERHANG 제외)
+    # Show evidence from brick_judge
     evidence = model_state.get('evidence', [])
-    filtered_evidence = [ev for ev in evidence if ev.type != "OVERHANG"]
-    if filtered_evidence:
-        print(f"  Evidence ({len(filtered_evidence)} issues):")
-        for ev in filtered_evidence[:5]:  # Show first 5
-            print(f"    - [{ev.severity}] {ev.type}: {ev.message[:80]}...")
+    if evidence:
+        print(f"  Evidence ({len(evidence)} issues):")
+        for ev in evidence[:5]:  # Show first 5
+            print(f"    - [{ev.severity.value}] {ev.issue_type.value}: {ev.message[:80]}...")
 
     # Symmetry analysis (비대칭이 자연스러운 모형은 스킵)
     # model_type은 위에서 Vision 분석으로 이미 결정됨
