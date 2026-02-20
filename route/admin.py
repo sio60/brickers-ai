@@ -105,14 +105,22 @@ async def deep_analyze():
                  result = result[-1]
              else:
                  result = {}
+        elif not isinstance(result, dict):
+            logger.warning(f"⚠️ [Admin] Result is not a dict (type={type(result)}), using empty dict.")
+            result = {}
 
         logger.info(f"✅ [Admin] Deep Analysis 완료 (risk={result.get('risk_score', 0)})")
+        
+        final_report = result.get("final_report")
+        if not final_report:
+            final_report = "보고서 생성에 실패했습니다. (No report generated)"
+
         return {
             "status": "success",
-            "report": result.get("final_report", "보고서 생성 실패"),
+            "report": final_report,
             "risk_score": result.get("risk_score", 0),
             "anomalies": result.get("anomalies", []),
-            "diagnosis": result.get("diagnosis"),
+            "diagnosis": result.get("diagnosis") or {},
             "proposed_actions": result.get("proposed_actions", []),
             "moderation_results": result.get("moderation_results", []), # ✅ [NEW]
             "iteration": result.get("iteration", 0),

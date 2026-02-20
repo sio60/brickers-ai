@@ -45,54 +45,64 @@ async def miner_node(state: AdminAnalystState) -> dict:
         product_intel_task = get_product_intelligence(days=14)
         
         # 2. Micro Logs 정밀 분석 (Direct MongoDB - Ground Truth)
-        db = get_db()
-        one_day_ago = datetime.now().timestamp() - 86400
-        jobs_col = db["kids_jobs"]
-        
-        # 최근 24시간 샘플링
-        recent_jobs = list(jobs_col.find({
-            "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
-        }).sort("createdAt", -1).limit(100))
+        # 동기 pymongo 호출을 별도 스레드에서 실행하여 이벤트 루프 블로킹 방지
+        def _fetch_db_raw():
+            db = get_db()
+            one_day_ago = datetime.now().timestamp() - 86400
+            jobs_col = db["kids_jobs"]
+            
+            recent_jobs = list(jobs_col.find({
+                "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
+            }).sort("createdAt", -1).limit(100))
 
-        db_raw = {
-            "total_jobs_24h": len(recent_jobs),
-            "avg_stability": 0.0,
-            "avg_gen_time": 0.0,
-            "avg_brick_count": 0,
-            "error_dist": {},
-            "stage_dist": {},
-            "input_type_dist": {"Text Prompt": 0, "Image Upload": 0}
-        }
+            result = {
+                "total_jobs_24h": len(recent_jobs),
+                "avg_stability": 0.0,
+                "avg_gen_time": 0.0,
+                "avg_brick_count": 0,
+                "error_dist": {},
+                "stage_dist": {},
+                "input_type_dist": {"Text Prompt": 0, "Image Upload": 0}
+            }
 
-        if recent_jobs:
-            stabilities = [j["result"]["stabilityScore"] for j in recent_jobs if j.get("result", {}).get("stabilityScore")]
-            gen_times = []
-            brick_counts = []
-            for j in recent_jobs:
-                if j.get("startedAt") and j.get("endedAt"):
-                    dur = (j["endedAt"] - j["startedAt"]).total_seconds()
-                    if 0 < dur < 600: gen_times.append(dur)
-                
-                # 브릭 개수 및 입력 방식 통계
-                if j.get("result", {}).get("brickCount"):
-                    brick_counts.append(j["result"]["brickCount"])
-                
-                inp = j.get("inputType", "Text Prompt")
-                db_raw["input_type_dist"][inp] = db_raw["input_type_dist"].get(inp, 0) + 1
-                
-                # 에러 및 스테이지 분포
-                stage = j.get("stage", "UNKNOWN")
-                db_raw["stage_dist"][stage] = db_raw["stage_dist"].get(stage, 0) + 1
-                if j.get("status") == "FAILED" and j.get("error"):
-                    err = str(j["error"])[:50]
-                    db_raw["error_dist"][err] = db_raw["error_dist"].get(err, 0) + 1
+            if recent_jobs:
+                stabilities = [j["result"]["stabilityScore"] for j in recent_jobs if j.get("result", {}).get("stabilityScore")]
+                gen_times = []
+                brick_counts = []
+                for j in recent_jobs:
+                    if j.get("startedAt") and j.get("endedAt"):
+                        dur = (j["endedAt"] - j["startedAt"]).total_seconds()
+                        if 0 < dur < 600: gen_times.append(dur)
+                    
+                    if j.get("result", {}).get("brickCount"):
+                        brick_counts.append(j["result"]["brickCount"])
+                    
+                    inp = j.get("inputType", "Text Prompt")
+                    result["input_type_dist"][inp] = result["input_type_dist"].get(inp, 0) + 1
+                    
+                    stage = j.get("stage", "UNKNOWN")
+                    result["stage_dist"][stage] = result["stage_dist"].get(stage, 0) + 1
+                    if j.get("status") == "FAILED" and j.get("error"):
+                        err = str(j["error"])[:50]
+                        result["error_dist"][err] = result["error_dist"].get(err, 0) + 1
 
-            db_raw["avg_stability"] = round(sum(stabilities) / len(stabilities), 2) if stabilities else 0.82
-            db_raw["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 45.0
-            db_raw["avg_brick_count"] = int(sum(brick_counts) / len(brick_counts)) if brick_counts else 120
+                result["avg_stability"] = round(sum(stabilities) / len(stabilities), 2) if stabilities else 0.82
+                result["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 45.0
+                result["avg_brick_count"] = int(sum(brick_counts) / len(brick_counts)) if brick_counts else 120
+
+            return result
+
+        db_raw = await asyncio.to_thread(_fetch_db_raw)
             
         # 3. 비동기 작업 대기 및 결과 병합
-        full_report, product_intel = await asyncio.gather(full_report_task, product_intel_task)
+        full_report, product_intel = await asyncio.gather(full_report_task, product_intel_task, return_exceptions=True)
+        
+        if isinstance(full_report, Exception):
+            log.error(f"⚠️ [Miner] Full Report Fetch Failed: {full_report}")
+            full_report = {}
+        if isinstance(product_intel, Exception):
+            log.error(f"⚠️ [Miner] Product Intel Fetch Failed: {product_intel}")
+            product_intel = {}
         
         raw_data = full_report or {}
         event_stats = raw_data.get("eventStats", {})
@@ -125,14 +135,6 @@ async def miner_node(state: AdminAnalystState) -> dict:
                 "weekday": now.strftime("%A"), # 호환성 유지
                 "is_peak": 19 <= now.hour <= 23
             },
-            "next_action": "evaluate"
-        }
-
-    except Exception as e:
-        log.error(f"⛏️ [Miner] 데이터 수집 중 치명적 실패: {e}", exc_info=True)
-        return {
-            "raw_metrics": {},
-            "temporal_context": {"now": datetime.now().isoformat()},
             "next_action": "evaluate"
         }
 
@@ -252,7 +254,12 @@ def evaluator_node(state: AdminAnalystState) -> dict:
     # ── 2-C. 전환 품질 (DAU Spike 시 전환율 10% 기준 하락폭) ──
     if dau_spike:
         total_jobs = db_raw.get("total_jobs_24h", 0)
-        daily_count = metrics.get("daily_users", [])[-1].get("activeUsers", 1) if metrics.get("daily_users") else 1
+        daily_users_list = metrics.get("daily_users") or []
+        daily_count = 1
+        if daily_users_list:
+            last_day = daily_users_list[-1]
+            daily_count = last_day.get("count", last_day.get("activeUsers", 1))
+
         conversion_rate = total_jobs / max(daily_count, 1)
         
         # 공식: max(0, 1.0 - ConvRate / 0.1) -> 10% 이상이면 0, 0%면 1.0
@@ -549,6 +556,13 @@ async def finalizer_node(state: AdminAnalystState) -> dict:
         actions=json.dumps(actions, ensure_ascii=False, indent=2)
     )
 
+    # 이상 징후가 없으면 기존 보고서(reporter_green) 보존
+    if not anomalies and not dx.get("root_cause"):
+        existing_report = state.get("final_report")
+        if existing_report:
+            log.info("[Finalizer] 이상 징후 없음 — 기존 보고서(reporter_green) 보존")
+            return {"final_report": existing_report, "next_action": "end"}
+
     res = await call_llm_json(prompt)
     report = res.get("report") if res else None
 
@@ -598,12 +612,10 @@ async def query_analyst_node(state: AdminAnalystState) -> dict:
         temporal=json.dumps(temporal, ensure_ascii=False)
     )
 
-    res = await call_llm_json(prompt)
-    report = res.get("report") if isinstance(res, dict) else str(res)
-    
-    if not report or report == "None":
-        from .llm_utils import call_llm_text
-        report = await call_llm_text(prompt)
+    report = await call_llm_text(prompt)
+
+    if not report:
+        report = "현재 수집된 데이터로는 충분한 분석이 어렵습니다. 잠시 후 다시 시도해 주세요."
 
     # 이력 업데이트는 호출부에서 처리하도록 제안 (현재 노드에서는 결과만 반환)
     return {"final_report": report, "next_action": "end"}
