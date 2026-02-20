@@ -80,8 +80,13 @@ def node_verifier(graph, state) -> Dict[str, Any]:
         top_only_count = len(top_only_bricks)
         has_unstable_base = any(i.issue_type.value == 'unstable_base' for i in issues)
 
-        # ID 목록 추출
-        floating_brick_ids = [i.brick_id for i in floating_bricks if i.brick_id is not None]
+        # ID 목록 추출 (문자열 ID 포맷팅)
+        floating_brick_ids = []
+        for i in floating_bricks:
+            if i.brick_id is not None and 0 <= i.brick_id < len(model.bricks):
+                b = model.bricks[i.brick_id]
+                floating_brick_ids.append(f"{b.name}_{i.brick_id}")
+
         # fallen_brick_ids는 현재 구조상 unstable_base가 났을 때 발생하는 것으로 가정하거나 빈 목록 처리
         fallen_brick_ids = [] 
 
@@ -203,8 +208,19 @@ def node_verifier(graph, state) -> Dict[str, Any]:
         if has_unstable_base:
             custom_feedback += "\n\n⚠️ **참고: 무게중심이 지지면을 벗어났습니다. 가능하면 구조를 더 안정적으로 만드세요.**"
 
+        # [FIX] brick_judge_rs는 brick_id를 integer (index)로 반환함.
+        # MergeBricks 등 다른 도구들은 "{part}_{index}" 형태의 문자열 ID를 기대함.
+        formatted_issues = []
+        for i in issues:
+            if i.brick_id is not None and 0 <= i.brick_id < len(model.bricks):
+                b = model.bricks[i.brick_id]
+                string_id = f"{b.name}_{i.brick_id}"
+                formatted_issues.append({"type": i.issue_type.value, "brick_id": string_id})
+            else:
+                formatted_issues.append({"type": i.issue_type.value, "brick_id": None})
+
         return {
-            "verification_raw_result": {"issues": [{"type": i.issue_type.value, "brick_id": i.brick_id} for i in issues]},
+            "verification_raw_result": {"issues": formatted_issues},
             "messages": [HumanMessage(content=custom_feedback)],
             "current_metrics": current_metrics,
             "next_action": "reflect"
