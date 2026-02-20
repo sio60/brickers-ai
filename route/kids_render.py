@@ -540,9 +540,6 @@ async def process_kids_request_internal(
                     if parts_count == 0 and out_ldr.exists():
                         ldr_text = out_ldr.read_text(encoding='utf-8')
                         parts_count = sum(1 for line in ldr_text.splitlines() if line.startswith('1 '))
-                    if parts_count == 0 and out_ldr.exists():
-                        ldr_text = out_ldr.read_text(encoding='utf-8')
-                        parts_count = sum(1 for line in ldr_text.splitlines() if line.startswith('1 '))
                     
                     # [NEW] Cost & Token Extraction (Aggregate Step 1 + Step 3)
                     agent_est_cost = metrics.get("est_cost", 0.0) # Includes Tripo $0.30 via agent logic?
@@ -592,12 +589,14 @@ async def process_kids_request_internal(
                     result["est_cost"] = round(fallback_cost, 5)
                     result["token_count"] = running_token_count
 
-                # [NEW] Calculate Stability Score
-                # failure_ratio: 0.0 ~ 1.0 (lower is better)
-                # stability_score: 0 ~ 100 (higher is better)
-                failure_ratio = metrics.get('failure_ratio', 0.0)
+                # [FIX] Calculate Stability Score
+                # CoScientist 성공 시 metrics에서, fallback 시 기본값 사용
+                if used_coscientist and metrics:
+                    failure_ratio = metrics.get('failure_ratio', 0.0)
+                else:
+                    failure_ratio = 0.0  # fallback 시 검증 안 됨 → 별도 검증 필요
                 stability_score = int((1.0 - failure_ratio) * 100)
-                result["stability_score"] = stability_score
+                result["stability_score"] = result.get("stability_score", stability_score)
                 
                 brickify_elapsed = time.time() - step_start
                 engine_label = "CoScientist" if used_coscientist else "Brickify"

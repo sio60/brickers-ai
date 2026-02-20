@@ -91,6 +91,9 @@ async def deep_analyze():
             "max_iterations": 3,
             "next_action": "mine",
             "final_report": None,
+            "moderation_queue": [],
+            "moderation_results": [],
+            "history": [],
         }
 
         result = await analyst_graph.ainvoke(initial_state)
@@ -347,9 +350,11 @@ async def analyze_logs(request: AnalysisRequest = Body(...)):
              return {
                 "container": request.container_name,
                 "is_error": True,
-                "summary": "AI 응답 파싱 실패",
-                "root_cause": raw_result_str,
-                "suggestion": "Log Agent 로직을 점검하세요."
+                "plain_summary": f"AI 응답 파싱 실패: {raw_result_str[:100]}",
+                "user_impact_level": "low",
+                "suggested_actions": ["Log Agent 로직을 점검하세요."],
+                "business_insight": None,
+                "job_id": None
              }
 
         # --- [NEW] Auto-Archive Log to DB ---

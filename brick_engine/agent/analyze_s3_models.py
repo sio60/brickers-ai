@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from agent.memory_utils import memory_manager
 from physical_verification.ldr_loader import LdrLoader
 from physical_verification.pybullet_verifier import PyBulletVerifier
-
+ 
 def analyze_ldr_file(ldr_path: Path):
     """LDR 파일을 분석하여 물리 메트릭 추출"""
     loader = LdrLoader()
