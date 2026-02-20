@@ -19,9 +19,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(EXPORTER_DIR.parent.parent / ".env")
 
 from ldr_converter import ldr_to_brick_model, model_to_ldr  # noqa: E402
-from agent import build_graph, AgentState  # noqa: E402
-from agent.tools import get_model_state, analyze_glb  # noqa: E402
-from agent.config import init_config  # noqa: E402
+from evolver_agent import build_graph, AgentState  # noqa: E402
+from evolver_agent.tools import get_model_state, analyze_glb  # noqa: E402
+from evolver_agent.config import init_config  # noqa: E402
 
 # Memory Utils Import
 import config  # This registers AGENT_DIR (brick_engine/agent/) in sys.path
@@ -195,6 +195,94 @@ def run_agent(ldr_path: str, glb_path: str = None):
         print(f"  - {lesson}")
 
     print("=" * 60)
+
+def run_evolver_direct(ldr_path: str, glb_path: str = None) -> dict:
+    """직접 호출용 (subprocess 없이). pipeline.py에서 사용.
+
+    Returns:
+        {"success": True} or {"success": False, "reason": "..."}
+    """
+    try:
+        # parts_db 로드
+        parts_db = {}
+        cache = EXPORTER_DIR / "parts_cache.json"
+        if cache.exists():
+            with open(cache, 'r', encoding='utf-8') as f:
+                parts_db = json.load(f)
+
+        if not parts_db:
+            return {"success": False, "reason": "parts_cache.json not found"}
+
+        init_config(parts_db, EXPORTER_DIR)
+
+        model = ldr_to_brick_model(ldr_path)
+        model.name = Path(ldr_path).stem
+
+        # GLB 분석
+        glb_ref = None
+        if glb_path and Path(glb_path).exists():
+            glb_ref = analyze_glb(glb_path)
+
+        # Session
+        session_id = "offline_evolver"
+        if memory_manager:
+            session_id = memory_manager.start_session(model.name, "evolver")
+
+        initial_state: AgentState = {
+            "model": model,
+            "model_backup": copy.deepcopy(model),
+            "original_brick_count": len(model.bricks),
+            "glb_reference": glb_ref,
+            "floating_count": 0,
+            "collision_count": 0,
+            "floating_bricks": [],
+            "verification_result": None,
+            "verification_score": 100.0,
+            "verification_evidence": [],
+            "vision_quality_score": None,
+            "vision_problems": [],
+            "symmetry_issues": [],
+            "model_type": "unknown",
+            "iteration": 0,
+            "session_id": session_id,
+            "total_removed": 0,
+            "action_history": [],
+            "strategy": "",
+            "target_brick": None,
+            "proposals": [],
+            "selected_proposal": None,
+            "memory": {
+                "failed_approaches": [],
+                "successful_patterns": [],
+                "lessons": [],
+                "consecutive_failures": 0
+            },
+            "should_finish": False,
+            "finish_reason": "",
+            "messages": []
+        }
+
+        import uuid
+        graph = build_graph()
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        final_state = graph.invoke(initial_state, config=config)
+
+        # Save evolved LDR
+        output = Path(ldr_path).parent / f"{Path(ldr_path).stem}_evolved.ldr"
+        ldr = model_to_ldr(final_state["model"], parts_db, skip_validation=True, skip_physics=True, step_mode='layer')
+        with open(output, 'w', encoding='utf-8') as f:
+            f.write(ldr)
+
+        print(f"[Evolver Direct] Saved: {output}")
+        print(f"[Evolver Direct] Floating: {final_state.get('floating_count', '?')}, Removed: {final_state.get('total_removed', 0)}")
+
+        return {"success": True}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "reason": str(e)}
+
 
 def print_mermaid():
     """LangGraph 그래프를 Mermaid 코드로 출력"""
