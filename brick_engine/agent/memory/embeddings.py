@@ -80,7 +80,7 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
                     http_options=types.HttpOptions(api_version='v1beta')
                 )
                 result = client.models.embed_content(
-                    model="gemini-embedding-exp-03-07",
+                    model="gemini-embedding-001",
                     contents=text
                 )
                 return result.embeddings[0].values
