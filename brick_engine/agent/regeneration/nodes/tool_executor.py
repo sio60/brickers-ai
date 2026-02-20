@@ -97,14 +97,15 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             unstable_ids = list(set(unstable_ids))
             
             if not unstable_ids:
-                # 불안정 브릭이 없으면 전체 1x1 브릭을 대상으로 단순 병합 시도 (Fallback)
-                print("  [Merge] 불안정 브릭 없음 -> 단순 병합(simple) Fallback")
-                merge_stats = ldr_modifier.merge_small_bricks(state['ldr_path'], min_merge_count=2)
+                # 불안정 브릭이 없으면 전체 1x1 브릭을 대상으로 강제 병합 시도 (Fallback)
+                print("  [Merge] 불안정 브릭 없음 -> 색상 무관 전체 1x1 병합(simple) Fallback")
+                merge_stats = ldr_modifier.merge_small_bricks(state['ldr_path'], min_merge_count=2, group_by_color=False)
                 if merge_stats.get('merged', 0) > 0:
-                    result_content = f"구조적 문제는 없으나, 1x1 브릭 {merge_stats['merged']}개 그룹을 단순 병합하여 정리했습니다."
+                    result_content = f"구조적 문제는 없으나, 안정성 강화를 위해 1x1 브릭 {merge_stats['merged']}개 그룹을 색상과 무관하게 병합했습니다."
                     next_step = "verifier"
+                    state['merged'] = True
                 else:
-                    result_content = "병합할 불안정 브릭이나 1x1 브릭 그룹을 찾지 못했습니다."
+                    result_content = "현재 구조가 안정적이며, 더 이상 병합할 인접 1x1 브릭 그룹을 찾지 못했습니다. 파라미터 튜닝(TuneParameters) 등 다른 전략을 고려하세요."
             else:
                 try:
                     print(f"  [Merge] 구조적 병합 시작 (Target: {len(unstable_ids)} unstable bricks)")
