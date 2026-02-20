@@ -83,21 +83,17 @@ class HypothesisMaker:
 
     async def make_hypothesis(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        [Advanced Dual-Model Flow]
-        1. Search: Success & Failure cases (Parallel)
-        2. Draft (Gemini): Create initial plan based on Success cases
-        3. Critique (GPT): Analyze Draft against Failure cases ("Does this plan look like a known failure?")
-        4. Refine (Gemini): Finalize plan considering Critique
+        [Simplified Single-Shot Flow]
+        1. Search: Success cases
+        2. Draft (Gemini): Create plan based on Success cases → 바로 반환
+        (Critic/Refine 제거 — 속도 우선)
         """
         observation = state.get("observation", "")
         verification = state.get("verification_result", {})
         
-        # 1. Shape Analysis (if new GLB available)
+        # 1. Search
         shape_metrics = {} 
-        # TODO: Integrate shape analysis if GLB path is available in state
-        
-        # 2. Dual-Search (Async)
-        logger.info(f"🔎 이중 검색(Dual-Search) 시작: {observation[:50]}...")
+        logger.info(f"🔎 사례 검색 시작: {observation[:50]}...")
         rag_results = await asyncio.to_thread(
             self.memory.search_success_and_failure,
             observation=observation,
@@ -108,28 +104,13 @@ class HypothesisMaker:
         )
         
         success_cases = rag_results.get("success", [])
-        failure_cases = rag_results.get("failure", [])
-        logger.info(f"✅ 검색 결과: 성공 사례 {len(success_cases)}건 / 실패 사례 {len(failure_cases)}건 발견")
+        logger.info(f"✅ 검색 결과: 성공 사례 {len(success_cases)}건 발견")
         
-        # 3. Gemini Draft (Based on Success)
+        # 2. Gemini Draft (1회) → 바로 최종 가설로 사용
         draft_hypothesis = await self._run_draft_creator(observation, success_cases, verification)
-        logger.info(f"📝 Gemini 초안(Draft): {draft_hypothesis.get('hypothesis')}")
-
-        # 4. GPT Critic (Based on Failure + Draft)
-        # GPT에게 "Gemini가 이런 계획을 짰는데, 과거 실패 사례랑 비슷하니?" 라고 물어봄
-        critique_result = await self._run_critic(failure_cases, draft_hypothesis, observation)
-        logger.info(f"🧐 GPT 비평(Critique): {critique_result}")
+        logger.info(f"📝 최종 가설: {draft_hypothesis.get('hypothesis')}")
         
-        # 5. Gemini Refine (Final Synthesis)
-        final_hypothesis = await self._run_final_creator(
-            observation, 
-            draft_hypothesis, 
-            critique_result, 
-            verification
-        )
-        logger.info(f"💡 최종 가설(Final Hypothesis): {final_hypothesis.get('hypothesis')}")
-        
-        return final_hypothesis
+        return draft_hypothesis
 
     async def _run_draft_creator(
         self, 
