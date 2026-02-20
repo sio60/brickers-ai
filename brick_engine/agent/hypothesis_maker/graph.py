@@ -25,12 +25,12 @@ def build_hypothesis_graph():
         round_count = state.get("round_count", 0)
         score = state.get("internal_score", 0)
         
-        # 1. 최소 2라운드 보장
-        if round_count < 2:
+        # 1. 최소 1라운드 보장 (User Request: 1번만 가설돌고)
+        if round_count < 1:
             return "continue"
         
-        # 2. 점수 기준 (95점) 및 최대 5회 제한
-        if score < 95 and round_count < 5:
+        # 2. 점수 기준 (95점) 및 최대 1회 제한 (User Request)
+        if score < 95 and round_count < 1:
             return "continue"
             
         return "end"
