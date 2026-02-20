@@ -1,7 +1,7 @@
 """배치 점수 계산 및 최적 위치 선택"""
 from typing import Dict, List, Set, Tuple, Optional
 
-from .constants import (
+from ..constants import (
     LDU_PER_STUD, DEFAULT_SUPPORT_RATIO, OPTIMAL_BOND_MIN, OPTIMAL_BOND_MAX,
 )
 from .collision import _check_collision_simple

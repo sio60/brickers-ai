@@ -244,6 +244,8 @@ def _safe_truncate(text: str, max_len: int = 80) -> str:
 
 def node_supervisor(state: AgentState) -> AgentState:
     """전략 결정 - 동적 전략 풀링"""
+    from ..config import log_sse
+    log_sse("EVOLVER_PLAN", "어디를 고치면 더 자연스러워질지 분석하고 있어요.")
     print(f"\n[SUPERVISOR] 전략 결정 중... (반복 {state['iteration']}/{FIXED_ITERATIONS})")
 
     # 삭제 한도 체크

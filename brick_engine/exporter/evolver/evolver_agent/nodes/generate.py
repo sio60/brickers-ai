@@ -250,6 +250,8 @@ def _generate_for_strategy(state: AgentState, strategy: str, target) -> list:
 
 def node_generate(state: AgentState) -> AgentState:
     """수정 제안 생성 - 단일 전략"""
+    from ..config import log_sse
+    log_sse("EVOLVER_GENERATE", "고칠 수 있는 방법을 여러 개 만들어보고 있어요.")
     strategy = state.get("strategy", "")
     target = state.get("target_brick")
 

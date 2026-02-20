@@ -42,11 +42,6 @@ async def node_hypothesize(graph, state) -> Dict[str, Any]:
         print(f"  📝 근거: {hypothesis_result.get('reasoning')}")
         print(f"  📊 난이도: {hypothesis_result.get('difficulty')}")
 
-        obs = hypothesis_result.get("observation", "")
-        hypo = hypothesis_result.get("hypothesis", "")
-        if obs or hypo:
-            graph._log("HYPOTHESIZE", f"분석 결과: {obs} {hypo}")
-
         return {
             "current_hypothesis": hypothesis_result,
             "next_action": "strategy"

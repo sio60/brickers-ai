@@ -1,7 +1,7 @@
 """충돌 검사 / 점유 맵 헬퍼 함수"""
 from typing import Dict, Set, Tuple, TYPE_CHECKING
 
-from .constants import (
+from ..constants import (
     BRICK_HEIGHT, PLATE_HEIGHT, LDU_PER_STUD, CELL_SIZE, PLATE_PART_IDS,
 )
 
