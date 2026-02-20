@@ -137,36 +137,19 @@ Return only JSON."""},
         return {"available": False, "error": f"Unknown error: {e}"}
 
 def get_model_state(model: "BrickModel", parts_db: Dict) -> Dict:
-    """Get current model state using PhysicalVerifier"""
-    from verifier import PhysicalVerifier
-    from models import Brick, BrickPlan
+    """Get current model state using brick_judge (Rust)"""
+    import sys
+    from ldr_converter import model_to_ldr
 
-    # Convert BrickModel to BrickPlan (Verifier format)
-    from ldr_converter import get_brick_bbox
+    # brick_judge 프로젝트 루트 경로 추가
+    project_root = str(Path(__file__).resolve().parents[5])  # brickers-ai
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
-    bricks = []
-    for b in model.bricks:
-        bbox = get_brick_bbox(b, parts_db)
-        if bbox:
-            # 좌표 변환: LDraw -> Verifier
-            # LDraw: X=가로, Y=위아래(음수가 위, 양수가 아래), Z=앞뒤
-            # Verifier: X=가로, Y=앞뒤, Z=위아래(양수가 위)
-            #
-            # Verifier Brick은 최소 좌표(왼쪽 아래 모서리) 기준
-            # LDraw bbox를 직접 사용
-            brick = Brick(
-                id=b.id,
-                x=bbox.min_x,                    # X는 그대로
-                y=bbox.min_z,                    # LDraw Z -> Verifier Y
-                z=-bbox.max_y,                   # LDraw -max_Y -> Verifier Z (바닥)
-                width=bbox.max_x - bbox.min_x,
-                depth=bbox.max_z - bbox.min_z,
-                height=bbox.max_y - bbox.min_y,
-                mass=1.0
-            )
-            bricks.append(brick)
+    from brick_judge.parser import parse_ldr_string
+    from brick_judge.physics import full_judge, calc_score_from_issues
 
-    if not bricks:
+    if not model.bricks:
         return {
             "total_bricks": 0,
             "floating_count": 0,
@@ -175,23 +158,28 @@ def get_model_state(model: "BrickModel", parts_db: Dict) -> Dict:
             "verification_result": None
         }
 
-    plan = BrickPlan(bricks)
-    verifier = PhysicalVerifier(plan)
-    result = verifier.run_all_checks()
+    # BrickModel → LDR 문자열 → ParsedModel → Rust 물리 검증
+    ldr_text = model_to_ldr(model, parts_db, skip_validation=True, skip_physics=True)
+    parsed = parse_ldr_string(ldr_text, model.name if hasattr(model, "name") else "model")
+    issues = full_judge(parsed)
+    score = calc_score_from_issues(issues, len(parsed.bricks))
 
-    # Extract floating bricks from evidence
-    floating_ids = []
-    collision_count = 0
-    for ev in result.evidence:
-        if ev.type == "FLOATING":
-            floating_ids.extend(ev.brick_ids)
-        elif ev.type == "COLLISION":
-            collision_count += 1
+    # floating/isolated 카운트
+    floating_ids = set()
+    isolated_ids = set()
+    for issue in issues:
+        if issue.issue_type.value == "floating":
+            if issue.brick_id is not None:
+                floating_ids.add(issue.brick_id)
+        elif issue.issue_type.value == "isolated":
+            if issue.brick_id is not None:
+                isolated_ids.add(issue.brick_id)
 
+    # floating_bricks 리스트 (brick_judge ID = 순서 인덱스 → BrickModel 매핑)
     floating_list = []
-    for bid in floating_ids[:15]:
-        b = next((x for x in model.bricks if x.id == bid), None)
-        if b:
+    for bid in list(floating_ids)[:15]:
+        if 0 <= bid < len(model.bricks):
+            b = model.bricks[bid]
             floating_list.append({
                 "id": b.id,
                 "part_id": b.part_id,
@@ -202,12 +190,12 @@ def get_model_state(model: "BrickModel", parts_db: Dict) -> Dict:
     return {
         "total_bricks": len(model.bricks),
         "floating_count": len(floating_ids),
-        "collision_count": collision_count,
+        "collision_count": len(isolated_ids),
         "floating_bricks": floating_list,
-        "verification_result": result,
-        "score": result.score,
-        "is_valid": result.is_valid,
-        "evidence": result.evidence
+        "verification_result": None,
+        "score": score,
+        "is_valid": score >= 70,
+        "evidence": issues
     }
 
 def remove_brick(model: "BrickModel", brick_id: str) -> Dict[str, Any]:
