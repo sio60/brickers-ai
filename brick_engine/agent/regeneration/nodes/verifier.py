@@ -162,15 +162,10 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             }
             return {"next_action": "end", "final_report": final_report}
 
-        # 아직 병합 안 했으면 → merger로 이동 (첫 검증)
+        # 1차 구조적 병합(Merger) 노드를 단계적으로 삭제했으므로 바로 reflect로 넘어감
         if not state.get('merged', False):
-            print("  🔀 첫 검증 완료 → 1x1 브릭 병합 단계로 이동")
-            return {
-                "verification_raw_result": {"issues": [{"type": i.issue_type.value, "brick_id": i.brick_id} for i in issues]},
-                "floating_bricks_ids": floating_ids,
-                "current_metrics": current_metrics,
-                "next_action": "merge"
-            }
+            # 병합 플래그만 변경해줌 (에이전트 판단 지원용)
+            pass
 
         if state['attempts'] >= state['max_retries']:
             print("💥 최대 시도 횟수 초과.")
