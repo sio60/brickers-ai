@@ -7,7 +7,9 @@ def get_draft_prompt(observation: str, success_text: str, current_metrics_json: 
 
 [현재 상황]
 관찰 내용: {observation}
-현재 상태 데이터: {current_metrics_json}
+현재 상태 데이터 (공중부양 브릭 ID 등 포함): {current_metrics_json}
+
+💡 **특별 지시사항:** 만약 `current_metrics_json` 또는 관찰 내용에 `floating_brick_ids` (공중부양 브릭 ID 목록)가 포함되어 있다면, 해당 브릭들이 구조적으로 지지받지 못하고 있는 **정확한 원인과 위치**를 분석하고 이를 해결하기 위한 맞춤형 접근법을 가설에 반드시 포함하세요.
 
 [과거 성공 패턴]
 {success_text}
