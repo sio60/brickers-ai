@@ -1124,6 +1124,7 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                         for idx_s, _ in sequence[:seq_len]:
                             already_merged.add(idx_s)
                             merged_indices.add(idx_s)
+                            all_merged_indices.add(idx_s)
                         merge_count += 1
                         merged_any = True
                         break
