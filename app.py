@@ -9,7 +9,6 @@ import os
 from datetime import datetime
 
 import httpx
-from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
