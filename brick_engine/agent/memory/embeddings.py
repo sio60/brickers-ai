@@ -81,7 +81,8 @@ def get_embedding(text: str, max_retries: int = 2) -> List[float]:
                 )
                 result = client.models.embed_content(
                     model="gemini-embedding-001",
-                    contents=text
+                    contents=text,
+                    config={"output_dimensionality": 384},  # MongoDB 인덱스 384차원에 맞춤
                 )
                 return result.embeddings[0].values
         except Exception as e:
