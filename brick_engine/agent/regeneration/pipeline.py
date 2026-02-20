@@ -191,8 +191,6 @@ async def regeneration_loop(
         # Update state
         final_state["final_report"] = report
         
-        _log("COST", f"예상 비용: ${total_cost:.4f} (Tokens: {usage['input_tokens']}/{usage['output_tokens']})")
-
     _log("VERIFY", "현 설계가 반복 조립에도 안정적인지 확인 중이에요.")
 
     # Evolver Post-Processing
@@ -238,28 +236,22 @@ async def regeneration_loop(
                     f"{merge_stats['merged']} groups "
                     f"(Total: {merge_stats['original_count']} -> {merge_stats['new_count']})"
                 )
-                _log("EVOLVE", f"Pre-merge completed: {merge_stats['merged']} groups")
+                pass  # SSE 제거 (유저 불필요)
             else:
                 print("[Pre-Processing] No mergeable 1x1 groups")
         except Exception as e:
             print(f"[Pre-Processing] Merge failed (continue): {e}")
 
-        _log("EVOLVE", "Starting Evolver post-processing")
         print("\n[Evolver] Running Evolver post-processing...")
-        evolver_result = run_evolver(output_ldr_path, glb_path)
+        evolver_result = run_evolver(output_ldr_path, glb_path, log_callback=log_callback)
         if evolver_result.get("success"):
             print("[Evolver] Post-processing completed")
-            _log("EVOLVE", "Evolver post-processing completed")
         else:
             reason = evolver_result.get("reason", "unknown")
             print(f"[Evolver] Skipped/failed: {reason}")
-            _log("EVOLVE", "Evolver skipped or failed; keeping current LDR")
     else:
         skip_reason = f"mode={evolver_mode}, success={final_success}, failure_ratio={failure_ratio:.3f}"
         print(f"[Evolver] Skipped ({skip_reason})")
-        _log("EVOLVE", f"Evolver skipped ({skip_reason})")
-
-    _log("REFLECT", "현재 결과를 기준으로 최종 정리 중이에요.")
 
     # 최종 리포트
     print("\n" + "=" * 60)
@@ -323,7 +315,7 @@ async def regeneration_loop(
     except Exception as e:
         print(f"⚠️ [Memory] 저장 중 오류: {e}")
 
-    _log("COMPLETE", "설계가 완료됐어요. 다음 단계로 넘어가도 좋아요.")
+    # COMPLETE SSE 제거 (kids_render.py의 complete와 중복)
 
     # [NEW] 초기 모델 경로를 최종 리포트에 포함 (프론트엔드 비교용)
     if final_state.get("initial_ldr_path"):

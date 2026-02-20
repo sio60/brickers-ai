@@ -128,7 +128,6 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             result_content = f"알 수 없는 도구: {tool_name}"
 
         print(f"  결과: {result_content}")
-        graph._log("TOOL", f"조정 결과를 반영하고 있어요. ({result_content[:40]})")
         tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))
 
     return {

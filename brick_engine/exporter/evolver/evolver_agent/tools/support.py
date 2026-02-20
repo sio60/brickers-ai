@@ -2,7 +2,7 @@
 from collections import deque
 from typing import Dict, Any, List, Set, TYPE_CHECKING
 
-from .constants import (
+from ..constants import (
     BRICK_HEIGHT, PLATE_HEIGHT, LDU_PER_STUD, PLATE_PART_IDS,
     GROUND_TOLERANCE, KIDS_MIN_PART_SIZE, ADULT_DEFAULT_PART,
 )
