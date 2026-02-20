@@ -121,8 +121,6 @@ def embed_floating_parts(vox: List[Dict[str, Any]], max_iters: int = 3) -> List[
                 is_stable = True
             elif (x, y-1, z) in new_colors:
                 is_stable = True
-            elif (x, y+1, z) in new_colors:
-                is_stable = True
             
             if is_stable:
                 continue
@@ -135,7 +133,7 @@ def embed_floating_parts(vox: List[Dict[str, Any]], max_iters: int = 3) -> List[
                 npos = (x+dx, y+dy, z+dz)
                 if npos in new_colors:
                     nx, ny, nz = npos
-                    if ny == 0 or (nx, ny-1, nz) in new_colors or (nx, ny+1, nz) in new_colors:
+                    if ny == 0 or (nx, ny-1, nz) in new_colors:
                         best_anchor = npos
                         break
             
@@ -325,7 +323,7 @@ def _single_conversion(
     # 부유 브릭 보정
     if smart_fix:
         print(f"      [Step] Embedding floating parts...")
-        bricks_data = embed_floating_parts(bricks_data)
+        bricks_data = embed_floating_parts(bricks_data, max_iters=int(kwargs.get("support_repair_iters", 3)))
 
     # Optimize (Greedy Packing)
     print(f"      [Step] Optimization (Greedy Packing) starting...")

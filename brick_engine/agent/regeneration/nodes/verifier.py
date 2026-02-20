@@ -48,7 +48,12 @@ def node_verifier(graph, state) -> Dict[str, Any]:
         top_only_count = sum(1 for i in issues if i.issue_type.value == 'top_only')
         has_unstable_base = any(i.issue_type.value == 'unstable_base' for i in issues)
 
-        stable = not has_unstable_base and floating_count == 0 and isolated_count == 0
+        stable = (
+            not has_unstable_base
+            and floating_count == 0
+            and isolated_count == 0
+            and top_only_count == 0
+        )
 
         # 피드백 생성
         floating_ids = [str(i.brick_id) for i in issues if i.issue_type.value == 'floating' and i.brick_id is not None]
@@ -61,7 +66,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             floating_bricks=floating_count,
             floating_brick_ids=floating_ids,
             fallen_brick_ids=[],
-            failure_ratio=(floating_count + isolated_count) / total_bricks if total_bricks > 0 else 0.0,
+            failure_ratio=(floating_count + isolated_count + top_only_count) / total_bricks if total_bricks > 0 else 0.0,
             stability_score=score,
             stability_grade="STABLE" if stable else ("MEDIUM" if score >= 50 else "UNSTABLE"),
             small_brick_count=small_brick_count,
@@ -75,6 +80,8 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             short_status = "✅ 안정"
         elif floating_count > 0:
             short_status = f"❌ 불안정 (floating {floating_count}개)"
+        elif top_only_count > 0:
+            short_status = f"❌ 아래 지지 없음 (top_only {top_only_count}개)"
         elif has_unstable_base:
             short_status = "❌ 무게중심 불안정"
         else:
@@ -109,8 +116,8 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             "backend": "brick_judge_rs"
         }
 
-        # 성공 여부 판단 (unstable_base는 점수에서 제외했으므로 floating/isolated만 체크)
-        is_success = floating_count == 0 and isolated_count == 0
+        # 성공 여부 판단: top_only(아래 지지 없음)도 실패로 처리
+        is_success = floating_count == 0 and isolated_count == 0 and top_only_count == 0
         is_over_budget = total_bricks > budget
 
         if is_success:
@@ -158,6 +165,11 @@ def node_verifier(graph, state) -> Dict[str, Any]:
                 custom_feedback += f"\n\n✅ **점수 {score}점으로 높음! 공중부양 브릭 {floating_count}개만 `RemoveBricks`로 삭제하면 성공입니다.**"
             else:
                 custom_feedback += f"\n\n⚠️ **점수 {score}점으로 낮음. `TuneParameters`로 파라미터를 조정하여 구조를 개선하세요.**"
+        elif top_only_count > 0:
+            custom_feedback += (
+                f"\n\n⚠️ **아래 지지 없는 브릭(top_only)이 {top_only_count}개 있습니다. "
+                "위/아래 결합 기준을 만족하도록 `MergeBricks` 또는 `TuneParameters`로 아래 지지를 추가하세요.**"
+            )
 
         if has_unstable_base:
             custom_feedback += "\n\n⚠️ **참고: 무게중심이 지지면을 벗어났습니다. 가능하면 구조를 더 안정적으로 만드세요.**"

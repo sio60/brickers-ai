@@ -84,10 +84,10 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             raw_result = state.get('verification_raw_result', {})
             issues = raw_result.get('issues', [])
             
-            # 불안정 브릭 ID 추출
+            # 불안정 브릭 ID 추출 (top_only 포함: 아래 지지 없음)
             unstable_ids = []
             for issue in issues:
-                if issue.get('type') in ['floating', 'isolated', 'unstable_base']:
+                if issue.get('type') in ['floating', 'isolated', 'unstable_base', 'top_only']:
                     if issue.get('brick_id'):
                         unstable_ids.append(issue['brick_id'])
             
