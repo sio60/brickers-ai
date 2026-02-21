@@ -131,12 +131,13 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             if not unstable_ids:
                 # 정말로 병합할 게 아무것도 없는 경우 (Fallback)
                 print("  [Merge] 불안정 브릭 없음 -> 단순 병합(simple) Fallback")
-                merge_stats = ldr_modifier.merge_small_bricks(state['ldr_path'], min_merge_count=2)
+                merge_stats = ldr_modifier.merge_small_bricks(state['ldr_path'], min_merge_count=2) # group_by_color=True (기본값)
                 if merge_stats.get('merged', 0) > 0:
-                    result_content = f"구조적 문제는 없으나, 1x1 브릭 {merge_stats['merged']}개 그룹을 단순 병합하여 정리했습니다."
+                    result_content = f"구조적 문제는 없으나, 1x1 브릭 {merge_stats['merged']}개 그룹을 같은 색상 단위로 병합하여 정리했습니다."
                     next_step = "verifier"
+                    state['merged'] = True
                 else:
-                    result_content = "병합할 불안정 브릭이나 1x1 브릭 그룹을 찾지 못했습니다."
+                    result_content = "현재 구조상 더 이상 인접한 같은 색상의 1x1 브릭을 병합할 수 없습니다. 파라미터 튜닝(TuneParameters) 등 다른 전략을 고려하세요."
             else:
                 try:
                     print(f"  [Merge] 구조적 병합 시작 (Target: {len(unstable_ids)} unstable bricks)")
@@ -159,7 +160,6 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
             result_content = f"알 수 없는 도구: {tool_name}"
 
         print(f"  결과: {result_content}")
-        graph._log("TOOL", f"조정 결과를 반영하고 있어요. ({result_content[:40]})")
         tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))
 
     return {

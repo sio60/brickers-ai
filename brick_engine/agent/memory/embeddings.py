@@ -29,13 +29,13 @@ def _load_hf_model():
             from transformers import AutoTokenizer, AutoModel
             import config
             
-            # config.HF_EMBED_MODEL이 함수나 다른 객체로 오인되지 않도록 강제 문자열 변환 및 검증
             raw_model_name = getattr(config, "HF_EMBED_MODEL", "intfloat/multilingual-e5-small")
             
-            if callable(raw_model_name): # 만약 메서드가 왔다면 기본값 사용
+            # config.HF_EMBED_MODEL이 문자열이 아니거나 callable이면 기본값 사용
+            if callable(raw_model_name) or not isinstance(raw_model_name, str):
                 model_name = "intfloat/multilingual-e5-small"
             else:
-                model_name = str(raw_model_name)
+                model_name = raw_model_name
                 
             logger.info(f"Loading HF embedding model: {model_name}")
             _hf_tokenizer = AutoTokenizer.from_pretrained(model_name)

@@ -570,6 +570,12 @@ async def process_kids_request_internal(
 
                 except Exception as cos_err:
                     _log(f"[CoScientist] 실패, 단순 Brickify로 fallback: {cos_err}")
+                    
+                    # [FIX] 실패하더라도 final_state에서 추출할 수 있는 데이터(초기 모델 경로 등)가 있다면 활용
+                    # regen_loop_fn 내부에서 실패 시 Exception을 던지므로, 
+                    # 만약 partial state를 가져올 방법이 없다면 최소한 report라도 초기화
+                    if not report:
+                        report = {"success": False, "message": str(cos_err)}
 
                     # Fallback: 기존 단순 brickify
                     global _CONVERT_FN
@@ -716,15 +722,26 @@ async def process_kids_request_internal(
 
             # Ensure background URL ready before returning
             # Ensure background requested log
-            # [NEW] Initial Model URL (for comparison)
+            # [NEW] Initial Model URL (for comparison) - Always attempt if path exists
             initial_ldr_url = None
+            # report는 CoScientist 시도 시 혹은 실패 시에도 최대한 보존됨
             initial_model_path = report.get("initial_model_path")
+            
+            # [FIX] 만약 report에 없더라도 out_brick_dir 내부에 *_initial.ldr 파일이 있는지 체크 (Fallback)
+            if not initial_model_path:
+                initial_backups = list(out_brick_dir.glob("*_initial.ldr"))
+                if initial_backups:
+                    initial_model_path = str(initial_backups[0])
+                    _log(f"   [Found] 초기 모델 백업 발견: {initial_model_path}")
+
             if initial_model_path:
                 try:
                     p = Path(initial_model_path)
                     if p.exists():
                         # out_brick_dir 내부에 있으므로 out_dir 지정
                         initial_ldr_url = to_generated_url(p, out_dir=out_brick_dir)
+                    else:
+                        _log(f"   [Warn] 초기 모델 경로가 존재하지 않음: {initial_model_path}")
                 except Exception as e:
                     _log(f"초기 모델 URL 생성 실패: {e}")
 
@@ -826,6 +843,7 @@ async def process(request: KidsProcessRequest):
             "lmmLatency": result.get("lmmLatency"), # [New]
             "estCost": result.get("estCost"),
             "tokenCount": result.get("tokenCount"),
+            "initialLdrUrl": result.get("initialLdrUrl"), # [NEW]
         }
 
     except HTTPException:

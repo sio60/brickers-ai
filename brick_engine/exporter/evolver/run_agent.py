@@ -196,7 +196,7 @@ def run_agent(ldr_path: str, glb_path: str = None):
 
     print("=" * 60)
 
-def run_evolver_direct(ldr_path: str, glb_path: str = None) -> dict:
+def run_evolver_direct(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
     """직접 호출용 (subprocess 없이). pipeline.py에서 사용.
 
     Returns:
@@ -213,7 +213,7 @@ def run_evolver_direct(ldr_path: str, glb_path: str = None) -> dict:
         if not parts_db:
             return {"success": False, "reason": "parts_cache.json not found"}
 
-        init_config(parts_db, EXPORTER_DIR)
+        init_config(parts_db, EXPORTER_DIR, log_callback=log_callback)
 
         model = ldr_to_brick_model(ldr_path)
         model.name = Path(ldr_path).stem

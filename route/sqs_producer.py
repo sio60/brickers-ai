@@ -65,6 +65,7 @@ async def send_result_message(
     corrected_url: str = "",
     glb_url: str = "",
     ldr_url: str = "",
+    initial_ldr_url: str = "", # [New]
     bom_url: str = "",
     pdf_url: str = "",
     parts: int = 0,
@@ -85,6 +86,7 @@ async def send_result_message(
         corrected_url: 보정된 이미지 URL
         glb_url: GLB 파일 URL
         ldr_url: LDR 파일 URL
+        initial_ldr_url: 초기 LDR 파일 URL
         bom_url: BOM 파일 URL
         pdf_url: PDF 파일 URL
         parts: 파츠 수
@@ -116,6 +118,7 @@ async def send_result_message(
                 "correctedUrl": corrected_url,
                 "glbUrl": glb_url,
                 "ldrUrl": ldr_url,
+                "initialLdrUrl": initial_ldr_url, # [New]
                 "bomUrl": bom_url,
                 "pdfUrl": pdf_url,
                 "parts": parts,

@@ -136,6 +136,8 @@ def _final_decision(fidelity_opinion: dict, creative_opinion: dict, proposals: l
 
 def node_debate(state: AgentState) -> AgentState:
     """Multi-Agent Debate - FIDELITY vs CREATIVE"""
+    from ..config import log_sse
+    log_sse("EVOLVER_DEBATE", "원형 유지와 과감한 수정, 두 관점에서 비교하고 있어요.")
     _flush_print(f"\n[DEBATE] {len(state['proposals'])}개 제안 평가")
 
     if not state["proposals"]:

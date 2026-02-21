@@ -1,4 +1,4 @@
-"""비전 LLM 기반 브릭 모델 분석 (7방향 멀티앵글)
+"""비전 LLM 기반 브릭 모델 분석 (멀티앵글)
 
 리팩토링:
 - _extract_json(): 공통 JSON 파싱 헬퍼
@@ -80,10 +80,10 @@ def _add_images_to_content(content: List[Dict], images: Dict[str, str]) -> None:
 
 def analyze_multi_angle(images: Dict[str, str], model_name: str = "unknown") -> Dict[str, Any]:
     """
-    7방향 이미지를 분석하여 모델 정보 + 보정 필요 영역 추출
+    멀티앵글 이미지를 분석하여 모델 정보 + 보정 필요 영역 추출
 
     Args:
-        images: {angle_name: base64_image, ...} 7방향 이미지
+        images: {angle_name: base64_image, ...} 멀티앵글 이미지
         model_name: 모델 이름 (힌트)
 
     Returns:
@@ -106,57 +106,57 @@ def analyze_multi_angle(images: Dict[str, str], model_name: str = "unknown") -> 
     """
     # 이미지들을 content로 구성
     content = [
-        {"type": "text", "text": f"""You are a LEGO brick model expert. Analyze these 5 images of the same model from different angles.
+        {"type": "text", "text": f"""당신은 레고 브릭 모델 전문가입니다. 같은 모델을 다른 각도에서 촬영한 5장의 이미지를 분석하세요.
 
-Model name hint: {model_name} (ignore if it conflicts with what you see)
+모델 이름 힌트: {model_name} (보이는 것과 다르면 무시)
 
-These are 5 camera angles of the SAME model:
+동일 모델의 5개 카메라 앵글:
 - FRONT: 정면 (Z- 방향)
 - BACK: 뒷면 (Z+ 방향)
 - RIGHT: 오른쪽 측면 (X+ 방향)
 - BOTTOM: 아래에서 올려다본 뷰 (다리 바닥 등 보임)
 - FRONT_RIGHT: 대각선 뷰 (전체 형태 파악)
 
-CLASSIFICATION RULES:
-1. Only classify if you are 80%+ confident
-2. If unsure, use "unknown" - do NOT guess
+분류 규칙:
+1. 80% 이상 확신할 때만 분류
+2. 확실하지 않으면 "unknown" 사용 — 추측 금지
 
-Categories:
-- animal: living creature with body parts (legs, head, tail)
-- vehicle: transportation (wheels, wings, hull)
-- building: static structure (walls, roof)
-- robot: mechanical humanoid
-- figure: human character
-- plant: tree, flower, vegetation
-- unknown: cannot determine with confidence
+카테고리:
+- animal: 신체 부위가 있는 생물 (다리, 머리, 꼬리)
+- vehicle: 이동수단 (바퀴, 날개, 선체)
+- building: 정적 구조물 (벽, 지붕)
+- robot: 기계식 인간형
+- figure: 사람 캐릭터
+- plant: 나무, 꽃, 식물
+- unknown: 확신할 수 없음
 
-Analyze ALL images and determine:
-1. What is this model? (type, name, features)
-2. Where does it need support to stand properly?
-3. Where should NOT be touched? (intentional empty spaces)
+모든 이미지를 보고 판단:
+1. 이 모델은 무엇인가? (유형, 이름, 특징)
+2. 어디에 지지대가 필요한가?
+3. 어디를 건드리면 안 되는가? (의도적 빈 공간)
 
-IMPORTANT for 4-legged animals:
-- Legs need support at the BOTTOM (feet/hooves)
-- Belly area should stay EMPTY (this is natural, not a problem)
-- Look at BOTTOM view carefully to see the leg positions
+4족 동물 주의사항:
+- 다리 바닥(발/발굽)에 지지대 필요
+- 배 아래 빈 공간은 자연스러운 형태 — 문제 아님
+- BOTTOM 뷰를 주의 깊게 보고 다리 위치 확인
 
-Return JSON:
+JSON으로 반환:
 {{
-    "model_type": "one of the categories above",
+    "model_type": "위 카테고리 중 하나",
     "confidence": 0-100,
-    "name": "specific name (cat, horse, car, etc)",
-    "description": "brief visual description",
-    "legs": number or 0,
+    "name": "구체적 이름 (cat, horse, car 등)",
+    "description": "간단한 시각적 설명",
+    "legs": 다리 수 또는 0,
     "support_needed": [
-        {{"location": "specific area", "reason": "why support needed"}}
+        {{"location": "구체적 위치", "reason": "지지대가 필요한 이유"}}
     ],
     "do_not_touch": [
-        {{"location": "specific area", "reason": "why should not touch"}}
+        {{"location": "구체적 위치", "reason": "건드리면 안 되는 이유"}}
     ],
-    "overall_assessment": "summary of what needs to be done"
+    "overall_assessment": "필요한 작업 요약"
 }}
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     # 5방향 이미지 추가
@@ -184,37 +184,37 @@ Return only valid JSON."""}
 
 def score_similarity_multi(images: Dict[str, str], target: str) -> Dict[str, Any]:
     """
-    7방향 이미지로 유사도 점수 매기기 (멘토 제안)
+    멀티앵글 이미지로 유사도 점수 매기기 (멘토 제안)
 
     Args:
-        images: 7방향 이미지
+        images: 멀티앵글 이미지
         target: 목표 설명 ("고양이", "말" 등)
 
     Returns:
         {"score": 0-100, "reasoning": "...", "looks_like": "...", ...}
     """
     content = [
-        {"type": "text", "text": f"""Rate how well this LEGO brick model looks like: "{target}"
+        {"type": "text", "text": f"""이 레고 브릭 모델이 "{target}"과(와) 얼마나 닮았는지 평가하세요.
 
-You are seeing 7 different angles of the same model.
+같은 모델을 여러 각도에서 촬영한 이미지입니다.
 
-Score from 0 to 100:
-- 90-100: Clearly recognizable as {target}
-- 70-89: Mostly looks like {target}
-- 50-69: Somewhat resembles {target}
-- 30-49: Hard to recognize as {target}
-- 0-29: Does not look like {target}
+0~100점 채점 기준:
+- 90-100: {target}임이 명확히 인식됨
+- 70-89: 대체로 {target}처럼 보임
+- 50-69: 어느 정도 {target}과 닮음
+- 30-49: {target}으로 인식하기 어려움
+- 0-29: {target}과 전혀 다름
 
-Return JSON:
+JSON으로 반환:
 {{
     "score": 0-100,
-    "reasoning": "why this score",
-    "looks_like": "what it actually looks like",
-    "missing": ["missing features"],
-    "extra": ["unnecessary elements"]
+    "reasoning": "이 점수를 준 이유",
+    "looks_like": "실제로 무엇처럼 보이는지",
+    "missing": ["빠진 특징들"],
+    "extra": ["불필요한 요소들"]
 }}
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     for angle_name, b64 in images.items():
@@ -245,11 +245,11 @@ def verify_correction_multi(
     target: str
 ) -> Dict[str, Any]:
     """
-    보정 전후 7방향 비교
+    보정 전후 멀티앵글 비교
 
     Args:
-        before_images: 보정 전 7방향 이미지
-        after_images: 보정 후 7방향 이미지
+        before_images: 보정 전 멀티앵글 이미지
+        after_images: 보정 후 멀티앵글 이미지
         target: 목표 설명
 
     Returns:
@@ -263,30 +263,30 @@ def verify_correction_multi(
         }
     """
     content = [
-        {"type": "text", "text": f"""Compare BEFORE and AFTER correction of this LEGO model.
-Target: {target}
+        {"type": "text", "text": f"""이 레고 모델의 보정 전후를 비교하세요.
+목표 모델: {target}
 
-First 7 images = BEFORE correction
-Next 7 images = AFTER correction
+앞쪽 이미지들 = 보정 전
+뒤쪽 이미지들 = 보정 후
 
-Evaluate:
-1. Does AFTER still look like {target}? (shape_preserved)
-2. Is AFTER better than BEFORE? (improved)
-3. Score both (0-100)
+평가 항목:
+1. 보정 후에도 {target}처럼 보이는가? (shape_preserved)
+2. 보정 후가 보정 전보다 나은가? (improved)
+3. 각각 점수 (0-100)
 
-Return JSON:
+JSON으로 반환:
 {{
     "improved": true/false,
     "before_score": 0-100,
     "after_score": 0-100,
     "shape_preserved": true/false,
-    "recommendation": "keep" or "rollback",
-    "reasoning": "brief explanation"
+    "recommendation": "keep" 또는 "rollback",
+    "reasoning": "간단한 설명"
 }}
 
-IMPORTANT: If shape is destroyed (e.g., animal became a block), recommend "rollback".
+중요: 형태가 망가졌으면 (예: 동물이 블록이 됨) "rollback" 권장.
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     # Before 이미지들
@@ -343,65 +343,65 @@ def find_problems(images: Dict[str, str], target: str) -> Dict[str, Any]:
         }
     """
     content = [
-        {"type": "text", "text": f"""You are a LEGO brick model expert. Analyze these 5 images of a model that should look like: "{target}"
+        {"type": "text", "text": f"""당신은 레고 브릭 모델 전문가입니다. "{target}"처럼 보여야 하는 모델의 5방향 이미지를 분석하세요.
 
-CAMERA ANGLES (each image has a label in the top-left corner):
-- FRONT: Front view (model facing you, Z- direction)
-- BACK: Back view (behind the model, Z+ direction)
-- RIGHT: Right side view (model's right side, X+ direction)
-- BOTTOM: Bottom view (looking up, see legs/underside)
-- FRONT_RIGHT: Front-right diagonal view (overall shape)
+카메라 앵글 (각 이미지 좌상단에 라벨 표시):
+- FRONT: 정면 (Z- 방향)
+- BACK: 뒷면 (Z+ 방향)
+- RIGHT: 오른쪽 측면 (X+ 방향)
+- BOTTOM: 아래에서 올려다본 뷰 (다리/밑면 보임)
+- FRONT_RIGHT: 앞-오른쪽 대각선 뷰 (전체 형태)
 
-COORDINATE SYSTEM (LDraw):
-- Z negative = FRONT (앞)
-- Z positive = BACK (뒤)
-- X negative = LEFT (왼쪽)
-- X positive = RIGHT (오른쪽)
+좌표계 (LDraw):
+- Z 음수 = FRONT (앞)
+- Z 양수 = BACK (뒤)
+- X 음수 = LEFT (왼쪽)
+- X 양수 = RIGHT (오른쪽)
 
-DIRECTION RULES:
-- "front left leg" = leg at Z- and X- position
-- "back right leg" = leg at Z+ and X+ position
-- In FRONT view: LEFT side of model appears on RIGHT side of image
-- In BACK view: LEFT side of model appears on LEFT side of image
+방향 규칙:
+- "front left leg" = Z-이고 X-인 위치의 다리
+- "back right leg" = Z+이고 X+인 위치의 다리
+- FRONT 뷰에서: 모델의 왼쪽이 이미지의 오른쪽에 보임
+- BACK 뷰에서: 모델의 왼쪽이 이미지의 왼쪽에 보임
 
-Your job is to find INCORRECTLY POSITIONED bricks, NOT to suggest adding support bricks.
+당신의 역할: 잘못 배치된 브릭 찾기. 지지대 추가 제안이 아닙니다.
 
-Look for:
-1. Parts in WRONG POSITION (e.g., leg pointing wrong direction)
-2. Parts MISSING (e.g., only 3 legs when there should be 4)
-3. Parts ROTATED incorrectly
-4. Parts DETACHED or floating
-5. Parts that break overall SHAPE
+찾아야 할 것:
+1. 잘못된 위치의 부품 (예: 다리가 엉뚱한 방향)
+2. 빠진 부품 (예: 4개여야 할 다리가 3개)
+3. 잘못 회전된 부품
+4. 분리되거나 떠 있는 부품
+5. 전체 형태를 깨뜨리는 부품
 
-For each problem:
-- Location: use "front/back" + "left/right" + part name (e.g., "front right leg")
-- Issue: be specific (e.g., "pointing outward instead of downward")
-- Angles: which views show this problem
+각 문제에 대해:
+- location: "front/back" + "left/right" + 부위명 (예: "front right leg")
+- issue: 구체적으로 (예: "아래로 향해야 하는데 바깥으로 향함")
+- angles: 어떤 뷰에서 보이는지
 
-Return JSON:
+JSON으로 반환:
 {{
     "problems": [
         {{
             "location": "front right leg",
-            "issue": "pointing outward instead of downward",
+            "issue": "아래로 향해야 하는데 바깥으로 향함",
             "severity": "high/medium/low",
             "visible_in_angles": ["FRONT", "RIGHT"]
         }}
     ],
     "overall_quality": 0-100,
-    "major_issues_count": number of high severity issues
+    "major_issues_count": high severity 문제 수
 }}
 
-Quality scoring guide:
-- 90-100: No issues, model looks perfect
-- 70-89: Minor issues, overall shape is good
-- 50-69: Some problems, shape is recognizable
-- 30-49: Major issues, hard to recognize
-- 0-29: Severe problems, shape is broken
+품질 채점 기준:
+- 90-100: 문제 없음, 완벽
+- 70-89: 사소한 문제, 전체 형태 양호
+- 50-69: 일부 문제, 형태 인식 가능
+- 30-49: 심각한 문제, 인식 어려움
+- 0-29: 매우 심각, 형태 붕괴
 
-If the model looks correct, return empty problems array with high quality score (90+).
+모델이 정상이면 problems를 빈 배열로, quality를 90+ 으로 반환.
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     for angle_name, b64 in images.items():
@@ -435,7 +435,7 @@ def suggest_corrections(
     발견된 문제에 대한 수정 방법 제안
 
     Args:
-        images: 7방향 이미지
+        images: 멀티앵글 이미지
         problems: find_problems()에서 반환된 문제 목록
         target: 목표 모델
 
@@ -457,38 +457,38 @@ def suggest_corrections(
     problems_text = json.dumps(problems, ensure_ascii=False, indent=2)
 
     content = [
-        {"type": "text", "text": f"""You are a LEGO brick model expert. These 7 images show a model that should look like: "{target}"
+        {"type": "text", "text": f"""당신은 레고 브릭 모델 전문가입니다. "{target}"처럼 보여야 하는 모델의 이미지입니다.
 
-The following problems were identified:
+발견된 문제점:
 {problems_text}
 
-For each problem, suggest HOW to fix it. Be SPECIFIC about:
-1. What ACTION to take: rotate, move, delete, or add bricks
-2. What DIRECTION to move/rotate (use angle references like "when viewed from angle_6")
-3. The PRIORITY (fix most important issues first)
+각 문제에 대해 수정 방법을 구체적으로 제안하세요:
+1. 어떤 행동: rotate(회전), move(이동), delete(삭제), add(추가)
+2. 어떤 방향으로: 구체적 방향 설명
+3. 우선순위: 가장 중요한 문제부터
 
-IMPORTANT CONSTRAINTS:
-- Suggest the MINIMUM changes needed
-- Don't suggest adding support bricks unless absolutely necessary
-- Focus on repositioning existing bricks correctly
-- Consider how fixing one part might affect others
+제약 조건:
+- 최소한의 변경만 제안
+- 지지대 추가는 꼭 필요한 경우만
+- 기존 브릭 재배치에 집중
+- 한 부분 수정이 다른 부분에 미치는 영향 고려
 
-Return JSON:
+JSON으로 반환:
 {{
     "corrections": [
         {{
-            "problem_location": "location from problems list",
+            "problem_location": "문제 목록의 location",
             "action": "rotate/move/delete/add",
-            "direction": "specific direction description",
-            "priority": 1-5 (1 is highest),
-            "expected_improvement": "what this fix will achieve"
+            "direction": "구체적 방향 설명",
+            "priority": 1-5 (1이 최우선),
+            "expected_improvement": "이 수정으로 기대되는 개선"
         }}
     ],
     "correction_order": ["location1", "location2"],
-    "estimated_improvement": 0-100 (how much better the model will look after all fixes)
+    "estimated_improvement": 0-100 (전체 수정 후 예상 개선도)
 }}
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     for angle_name, b64 in images.items():
@@ -522,7 +522,7 @@ def map_to_coordinates(
     LLM의 텍스트 설명을 실제 브릭 좌표로 매핑
 
     Args:
-        images: 7방향 이미지
+        images: 멀티앵글 이미지
         correction: suggest_corrections()에서 반환된 단일 수정 사항
         brick_list: 모델의 브릭 목록 [{id, x, y, z, part_id, color}, ...]
 
@@ -559,34 +559,34 @@ def map_to_coordinates(
         })
 
     content = [
-        {"type": "text", "text": f"""You are a LEGO brick coordinate expert.
+        {"type": "text", "text": f"""당신은 레고 브릭 좌표 전문가입니다.
 
-Given these 7 images of a model and the following correction needed:
-- Location: {correction.get('problem_location', 'unknown')}
-- Action: {correction.get('action', 'unknown')}
-- Direction: {correction.get('direction', 'unknown')}
+모델 이미지와 필요한 수정 사항:
+- 위치: {correction.get('problem_location', 'unknown')}
+- 행동: {correction.get('action', 'unknown')}
+- 방향: {correction.get('direction', 'unknown')}
 
-Brick list with direction labels:
+방향 라벨이 포함된 브릭 목록:
 {json.dumps(brick_summary, indent=2)}
 
-COORDINATE SYSTEM (LDraw):
-- Z negative = FRONT (앞)
-- Z positive = BACK (뒤)
-- X negative = LEFT (왼쪽)
-- X positive = RIGHT (오른쪽)
-- Y negative = UP (위)
-- Y positive = DOWN (아래)
+좌표계 (LDraw):
+- Z 음수 = FRONT (앞)
+- Z 양수 = BACK (뒤)
+- X 음수 = LEFT (왼쪽)
+- X 양수 = RIGHT (오른쪽)
+- Y 음수 = UP (위)
+- Y 양수 = DOWN (아래)
 
-Each brick has a "direction" field showing its position (e.g., "FRONT-LEFT", "BACK-RIGHT").
-Use this to match the problem location to the correct brick.
+각 브릭의 "direction" 필드로 위치 확인 (예: "FRONT-LEFT", "BACK-RIGHT").
+문제 위치와 올바른 브릭을 매칭하세요.
 
-Example: "front right leg" → look for bricks with direction "FRONT-RIGHT"
+예시: "front right leg" → direction이 "FRONT-RIGHT"인 브릭 찾기
 
-TRANSLATION RULES:
-- X and Z: multiples of 20
-- Y: multiples of 24 (brick) or 8 (plate)
+이동 규칙:
+- X, Z: 20의 배수
+- Y: 24의 배수 (브릭) 또는 8의 배수 (플레이트)
 
-Return JSON:
+JSON으로 반환:
 {{
     "target_brick_ids": ["id1", "id2"],
     "action": "rotate/move/delete",
@@ -595,10 +595,10 @@ Return JSON:
         "translation": {{"x": 20, "y": 0, "z": -20}}
     }},
     "confidence": 0-100,
-    "reasoning": "why these bricks"
+    "reasoning": "이 브릭을 선택한 이유"
 }}
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     for angle_name, b64 in images.items():
@@ -633,7 +633,7 @@ def find_reference_part(
     예: "back left leg"이 잘못됐으면 → "back right leg"을 참조로 찾기
 
     Args:
-        images: 7방향 이미지
+        images: 멀티앵글 이미지
         bad_part: 잘못된 부분 (예: "back left leg")
         target: 목표 모델 (예: "cat")
 
@@ -646,27 +646,27 @@ def find_reference_part(
         }
     """
     content = [
-        {"type": "text", "text": f"""You are a LEGO brick model expert analyzing a model that should look like: "{target}"
+        {"type": "text", "text": f"""당신은 레고 브릭 모델 전문가입니다. "{target}"처럼 보여야 하는 모델을 분석 중입니다.
 
-The part "{bad_part}" is incorrectly positioned.
+"{bad_part}" 부분이 잘못 배치되어 있습니다.
 
-Find a REFERENCE part that can be used to fix it. For example:
-- If "back left leg" is wrong, find "back right leg" as reference
-- If "left ear" is wrong, find "right ear" as reference
-- If "tail" is wrong, describe where it should connect
+수정의 참조가 될 정상 부분을 찾으세요. 예시:
+- "back left leg"이 잘못됐으면 → "back right leg"을 참조로
+- "left ear"가 잘못됐으면 → "right ear"를 참조로
+- "tail"이 잘못됐으면 → 어디에 연결되어야 하는지 설명
 
-Return JSON:
+JSON으로 반환:
 {{
-    "reference_part": "name of the correct part to use as reference",
-    "relationship": "mirror_x" or "mirror_z" or "same_pattern" or "connect_to",
+    "reference_part": "참조로 사용할 정상 부분의 이름",
+    "relationship": "mirror_x" 또는 "mirror_z" 또는 "same_pattern" 또는 "connect_to",
     "visible_in_angles": ["angle_X", "angle_Y"],
-    "description": "how the bad part should look based on the reference",
+    "description": "참조를 기반으로 잘못된 부분이 어떻게 보여야 하는지",
     "confidence": 0-100
 }}
 
-If no good reference exists, return confidence: 0.
+적절한 참조가 없으면 confidence: 0 반환.
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     for angle_name, b64 in images.items():
@@ -702,7 +702,7 @@ def plan_rebuild(
     잘못된 부분과 참조 부분의 브릭 ID만 찾기 (좌표 계산은 알고리즘이 함)
 
     Args:
-        images: 7방향 이미지
+        images: 멀티앵글 이미지
         bad_part: 잘못된 부분 이름
         reference_part: 참조할 정상 부분 이름
         relationship: "mirror_x", "mirror_z", "same_pattern"
@@ -739,41 +739,41 @@ def plan_rebuild(
 
     # LLM은 브릭 ID만 찾음 (좌표 계산 X)
     content = [
-        {"type": "text", "text": f"""You are a LEGO brick identification expert.
+        {"type": "text", "text": f"""당신은 레고 브릭 식별 전문가입니다.
 
-Given these images and brick list, identify which bricks belong to "{bad_part}" and "{reference_part}".
+이미지와 브릭 목록을 보고, "{bad_part}"과 "{reference_part}"에 해당하는 브릭을 찾으세요.
 
-Brick list with direction labels:
+방향 라벨이 포함된 브릭 목록:
 {json.dumps(brick_summary, indent=2)}
 
-COORDINATE SYSTEM (LDraw):
-- Z negative = FRONT (앞)
-- Z positive = BACK (뒤)
-- X negative = LEFT (왼쪽)
-- X positive = RIGHT (오른쪽)
+좌표계 (LDraw):
+- Z 음수 = FRONT (앞)
+- Z 양수 = BACK (뒤)
+- X 음수 = LEFT (왼쪽)
+- X 양수 = RIGHT (오른쪽)
 
-Each brick has a "direction" field showing its position (e.g., "FRONT-LEFT", "BACK-RIGHT").
+각 브릭의 "direction" 필드로 위치 확인 (예: "FRONT-LEFT", "BACK-RIGHT").
 
-Example mappings:
-- "front right leg" → bricks with direction containing "FRONT" and "RIGHT"
-- "back left leg" → bricks with direction containing "BACK" and "LEFT"
-- "front left leg" → bricks with direction containing "FRONT" and "LEFT"
+매핑 예시:
+- "front right leg" → direction에 "FRONT"과 "RIGHT"가 포함된 브릭
+- "back left leg" → direction에 "BACK"과 "LEFT"가 포함된 브릭
+- "front left leg" → direction에 "FRONT"과 "LEFT"가 포함된 브릭
 
-Tasks (ONLY identify brick IDs, do NOT calculate coordinates):
-1. Find bricks belonging to "{bad_part}" (these will be deleted)
-2. Find bricks belonging to "{reference_part}" (these will be used as reference)
+할 일 (브릭 ID만 찾기, 좌표 계산 금지):
+1. "{bad_part}"에 해당하는 브릭 찾기 (삭제 대상)
+2. "{reference_part}"에 해당하는 브릭 찾기 (참조 대상)
 
-IMPORTANT: Only return brick IDs that exist in the brick list above.
+중요: 위 브릭 목록에 존재하는 ID만 반환하세요.
 
-Return JSON:
+JSON으로 반환:
 {{
     "delete_brick_ids": ["id1", "id2"],
     "reference_brick_ids": ["id3", "id4"],
     "confidence": 0-100,
-    "reasoning": "why these bricks were selected"
+    "reasoning": "이 브릭을 선택한 이유"
 }}
 
-Return only valid JSON."""}
+유효한 JSON만 반환."""}
     ]
 
     for angle_name, b64 in images.items():

@@ -261,13 +261,14 @@ async def _job_worker():
                     await send_result_message(
                         job_id=job_id,
                         success=True,
-                        corrected_url=result["correctedUrl"],
-                        glb_url=result["modelUrl"],
-                        ldr_url=result["ldrUrl"],
-                        bom_url=result["bomUrl"],
+                        corrected_url=result.get("correctedUrl", ""),
+                        glb_url=result.get("modelUrl", ""),
+                        ldr_url=result.get("ldrUrl", ""),
+                        initial_ldr_url=result.get("initialLdrUrl", ""), # [New]
+                        bom_url=result.get("bomUrl", ""),
                         pdf_url=result.get("pdfUrl", ""),
-                        parts=result["parts"],
-                        final_target=result["finalTarget"],
+                        parts=result.get("parts", 0),
+                        final_target=result.get("finalTarget", 0),
                         tags=result.get("tags", []),
                         background_url=result.get("backgroundUrl", ""),
                         est_cost=result.get("estCost"), # [New]

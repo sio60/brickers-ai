@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
 from ..config import get_config
-from .constants import (
+from ..constants import (
     BRICK_HEIGHT, PLATE_HEIGHT, LDU_PER_STUD, PLATE_PART_IDS,
     GROUND_TOLERANCE, _get_parts_db,
 )

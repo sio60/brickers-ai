@@ -151,6 +151,8 @@ VISION_ANGLES = ["FRONT", "BACK", "RIGHT", "BOTTOM", "FRONT_RIGHT"]
 
 def node_reflect(state: AgentState) -> AgentState:
     """Analyze results and update memory (물리 + Vision 통합 검증 + 롤백)"""
+    from ..config import log_sse
+    log_sse("EVOLVER_CHECK", "수정 전후를 비교해서 더 나아졌는지 확인하고 있어요.")
     print(f"\n[REFLECT] Analyzing...")
 
     # Get new state
@@ -182,13 +184,8 @@ def node_reflect(state: AgentState) -> AgentState:
 
         # Vision 검증 (re-render + re-analyze)
         try:
-            # 절대 경로 import
-            evolver_dir = Path(__file__).parent.parent.parent
-            if str(evolver_dir) not in sys.path:
-                sys.path.insert(0, str(evolver_dir))
-
-            from vision_analyzer import find_problems
-            from ldr_renderer import render_model_multi_angle
+            from ..tools.vision_analyzer import find_problems
+            from ..tools.ldr_renderer import render_model_multi_angle
 
             # 렌더링 (5방향)
             images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)

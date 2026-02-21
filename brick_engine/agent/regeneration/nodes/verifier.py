@@ -70,11 +70,25 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             
         score = max(0, min(100, score))
 
-        # 이슈 분석
-        floating_count = sum(1 for i in issues if i.issue_type.value == 'floating')
-        isolated_count = sum(1 for i in issues if i.issue_type.value == 'isolated')
-        top_only_count = sum(1 for i in issues if i.issue_type.value == 'top_only')
+        # 이슈 분석 및 ID 수집
+        floating_bricks = [i for i in issues if i.issue_type.value == 'floating']
+        isolated_bricks = [i for i in issues if i.issue_type.value == 'isolated']
+        top_only_bricks = [i for i in issues if i.issue_type.value == 'top_only']
+        
+        floating_count = len(floating_bricks)
+        isolated_count = len(isolated_bricks)
+        top_only_count = len(top_only_bricks)
         has_unstable_base = any(i.issue_type.value == 'unstable_base' for i in issues)
+
+        # ID 목록 추출 (문자열 ID 포맷팅)
+        floating_brick_ids = []
+        for i in floating_bricks:
+            if i.brick_id is not None and 0 <= i.brick_id < len(model.bricks):
+                b = model.bricks[i.brick_id]
+                floating_brick_ids.append(f"{b.name}_{i.brick_id}")
+
+        # fallen_brick_ids는 현재 구조상 unstable_base가 났을 때 발생하는 것으로 가정하거나 빈 목록 처리
+        fallen_brick_ids = [] 
 
         stable = (
             not has_unstable_base
@@ -83,7 +97,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             # top_only는 안정성 판정에서 제외 (점수 계산과 일관성 유지)
         )
 
-        # 피드백 생성 (IDs 없이 count만 사용)
+        # 피드백 생성
         feedback = VerificationFeedback(
             stable=stable,
             total_bricks=total_bricks,
@@ -92,6 +106,9 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             floating_brick_ids=[],
             fallen_brick_ids=[],
             failure_ratio=(floating_count + isolated_count) / total_bricks if total_bricks > 0 else 0.0,  # top_only 제외
+            floating_brick_ids=floating_brick_ids,
+            fallen_brick_ids=fallen_brick_ids,
+            failure_ratio=(floating_count + isolated_count + top_only_count) / total_bricks if total_bricks > 0 else 0.0,
             stability_score=score,
             stability_grade="STABLE" if stable else ("MEDIUM" if score >= 50 else "UNSTABLE"),
             small_brick_count=small_brick_count,
@@ -131,6 +148,8 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             "fallen_count": 0,
             "isolated_count": isolated_count,
             "top_only_count": top_only_count,
+            "floating_brick_ids": floating_brick_ids,
+            "fallen_brick_ids": fallen_brick_ids,
             "has_unstable_base": has_unstable_base,
             "stability_score": score,
             "budget_exceeded": total_bricks > budget,
@@ -192,8 +211,19 @@ def node_verifier(graph, state) -> Dict[str, Any]:
         if has_unstable_base:
             custom_feedback += "\n\n⚠️ **참고: 무게중심이 지지면을 벗어났습니다. 가능하면 구조를 더 안정적으로 만드세요.**"
 
+        # [FIX] brick_judge_rs는 brick_id를 integer (index)로 반환함.
+        # MergeBricks 등 다른 도구들은 "{part}_{index}" 형태의 문자열 ID를 기대함.
+        formatted_issues = []
+        for i in issues:
+            if i.brick_id is not None and 0 <= i.brick_id < len(model.bricks):
+                b = model.bricks[i.brick_id]
+                string_id = f"{b.name}_{i.brick_id}"
+                formatted_issues.append({"type": i.issue_type.value, "brick_id": string_id})
+            else:
+                formatted_issues.append({"type": i.issue_type.value, "brick_id": None})
+
         return {
-            "verification_raw_result": {"issues": [{"type": i.issue_type.value, "brick_id": i.brick_id} for i in issues]},
+            "verification_raw_result": {"issues": formatted_issues},
             "messages": [HumanMessage(content=custom_feedback)],
             "current_metrics": current_metrics,
             "next_action": "reflect"
