@@ -23,6 +23,10 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
     last_tool_used = state.get('last_tool_used', None)
     consecutive_same_tool = state.get('consecutive_same_tool', 0)
 
+    # 도구별 최대 사용 횟수 제한
+    MAX_TOOL_USES = 5
+    MAX_REMOVE_FALLBACK = 1
+
     for tool_call in last_message.tool_calls:
         tool_name = tool_call['name']
         args = tool_call['args']
@@ -30,15 +34,17 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
 
         graph._log("TOOL", f"도구를 활용해 브릭 구조를 조정하고 있어요. ({tool_name})")
 
-        # 무한 루프 방지
-        if tool_name == last_tool_used:
-            consecutive_same_tool += 1
-        else:
-            consecutive_same_tool = 1
+        # 도구별 사용 횟수 체크
+        current_count = tool_usage_count.get(tool_name, 0)
+        max_allowed = MAX_REMOVE_FALLBACK if tool_name == "RemoveBricks" else MAX_TOOL_USES
 
-        if consecutive_same_tool >= 10:
-            print(f"  ⚠️ 경고: {tool_name}을(를) {consecutive_same_tool}회 연속 사용 중!")
-            warning_msg = f"'{tool_name}'을(를) 10회 연속 사용했습니다. 다른 전략을 고려해주세요."
+        if current_count >= max_allowed:
+            print(f"  ⛔ {tool_name} 사용 한도 초과! ({current_count}/{max_allowed})")
+            warning_msg = (
+                f"'{tool_name}'은(는) 최대 {max_allowed}회까지만 사용 가능하며, "
+                f"이미 {current_count}회 사용하여 한도에 도달했습니다. "
+                f"다른 도구를 사용하거나 현재 상태를 수락해 주세요."
+            )
             tool_results.append(ToolMessage(content=warning_msg, tool_call_id=tool_call_id))
             return {
                 "messages": tool_results,
@@ -48,8 +54,14 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
                 "consecutive_same_tool": consecutive_same_tool,
             }
 
-        tool_usage_count[tool_name] = tool_usage_count.get(tool_name, 0) + 1
-        print(f"\n[Tool Execution] {tool_name} 실행... (총 {tool_usage_count[tool_name]}회)")
+        # 연속 사용 추적 (로깅용)
+        if tool_name == last_tool_used:
+            consecutive_same_tool += 1
+        else:
+            consecutive_same_tool = 1
+
+        tool_usage_count[tool_name] = current_count + 1
+        print(f"\n[Tool Execution] {tool_name} 실행... (총 {tool_usage_count[tool_name]}/{max_allowed}회)")
 
         result_content = ""
 
