@@ -66,12 +66,19 @@ def node_reflect(graph, state) -> Dict[str, Any]:
                 )
             except Exception as e:
                 print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
-        # Baseline 기록 후 바로 다음 단계로
+        # Baseline 기록 후 다음 단계로
+        # 첫 라운드만 가설 수립, 이후는 바로 도구 선택으로
+        round_count = state.get("round_count", 0) + 1
+        if round_count >= 2:
+            next_step = "model"
+            print(f"  [Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
+        else:
+            next_step = state.get("next_action_override") or "hypothesize"
         return {
-            "memory": memory, # memory도 함께 반환
+            "memory": memory,
             "previous_metrics": current_metrics,
-            "next_action": state.get("next_action_override") or "hypothesize",
-            "round_count": state.get("round_count", 0) + 1
+            "next_action": next_step,
+            "round_count": round_count
         }
 
     # 메트릭 비교
@@ -155,12 +162,19 @@ def node_reflect(graph, state) -> Dict[str, Any]:
             "next_action": "end"
         }
 
-    print(" [Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
-    print("🎓" * 20)
+    # 2라운드 이상이면 가설 수립 건너뛰고 바로 도구 선택으로
+    round_count = state.get('round_count', 0)
+    if round_count >= 2:
+        print(f" [Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
+        next_step = "model"
+    else:
+        print(" [Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
+        print("🎓" * 20)
+        next_step = "hypothesize"
 
     return {
         "memory": memory,
         "observation": f"실패율={curr_failure:.2f}, 공중부양={curr_floating}개, 작은브릭={curr_small_ratio:.2f}",
         "previous_metrics": current_metrics,
-        "next_action": "hypothesize"
+        "next_action": next_step
     }
