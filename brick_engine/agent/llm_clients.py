@@ -269,7 +269,7 @@ class GroqClient(BaseLLMClient):
 class GeminiClient(BaseLLMClient):
     """
     Google Gemini API 클라이언트
-    gemini-flash-latest 모델을 기본으로 하여 빠르고 경량화된 응답 제공
+    gemini-1.5-flash 모델을 기본으로 하여 빠르고 경량화된 응답 제공
     """
     
     def __init__(self, api_key: Optional[str] = None, model: str = "gemini-flash-latest"):

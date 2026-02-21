@@ -850,6 +850,7 @@ BRICK_DIMENSIONS = {
     # 1xN Bricks
     "3005.dat": (1, 1), "3004.dat": (1, 2), "3622.dat": (1, 3), "3010.dat": (1, 4), 
     "3009.dat": (1, 6), "3008.dat": (1, 8), "3007.dat": (1, 10), "3006.dat": (1, 12),
+    "3062.dat": (1, 1), "3062b.dat": (1, 1), # Round Bricks
     
     # 2xN Bricks
     "3003.dat": (2, 2), "3002.dat": (2, 3), "3001.dat": (2, 4), "3000.dat": (2, 2), 
@@ -857,6 +858,9 @@ BRICK_DIMENSIONS = {
     # 1xN Plates
     "3024.dat": (1, 1), "3023.dat": (1, 2), "3623.dat": (1, 3), "3710.dat": (1, 4),
     "3666.dat": (1, 6), "3460.dat": (1, 8), 
+    "3070.dat": (1, 1), "3069.dat": (1, 2), # Tiles
+    "3070b.dat": (1, 1), "3069b.dat": (1, 2),
+    "4073.dat": (1, 1), "6141.dat": (1, 1), # Round Plates
     
     # 2xN Plates
     "3022.dat": (2, 2), "3021.dat": (2, 3), "3020.dat": (2, 4), "3795.dat": (2, 6)
@@ -1090,9 +1094,9 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                         new_brick = {
                             "part": target_mapping[seq_len],
                             "color": final_color,
-                            "x": int(round(center_x)), 
-                            "y": int(round(center_y)), 
-                            "z": int(round(center_z)),
+                            "x": center_x, 
+                            "y": center_y, 
+                            "z": center_z,
                             "matrix": identity_mat,
                             "_orig_vol": max_vol
                         }
