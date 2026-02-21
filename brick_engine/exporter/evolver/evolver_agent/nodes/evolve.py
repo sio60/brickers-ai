@@ -640,6 +640,7 @@ def handle_symmetry_fix(state: AgentState, proposal: Dict, action: Dict, before_
 
 HANDLERS: Dict[str, Callable] = {
     "remove": handle_remove,
+    "selective_remove": handle_remove,  # SELECTIVE_REMOVE도 remove 핸들러 사용
     "add_support": None,  # 특수 처리 (candidates vs position)
     "bridge": handle_bridge,
     "rollback": handle_rollback,

@@ -178,7 +178,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             # 병합 플래그만 변경해줌 (에이전트 판단 지원용)
             pass
 
-        if state['attempts'] >= state['max_retries']:
+        if state['attempts'] > state['max_retries']:
             print("💥 최대 시도 횟수 초과. 마지막 결과를 기록한 뒤 종료합니다.")
             final_report = {
                 "success": False,
