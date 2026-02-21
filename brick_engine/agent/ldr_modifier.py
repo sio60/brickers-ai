@@ -19,27 +19,17 @@ STUD_SPACING = 20.0  # X/Z 그리드 간격
 BRICK_HEIGHT = 24.0  # 일반 브릭 높이
 PLATE_HEIGHT = 8.0   # 플레이트 높이
 
-# 1x1 브릭/플레이트 부품 번호 (병합/분해 대상)
-SMALL_BRICK_PARTS = {
-    "3005.dat", "3024.dat", # 1x1 Brick, 1x1 Plate
-    "3070.dat", "3069.dat", # 1x1 Tile, 1x2 Tile (1x2는 분해 대상이 될 수 있음)
-    "3070b.dat", "3069b.dat", # Tiles with groove
-    "4073.dat", "6141.dat", # 1x1 Round Plate
-    "3062.dat", "3062b.dat", # 1x1 Round Brick
-}
+# 1x1 브릭/플레이트 부품 번호
+SMALL_BRICK_PARTS = {"3005.dat", "3024.dat"}
 
-# 병합 대상 브릭 매핑 (길이 -> 파트 번호)
+# 병합 대상 브릭 매핑 (최대 1x4로 제한하여 모델 디테일 보존)
 MERGE_TARGET_BRICKS = {
-    2: "3004.dat",   # 1x2 브릭
-    3: "3622.dat",   # 1x3 브릭
-    4: "3010.dat",   # 1x4 브릭
-    6: "3009.dat",   # 1x6 브릭
-    8: "3008.dat",   # 1x8 브릭
-    10: "3007.dat",  # 1x10 브릭
-    12: "3006.dat",  # 1x12 브릭
+    2: "3004.dat",   # 1x2
+    3: "3622.dat",   # 1x3
+    4: "3010.dat",   # 1x4
 }
 
-# 플레이트 병합 대상 (최대 1x8)
+# 플레이트 병합 대상 (최대 1x4)
 PLATE_MERGE_TARGETS = {
     2: "3023.dat",   # 1x2 Plate
     3: "3623.dat",   # 1x3 Plate
@@ -53,18 +43,15 @@ BRICK_STUD_COUNT = {
     # Bricks
     "3005.dat": 1, "3004.dat": 2, "3622.dat": 3, "3010.dat": 4, 
     "3009.dat": 6, "3008.dat": 8, "3007.dat": 10, "3006.dat": 12,
-    "3003.dat": 4,   # 2x2 Brick 
+    "3003.dat": 4,   # 2x2 Brick (Special case for splitting)
     "3002.dat": 6,   # 2x3 Brick
     "3001.dat": 8,   # 2x4 Brick
-    "3062.dat": 1, "3062b.dat": 1,
     
     # Plates
     "3024.dat": 1, "3023.dat": 2, "3623.dat": 3, "3710.dat": 4,
     "3666.dat": 6, "3460.dat": 8, "3022.dat": 4, # 2x2 Plate
     "3021.dat": 6, # 2x3 Plate
     "3020.dat": 8, # 2x4 Plate
-    "3070.dat": 1, "3069.dat": 2, "3070b.dat": 1, "3069b.dat": 2,
-    "4073.dat": 1, "6141.dat": 1,
 }
 
 def _is_plate(part_name: str) -> bool:
@@ -484,7 +471,18 @@ def remove_brick(ldr_path: str, brick_id: str) -> bool:
 # 같은 색상의 인접 1x1 브릭들을 큰 브릭으로 통합하여 구조적 안정성 향상
 # ============================================================================
 
-# --- 병합 섹션에서 중복 정의된 상수들 제거 ---
+# 병합 가능한 1x1 브릭 파트 번호 (플레이트 포함)
+SMALL_BRICK_PARTS = {"3005.dat", "3024.dat"}  # 1x1 브릭 및 플레이트 대상
+
+# 큰 브릭으로 교체할 매핑 (길이 -> 파트 번호)
+# 플레이트는 사용하지 않음 (1x5, 1x7 브릭은 레고에 존재하지 않아 제외)
+MERGE_TARGET_BRICKS = {
+    2: "3004.dat",   # 1x2 브릭
+    3: "3622.dat",   # 1x3 브릭
+    4: "3010.dat",   # 1x4 브릭
+    6: "3009.dat",   # 1x6 브릭
+    8: "3008.dat",   # 1x8 브릭
+}
 
 
 def merge_small_bricks(ldr_path: str, target_brick_ids: Optional[list] = None, min_merge_count: int = 2, max_len: Optional[int] = None, group_by_color: bool = True) -> dict:
@@ -589,10 +587,30 @@ def merge_small_bricks(ldr_path: str, target_brick_ids: Optional[list] = None, m
 # X+Z 양방향, 색상 무관 병합 지원
 # ============================================================================
 
-# --- 구조적 병합 섹션에서 중복 정의된 상수들 제거 ---
-# BRICK_STUD_COUNT, PLATE_MERGE_TARGETS 등은 상단 공통 상수를 사용함
+# 브릭/플레이트 파트 → 스터드 수 역매핑 (분해 및 판별용)
+BRICK_STUD_COUNT = {
+    # Bricks
+    "3005.dat": 1, "3004.dat": 2, "3622.dat": 3, "3010.dat": 4, 
+    "3009.dat": 6, "3008.dat": 8, "3007.dat": 10, "3006.dat": 12,
+    "3003.dat": 4,   # 2x2 Brick (Special case for splitting)
+    "3002.dat": 6,   # 2x3 Brick
+    "3001.dat": 8,   # 2x4 Brick
+    
+    # Plates
+    "3024.dat": 1, "3023.dat": 2, "3623.dat": 3, "3710.dat": 4,
+    "3666.dat": 6, "3460.dat": 8, "3022.dat": 4, # 2x2 Plate
+    "3021.dat": 6, # 2x3 Plate
+    "3020.dat": 8, # 2x4 Plate
+}
 
-# PLATE_MERGE_TARGETS 상단 공통 상수를 사용함
+# 플레이트 병합 매핑
+PLATE_MERGE_TARGETS = {
+    2: "3023.dat",   # 1x2 Plate
+    3: "3623.dat",   # 1x3 Plate
+    4: "3710.dat",   # 1x4 Plate
+    6: "3666.dat",   # 1x6 Plate
+    8: "3460.dat",   # 1x8 Plate
+}
 
 def _is_plate(part_name: str) -> bool:
     """부품 번호를 기준으로 플레이트 여부 판별"""
@@ -694,9 +712,7 @@ def _merge_rect_pass(bricks: list, group_by_color: bool) -> tuple:
         
         # 따라서 Group Key: (y, color(opt), matrix_tuple)
         mat_tuple = tuple(b["matrix"])
-        # [COORD FIX] Y 반올림
-        ry = int(round(b["y"]))
-        key = (ry, b["color"] if group_by_color else -1, mat_tuple)
+        key = (b["y"], b["color"] if group_by_color else -1, mat_tuple)
         groups[key].append((i, b))
         
     used_indices = set()
@@ -739,10 +755,10 @@ def _merge_rect_pass(bricks: list, group_by_color: bool) -> tuple:
                 # 두 브릭이 합쳐질 수 있는가?
                 # Case 1: 가로(X, Cols)로 붙음 -> Rows 불변, Cols 합침
                 # 조건: Z 일치, X 차이 == (C1/2 + C2/2) * 20
-                if abs(int(round(b_i["z"])) - int(round(b_j["z"]))) < 1:
-                    dist_x = abs(int(round(b_i["x"])) - int(round(b_j["x"])))
-                    target_dist = (c1 + c2) * 10 # 20/2 + 20/2
-                    if abs(dist_x - target_dist) < 1:
+                if abs(b_i["z"] - b_j["z"]) < 1.0:
+                    dist_x = abs(b_i["x"] - b_j["x"])
+                    target_dist = (c1 + c2) * 10.0 # 20/2 + 20/2
+                    if abs(dist_x - target_dist) < 1.0:
                         # 합쳤을 때 유효한지 확인
                         new_rows = r1 # = r2 matches by Z check? No, Z check only means center aligned.
                         # If sizes differ (e.g. 1x2 and 2x2), r1 != r2.
@@ -768,10 +784,10 @@ def _merge_rect_pass(bricks: list, group_by_color: bool) -> tuple:
                             
                 # Case 2: 세로(Z, Rows)로 붙음 -> Cols 불변, Rows 합침
                 # 조건: X 일치, Z 차이 == (R1/2 + R2/2) * 20
-                if abs(int(round(b_i["x"])) - int(round(b_j["x"]))) < 1:
-                    dist_z = abs(int(round(b_i["z"])) - int(round(b_j["z"])))
-                    target_dist = (r1 + r2) * 10
-                    if abs(dist_z - target_dist) < 1:
+                if abs(b_i["x"] - b_j["x"]) < 1.0:
+                    dist_z = abs(b_i["z"] - b_j["z"])
+                    target_dist = (r1 + r2) * 10.0
+                    if abs(dist_z - target_dist) < 1.0:
                         if c1 != c2: continue # 너비(Col)가 다르면 세로병합 불가
                         
                         target_key = (r1 + r2, c1)
@@ -985,12 +1001,10 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
     groups = defaultdict(list)
     for i, b in enumerate(bricks):
         is_p = _is_plate(b["part"])
-        # [COORD FIX] Y좌표 반올림하여 그룹화 (float 오차 방지)
-        ry = int(round(b["y"]))
         if group_by_color:
-            groups[(ry, b["color"], is_p)].append((i, b))
+            groups[(b["y"], b["color"], is_p)].append((i, b))
         else:
-            groups[(ry, "all", is_p)].append((i, b))
+            groups[(b["y"], "all", is_p)].append((i, b))
 
     for key, group in groups.items():
         if len(group) < min_merge_count:
@@ -1006,9 +1020,7 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
         # --- X 방향 병합 (같은 Z에서) ---
         z_groups = defaultdict(list)
         for idx, brick in group:
-            # [COORD FIX] Z좌표 반올림 (float 오차 방지)
-            rz = int(round(brick["z"]))
-            z_groups[rz].append((idx, brick))
+            z_groups[brick["z"]].append((idx, brick))
 
         for z, z_items in z_groups.items():
             if len(z_items) < min_merge_count:
@@ -1031,8 +1043,7 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                         j += 1
                         continue
                     prev_x = sequence[-1][1]["x"]
-                    curr_x = brick_j["x"]
-                    if abs(curr_x - prev_x - STUD_SPACING) < 1.0:
+                    if abs(brick_j["x"] - prev_x - STUD_SPACING) < 0.1:
                         sequence.append((idx_j, brick_j))
                         j += 1
                     else:
@@ -1083,9 +1094,9 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                         new_brick = {
                             "part": target_mapping[seq_len],
                             "color": final_color,
-                            "x": int(round(center_x)), 
-                            "y": int(round(center_y)), 
-                            "z": int(round(center_z)),
+                            "x": center_x, 
+                            "y": center_y, 
+                            "z": center_z,
                             "matrix": identity_mat,
                             "_orig_vol": max_vol
                         }
@@ -1117,9 +1128,7 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
         for idx, brick in group:
             if idx in already_merged:
                 continue
-            # [COORD FIX] X좌표 반올림
-            rx = int(round(brick["x"]))
-            x_groups[rx].append((idx, brick))
+            x_groups[brick["x"]].append((idx, brick))
 
         for x, x_items in x_groups.items():
             if len(x_items) < min_merge_count:
@@ -1142,8 +1151,7 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
                         j += 1
                         continue
                     prev_z = sequence[-1][1]["z"]
-                    curr_z = brick_j["z"]
-                    if abs(curr_z - prev_z - STUD_SPACING) < 1.0:
+                    if abs(brick_j["z"] - prev_z - STUD_SPACING) < 0.1:
                         sequence.append((idx_j, brick_j))
                         j += 1
                     else:
@@ -1381,7 +1389,7 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
     for b in all_bricks:
         positions = _get_brick_stud_positions(b)
         for x, y, z in positions:
-            key = (int(round(x)), int(round(y)), int(round(z)))
+            key = (round(x, 1), round(y, 1), round(z, 1))
             pos_to_brick_idx[key] = b["brick_idx"]
 
     # 안정 브릭 중 경계면에 있는 것 찾기
@@ -1403,7 +1411,7 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
             ]
             
             for nx, ny, nz in neighbors:
-                n_key = (int(round(nx)), int(round(ny)), int(round(nz)))
+                n_key = (round(nx, 1), round(ny, 1), round(nz, 1))
                 if n_key in pos_to_brick_idx:
                     n_idx = pos_to_brick_idx[n_key]
                     if n_idx not in unstable_set:
