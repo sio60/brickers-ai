@@ -69,7 +69,7 @@ websockets==15.0.1
 yarl==1.22.0
 pygltflib
 tripo3d
-langchain-google-genai
+langchain-google-genai>=4.0.0
 langchain-core
 langsmith
 boto3

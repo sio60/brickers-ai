@@ -272,18 +272,18 @@ class GeminiClient(BaseLLMClient):
     gemini-1.5-flash 모델을 기본으로 하여 빠르고 경량화된 응답 제공
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-flash-latest"):
+    def __init__(self, api_key: Optional[str] = None, model: str = None):
         """
-        Gemini 클라이언트 초기화 (안정성을 위해 gemini-1.5-flash 권장)
+        Gemini 클라이언트 초기화 (안정성을 위해 gemini-2.0-flash 권장)
         
         Args:
             api_key: Google API 키 (없으면 GOOGLE_API_KEY 또는 GEMINI_API_KEY에서 읽음)
-            model: 사용할 모델명 (기본값: gemini-flash-latest)
+            model: 사용할 모델명 (기본값: 환경변수 GEMINI_MODEL 또는 gemini-2.0-flash)
         """
         self.api_key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("API 키를 찾을 수 없습니다. GOOGLE_API_KEY 또는 GEMINI_API_KEY 환경 변수를 설정해주세요.")
-        self.model_name = model
+        self.model_name = model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
         self._model = None # Kept _model for functional correctness with _get_model
         self.usage = {"input_tokens": 0, "output_tokens": 0} # [NEW]
 

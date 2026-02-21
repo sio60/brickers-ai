@@ -178,9 +178,30 @@ def node_model(graph, state) -> Dict[str, Any]:
                 return {"messages": [response, hint], "next_action": "model"}
 
     except Exception as e:
+        error_str = str(e)
         print(f"  ⚠️ LLM 호출 에러: {e}")
-        if "429" in str(e):
+        
+        # 연속 에러 카운트 추적
+        llm_errors = state.get('verification_errors', 0) + 1
+        
+        if "429" in error_str:
             print("  💤 API 할당량 초과. 잠시 대기 후 재시도합니다...")
             time.sleep(10)
-            return {"next_action": "model"}
-        return {"next_action": "end"}
+            return {"verification_errors": llm_errors, "next_action": "model"}
+        elif "400" in error_str and "thought_signature" in error_str:
+            # Gemini 3.x thought_signature 호환성 에러 → 재시도 1회
+            print("  🔄 thought_signature 에러 감지. 메시지를 정리하고 재시도합니다...")
+            if llm_errors < 2:
+                # 메시지 히스토리에서 tool_calls 관련 정보 정리 후 재시도
+                return {"verification_errors": llm_errors, "next_action": "model"}
+            else:
+                print("  ❌ thought_signature 에러 반복. 종료합니다.")
+                return {"next_action": "end"}
+        elif llm_errors < 2:
+            # 기타 에러도 1회 재시도
+            print(f"  🔄 일반 에러. 재시도합니다... ({llm_errors}/2)")
+            time.sleep(2)
+            return {"verification_errors": llm_errors, "next_action": "model"}
+        else:
+            print("  ❌ 반복 에러로 종료합니다.")
+            return {"next_action": "end"}
