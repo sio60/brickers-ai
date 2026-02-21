@@ -119,23 +119,22 @@ def full_judge(model: "ParsedModel") -> List[Issue]:
 def calc_score_from_issues(issues: List[Issue], total_bricks: int = 0) -> int:
     """점수 계산: 문제 브릭 비율 기반
     
-    - 무게중심 불안정(unstable_base) → 0점
-    - 그 외: 100 - (문제 브릭 수 / 전체 브릭 수 * 100)
+    - 무게중심(unstable_base/off_balance)은 점수 계산에서 제외
+    - 100 - (문제 브릭 수 / 전체 브릭 수 * 100)
     """
-    # 무게중심 불안정이면 0점
-    if any(i.issue_type.value in ("unstable_base", "off_balance") for i in issues):
-        return 0
+    # 무게중심 이슈는 점수 계산에서 제외 (이슈 목록에는 남아있음)
+    scoring_issues = [i for i in issues if i.issue_type.value not in ("unstable_base", "off_balance")]
     
-    # 문제 브릭 수 (중복 제거, top_only 제외)
+    # 문제 브릭 수 (중복 제거, top_only 제외, 무게중심 이슈 제외)
     problem_brick_ids = set(
-        i.brick_id for i in issues 
+        i.brick_id for i in scoring_issues 
         if i.brick_id is not None and i.issue_type.value != "top_only"
     )
     
     if total_bricks <= 0:
         # 폴백: 기존 로직 (브릭 수 모를 때)
         score = 100
-        for issue in issues:
+        for issue in scoring_issues:
             if issue.severity.value == "critical":
                 score -= 30
             elif issue.severity.value == "high":
