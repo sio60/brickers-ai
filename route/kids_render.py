@@ -826,6 +826,7 @@ async def process(request: KidsProcessRequest):
             "lmmLatency": result.get("lmmLatency"), # [New]
             "estCost": result.get("estCost"),
             "tokenCount": result.get("tokenCount"),
+            "initialLdrUrl": result.get("initialLdrUrl"), # [NEW]
         }
 
     except HTTPException:
