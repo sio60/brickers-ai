@@ -165,6 +165,12 @@ def node_model(graph, state) -> Dict[str, Any]:
             print(f"  💭 LLM 의견: {response.content}")
 
             current_metrics = state.get('current_metrics', {})
+            # current_metrics가 비어있으면 아직 검증이 안 된 상태이므로 종료하면 안 됨
+            if not current_metrics:
+                print("⚠️ 검증 메트릭이 없습니다. 도구 선택을 재지시합니다.")
+                hint = HumanMessage(content="아직 검증 결과가 없습니다. 반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 최적화하세요.")
+                return {"messages": [response, hint], "next_action": "model"}
+
             floating_count = current_metrics.get('floating_count', 0)
             failure_ratio = current_metrics.get('failure_ratio', 0)
 

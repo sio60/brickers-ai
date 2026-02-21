@@ -20,7 +20,9 @@ except ImportError:
     PIL_AVAILABLE = False
     print("[WARNING] PIL not available, direction labels disabled")
 
-LDVIEW_PATH = r"C:\Program Files\LDView\LDView64.exe"
+import os
+
+LDVIEW_PATH = os.getenv("LDVIEW_PATH", r"C:\Program Files\LDView\LDView64.exe")
 
 # 카메라 각도 프리셋 (latitude, longitude, 방향 라벨)
 # LDraw: Z- = 앞, Z+ = 뒤, X- = 왼, X+ = 오
