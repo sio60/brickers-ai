@@ -80,7 +80,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             not has_unstable_base
             and floating_count == 0
             and isolated_count == 0
-            and top_only_count == 0
+            # top_only는 안정성 판정에서 제외 (점수 계산과 일관성 유지)
         )
 
         # 피드백 생성 (IDs 없이 count만 사용)
@@ -91,7 +91,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             floating_bricks=floating_count,
             floating_brick_ids=[],
             fallen_brick_ids=[],
-            failure_ratio=(floating_count + isolated_count + top_only_count) / total_bricks if total_bricks > 0 else 0.0,
+            failure_ratio=(floating_count + isolated_count) / total_bricks if total_bricks > 0 else 0.0,  # top_only 제외
             stability_score=score,
             stability_grade="STABLE" if stable else ("MEDIUM" if score >= 50 else "UNSTABLE"),
             small_brick_count=small_brick_count,
@@ -139,8 +139,8 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             "backend": "brick_judge_rs"
         }
 
-        # 성공 여부 판단: top_only(아래 지지 없음)도 실패로 처리
-        is_success = floating_count == 0 and isolated_count == 0 and top_only_count == 0
+        # 성공 여부 판단: top_only는 성공 판정에서 제외 (점수 계산과 일관성 유지)
+        is_success = floating_count == 0 and isolated_count == 0
         is_over_budget = total_bricks > budget
 
         if is_success:
