@@ -30,14 +30,34 @@ def node_reflect(graph, state) -> Dict[str, Any]:
     previous_metrics = state.get('previous_metrics', {})
     current_metrics = state.get('current_metrics', {})
     last_tool = state.get('last_tool_used', 'unknown')
+    session_id = state.get('session_id', 'unknown_session') # session_id를 미리 정의
 
-    # 이전 메트릭이 없으면 첫 실행 (비교 대상 없음)
+    # [FIX] 첫 번째 시도(Baseline)도 무조건 기록하여 전/후 비교 및 통계 지원
     if not previous_metrics:
-        print("  (첫 검증 - 기준점 설정)")
+        print("\n[Reflect] 첫 번째 시도 기록 (Baseline)")
+        # force_save=True 를 사용하여 개선 여부와 상관없이 기록
+        if memory_manager:
+            try:
+                memory_manager.log_experiment(
+                    session_id=session_id,
+                    job_id=state.get("job_id"),
+                    iteration=state.get("round_count", 0) + 1,
+                    metrics=current_metrics,
+                    improvement=0.0,
+                    improved=True, # Baseline은 항상 '개선됨'으로 간주하여 기록 유도
+                    action="baseline",
+                    thoughts="Initial baseline for comparison",
+                    ldr_path=state["ldr_path"],
+                    initial_ldr_path=state.get("initial_ldr_path")
+                )
+            except Exception as e:
+                print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
+        # Baseline 기록 후 바로 다음 단계로
         return {
-            "memory": memory,
+            "memory": memory, # memory도 함께 반환
             "previous_metrics": current_metrics,
-            "next_action": "hypothesize"
+            "next_action": state.get("next_action_override") or "hypothesize",
+            "round_count": state.get("round_count", 0) + 1
         }
 
     # 메트릭 비교
