@@ -143,7 +143,7 @@ def node_model(graph, state) -> Dict[str, Any]:
     # 모델 호출
     try:
         client_to_use = graph.gemini_client
-        print(f"  🤖 Active Model: Gemini-2.5-Flash (Fixed)")
+        print(f"  🤖 Active Model: {client_to_use.model_name}")
 
         model_with_tools = client_to_use.bind_tools(tools)
         response = model_with_tools.invoke(messages_to_send)
