@@ -103,12 +103,9 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             total_bricks=total_bricks,
             fallen_bricks=0,
             floating_bricks=floating_count,
-            floating_brick_ids=[],
-            fallen_brick_ids=[],
-            failure_ratio=(floating_count + isolated_count) / total_bricks if total_bricks > 0 else 0.0,  # top_only 제외
             floating_brick_ids=floating_brick_ids,
             fallen_brick_ids=fallen_brick_ids,
-            failure_ratio=(floating_count + isolated_count + top_only_count) / total_bricks if total_bricks > 0 else 0.0,
+            failure_ratio=(floating_count + isolated_count) / total_bricks if total_bricks > 0 else 0.0,  # top_only 제외
             stability_score=score,
             stability_grade="STABLE" if stable else ("MEDIUM" if score >= 50 else "UNSTABLE"),
             small_brick_count=small_brick_count,
