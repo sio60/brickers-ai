@@ -1,10 +1,9 @@
-"""
+﻿"""
 glb_to_ldr_embedded.py - Enhanced Brickify Engine
-- 대칭성 자동 감지 및 적용
-- 부유 브릭 심지 박기 (구조 보정)
-- 확장된 색상 팔레트 (30+개)
-- SSE 실시간 로그 지원
-- Brick만 사용 (Plate 없음)
+- automatic stability detection and repair
+- floating brick pre-repair (structural reinforcement)
+- expanded LDraw color palette (30+)
+- SSE real-time logs (brick only, no plates)
 """
 
 import os
@@ -13,7 +12,9 @@ import argparse
 import numpy as np
 import trimesh
 from scipy.spatial import KDTree
-from typing import Dict, List, Any, Optional, Tuple, Literal
+from scipy.ndimage import binary_dilation, binary_erosion
+from typing import Dict, List, Any, Optional, Tuple, Literal, Set, Deque
+from collections import deque
 from pathlib import Path
 
 # Add current dir to path for pylego3d imports
@@ -30,7 +31,7 @@ except ImportError:
     from pylego3d.write_ldr import write_ldr
 
 # =============================================================================
-# 확장된 LDraw 색상 팔레트 (30+개)
+# Expanded LDraw color palette (30+)
 # =============================================================================
 LDRAW_COLORS: Dict[int, Tuple[int, int, int, str]] = {
     0:  (33, 33, 33, "Black"),
@@ -77,7 +78,7 @@ _COLOR_TREE = KDTree(_COLOR_RGB)
 
 
 def match_ldraw_color(rgb: Tuple[float, float, float]) -> int:
-    """RGB 값을 가장 가까운 LDraw 색상 ID로 매칭"""
+    """Map an RGB value to the nearest LDraw color ID."""
     v = np.array(rgb, dtype=np.float32)
     if v.max() <= 1.0:
         v *= 255.0
@@ -86,88 +87,164 @@ def match_ldraw_color(rgb: Tuple[float, float, float]) -> int:
 
 
 # =============================================================================
-# 부유 브릭 심지 박기 (구조 보정)
+# Floating brick repair (structural reinforcement)
 # =============================================================================
-def embed_floating_parts(vox: List[Dict[str, Any]], max_iters: int = 3) -> List[Dict[str, Any]]:
+def _horizontal_neighbors(pos: Tuple[int, int, int]) -> Tuple[Tuple[int, int, int], ...]:
+    x, y, z = pos
+    return (
+        (x + 1, y, z),
+        (x - 1, y, z),
+        (x, y, z + 1),
+        (x, y, z - 1),
+    )
+
+
+def _is_vertically_supported(
+    pos: Tuple[int, int, int],
+    occupied: Set[Tuple[int, int, int]],
+) -> bool:
+    x, y, z = pos
+    return y == 0 or (x, y - 1, z) in occupied
+
+
+def _compute_stable_positions(occupied: Set[Tuple[int, int, int]]) -> Set[Tuple[int, int, int]]:
     """
-    공중에 떠 있는 복셀을 인접한 안정적인 복셀과 연결
-    - 바닥(y=0)에 있거나
-    - 아래에 복셀이 있으면 안정적
+    Stable voxels:
+    - direct support from below, or
+    - same-layer horizontal connection to another stable voxel.
+    """
+    stable: Set[Tuple[int, int, int]] = set()
+    queue: Deque[Tuple[int, int, int]] = deque()
+
+    for pos in occupied:
+        if _is_vertically_supported(pos, occupied):
+            stable.add(pos)
+            queue.append(pos)
+
+    while queue:
+        cur = queue.popleft()
+        for nxt in _horizontal_neighbors(cur):
+            if nxt in occupied and nxt not in stable:
+                stable.add(nxt)
+                queue.append(nxt)
+
+    return stable
+
+
+def _build_horizontal_path(
+    start: Tuple[int, int, int],
+    end: Tuple[int, int, int],
+) -> List[Tuple[int, int, int]]:
+    """
+    Manhattan path on the same y level (x first, then z).
+    Returns moved-to cells (start excluded, end included).
+    """
+    sx, sy, sz = start
+    ex, _, ez = end
+    x, z = sx, sz
+    path: List[Tuple[int, int, int]] = []
+
+    while x != ex:
+        x += 1 if ex > x else -1
+        path.append((x, sy, z))
+    while z != ez:
+        z += 1 if ez > z else -1
+        path.append((x, sy, z))
+
+    return path
+
+
+def embed_floating_parts(
+    vox: List[Dict[str, Any]],
+    max_iters: int = 3,
+    max_bridge_len: int = 6,
+) -> List[Dict[str, Any]]:
+    """
+    Connect floating parts with horizontal bridges before optimization.
     """
     if not vox:
         return []
-    
+
     voxel_map = {(v["x"], v["y"], v["z"]): int(v["color"]) for v in vox}
     new_colors = dict(voxel_map)
-    
-    neighbors_horizontal = [(1,0,0), (-1,0,0), (0,0,1), (0,0,-1)]
-    neighbors_all = []
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            for dz in (-1, 0, 1):
-                if dx == 0 and dy == 0 and dz == 0:
-                    continue
-                neighbors_all.append((dx, dy, dz))
-    
+
     for _ in range(max_iters):
-        updates: Dict[Tuple[int,int,int], int] = {}
-        
-        for pos, color in list(new_colors.items()):
-            x, y, z = pos
-            
-            # 안정성 체크
-            is_stable = False
-            if y == 0:
-                is_stable = True
-            elif (x, y-1, z) in new_colors:
-                is_stable = True
-            
-            if is_stable:
+        occupied = set(new_colors.keys())
+        stable = _compute_stable_positions(occupied)
+        unstable = occupied - stable
+        if not unstable:
+            break
+
+        stable_by_y: Dict[int, List[Tuple[int, int, int]]] = {}
+        for s in stable:
+            stable_by_y.setdefault(s[1], []).append(s)
+
+        updates: Dict[Tuple[int, int, int], int] = {}
+        visited: Set[Tuple[int, int, int]] = set()
+
+        for seed in unstable:
+            if seed in visited:
                 continue
-            
-            # 불안정한 복셀 → 인접한 안정적인 복셀 찾기
-            best_anchor: Optional[Tuple[int,int,int]] = None
-            
-            # 수평 이웃 먼저 확인
-            for dx, dy, dz in neighbors_horizontal:
-                npos = (x+dx, y+dy, z+dz)
-                if npos in new_colors:
-                    nx, ny, nz = npos
-                    if ny == 0 or (nx, ny-1, nz) in new_colors:
-                        best_anchor = npos
-                        break
-            
-            # 없으면 모든 이웃 확인
-            if not best_anchor:
-                for dx, dy, dz in neighbors_all:
-                    npos = (x+dx, y+dy, z+dz)
-                    if npos in new_colors:
-                        best_anchor = npos
-                        break
-            
-            if best_anchor:
-                my_color = new_colors[pos]
-                
-                # 앵커 복셀과 현재 복셀 사이에 브릿지 복셀 추가
-                ax, ay, az = best_anchor
-                dist = abs(x-ax) + abs(y-ay) + abs(z-az)
-                if dist > 1:
-                    bridge = (ax, y, z)
-                    if bridge not in new_colors:
-                        updates[bridge] = my_color
-        
+
+            queue = deque([seed])
+            visited.add(seed)
+            component: List[Tuple[int, int, int]] = []
+
+            # Connected floating component in the same layer.
+            while queue:
+                cur = queue.popleft()
+                component.append(cur)
+                for nxt in _horizontal_neighbors(cur):
+                    if nxt in unstable and nxt not in visited:
+                        visited.add(nxt)
+                        queue.append(nxt)
+
+            y = seed[1]
+            anchors = stable_by_y.get(y, [])
+
+            # Fallback: project from stable voxels on the layer below.
+            if not anchors and y > 0:
+                anchors = [(ax, y, az) for (ax, _, az) in stable_by_y.get(y - 1, [])]
+            if not anchors:
+                continue
+
+            best_pair: Optional[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = None
+            best_dist: Optional[int] = None
+
+            for pos in component:
+                px, _, pz = pos
+                for anchor in anchors:
+                    ax, _, az = anchor
+                    dist = abs(px - ax) + abs(pz - az)
+                    if dist == 0:
+                        continue
+                    if best_dist is None or dist < best_dist:
+                        best_dist = dist
+                        best_pair = (pos, anchor)
+
+            if best_pair is None:
+                continue
+            if best_dist is not None and best_dist > max_bridge_len:
+                continue
+
+            src, anchor = best_pair
+            src_color = int(new_colors[src])
+            for bridge in _build_horizontal_path(src, anchor):
+                if bridge not in new_colors:
+                    updates[bridge] = src_color
+
         if not updates:
             break
         new_colors.update(updates)
-    
+
     return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in new_colors.items()]
 
 
 # =============================================================================
-# 색상 스무딩 (노이즈 제거)
+# Color smoothing (noise reduction)
 # =============================================================================
 def smooth_colors(vox: List[Dict[str, Any]], passes: int = 1) -> List[Dict[str, Any]]:
-    """인접 복셀의 색상을 참조하여 노이즈 색상 제거"""
+    """Reduce color noise by majority vote from neighboring voxels."""
     if passes <= 0 or not vox:
         return vox
     
@@ -185,10 +262,10 @@ def smooth_colors(vox: List[Dict[str, Any]], passes: int = 1) -> List[Dict[str, 
                     neighbor_colors.append(voxel_map[npos])
             
             if neighbor_colors:
-                # 가장 많이 등장하는 색상으로 교체
+                # Replace with the most frequent neighbor color
                 vals, counts = np.unique(neighbor_colors, return_counts=True)
                 most_common = vals[np.argmax(counts)]
-                # 이웃 중 과반수가 다른 색이면 교체
+                # Replace only when a strict neighborhood majority exists
                 if counts.max() > len(neighbor_colors) // 2:
                     new_map[(x, y, z)] = int(most_common)
         
@@ -197,8 +274,64 @@ def smooth_colors(vox: List[Dict[str, Any]], passes: int = 1) -> List[Dict[str, 
     return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in voxel_map.items()]
 
 
+def prune_detached_fragments(
+    vox: List[Dict[str, Any]],
+    *,
+    min_component_size: int = 12,
+    max_component_centroid_ratio: float = 1.8,
+) -> List[Dict[str, Any]]:
+    """
+    Remove small detached voxel components that are far from the model core.
+    This avoids long artifact lines when support fixing is disabled or limited.
+    """
+    if not vox:
+        return []
+
+    voxel_map = {(v["x"], v["y"], v["z"]): int(v["color"]) for v in vox}
+    occupied = set(voxel_map.keys())
+    if not occupied:
+        return []
+
+    pts = np.array(list(occupied), dtype=np.float32)
+    global_centroid = pts.mean(axis=0)
+    dists = np.linalg.norm(pts - global_centroid, axis=1)
+    core_radius = float(np.percentile(dists, 95))
+    if core_radius <= 1e-6:
+        core_radius = 1.0
+
+    neighbors = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
+    visited: Set[Tuple[int, int, int]] = set()
+    keep: Set[Tuple[int, int, int]] = set()
+
+    for seed in occupied:
+        if seed in visited:
+            continue
+        queue = deque([seed])
+        visited.add(seed)
+        component: List[Tuple[int, int, int]] = []
+
+        while queue:
+            cx, cy, cz = queue.popleft()
+            component.append((cx, cy, cz))
+            for dx, dy, dz in neighbors:
+                nxt = (cx + dx, cy + dy, cz + dz)
+                if nxt in occupied and nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+
+        comp_size = len(component)
+        comp_pts = np.array(component, dtype=np.float32)
+        comp_centroid = comp_pts.mean(axis=0)
+        comp_dist = float(np.linalg.norm(comp_centroid - global_centroid))
+
+        if comp_size >= min_component_size or comp_dist <= core_radius * max_component_centroid_ratio:
+            keep.update(component)
+
+    return [{"x": x, "y": y, "z": z, "color": voxel_map[(x, y, z)]} for (x, y, z) in keep]
+
+
 # =============================================================================
-# 메인 변환 함수
+# Main conversion function
 # =============================================================================
 def _single_conversion(
     combined: trimesh.Trimesh,
@@ -213,12 +346,11 @@ def _single_conversion(
     step_order: str,
     glb_path: str,
     smart_fix: bool = True,
-    color_smooth: int = 1,
+    color_smooth: int = 0,
     **kwargs: Any
 ) -> Tuple[int, List[Dict]]:
     """
-    단일 변환 패스: 복셀화 + 최적화
-    Returns (brick_count, optimized_bricks)
+    Single conversion pass: voxelization + optimization. Returns (brick_count, optimized_bricks).
     """
     import time
     start_t = time.time()
@@ -240,11 +372,27 @@ def _single_conversion(
     # Voxelize
     kwargs = kwargs.copy()
     pitch = kwargs.pop("pitch", 1.0)
+    surface_dilate_iters = int(kwargs.pop("surface_dilate_iters", 0))
+    surface_only = bool(kwargs.pop("surface_only", False))
+    solid_fill = bool(kwargs.pop("solid", True))
     print(f"      [Step] Voxelizing (Target: {target}, Pitch: {pitch})...")
     v_start = time.time()
     vg = mesh.voxelized(pitch=pitch)
-    if kwargs.get("solid", True):
+    if solid_fill:
         vg = vg.fill()
+    dense = vg.matrix.astype(bool)
+    if surface_dilate_iters > 0:
+        dense = binary_dilation(
+            dense,
+            structure=np.ones((3, 3, 3), dtype=bool),
+            iterations=surface_dilate_iters,
+        )
+    if surface_only:
+        eroded = binary_erosion(dense, structure=np.ones((3, 3, 3), dtype=bool), iterations=1)
+        shell = dense & ~eroded
+        if np.any(shell):
+            dense = shell
+    vg = trimesh.voxel.base.VoxelGrid(dense, transform=vg.transform)
     v_end = time.time()
     print(f"      [Step] Voxelization Done: {v_end - v_start:.2f}s")
     
@@ -254,9 +402,8 @@ def _single_conversion(
         
     print(f"      [Step] Voxel count: {len(indices)}")
     
-    # Voxel threshold check (메모리 보호용)
-    # Kids 모드에서 t3.small 서버 기준 6,000개가 넘으면 최적화가 너무 느려짐
-    voxel_threshold = kwargs.get("max_new_voxels", 6000) 
+    # Voxel threshold check (memory guard).
+    voxel_threshold = kwargs.get("max_new_voxels", 50000)
     max_pitch = kwargs.get("max_pitch", 3.0)
     
     if len(indices) > voxel_threshold:
@@ -274,22 +421,22 @@ def _single_conversion(
             print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
             return -1, []
 
-    # Color sampling (KDTree를 사용하여 속도 최적화)
+    # Color sampling (KDTree-based speed optimization)
     print(f"      [Step] Color Sampling...")
     c_start = time.time()
     centers = vg.points
     if use_mesh_color:
-        # Texture/Visual을 Color로 변환 (한 번만 수행)
+        # Convert texture/visual information to per-vertex colors (once)
         if hasattr(mesh.visual, 'to_color'):
             mesh.visual = mesh.visual.to_color()
         
-        # Triangle center 대신 Vertex 기반으로 샘플링 (외곽면 색상을 더 잘 잡음)
+        # Sample color from nearest mesh vertex for each voxel center
         v_tree = KDTree(mesh.vertices)
         _, v_indices = v_tree.query(centers)
         colors_raw = mesh.visual.vertex_colors[v_indices][:, :3].astype(np.float32)
         
-        # 밝기 및 채도 보정 (AI 생성 모델의 어두운/탁한 텍스처 보정)
-        # 과도한 보정(1.4/1.5)은 주황/갈색을 파란색으로 왜곡시킴 -> 1.05/1.05로 완화
+        # Brightness/saturation correction (avoid over-saturation)
+        # Defaults are intentionally mild to preserve source colors
         brightness = kwargs.get("color_brightness", 1.05)
         saturation = kwargs.get("color_saturation", 1.05)
         
@@ -315,25 +462,41 @@ def _single_conversion(
             "color": c_id
         })
 
-    # 색상 스무딩
+    # Color smoothing
     if color_smooth > 0:
-        print(f"      [Step] Smoothing colors ({color_smooth} passes)...")
         bricks_data = smooth_colors(bricks_data, passes=color_smooth)
+
+    if kwargs.get("prune_fragments", False):
+        bricks_data = prune_detached_fragments(
+            bricks_data,
+            min_component_size=int(kwargs.get("prune_min_component_size", 12)),
+            max_component_centroid_ratio=float(kwargs.get("prune_max_centroid_ratio", 1.8)),
+        )
     
-    # 부유 브릭 보정
+    # Floating brick repair
     if smart_fix:
         print(f"      [Step] Embedding floating parts...")
-        bricks_data = embed_floating_parts(bricks_data, max_iters=int(kwargs.get("support_repair_iters", 3)))
+        bricks_data = embed_floating_parts(
+            bricks_data,
+            max_iters=int(kwargs.get("support_repair_iters", 3)),
+            max_bridge_len=int(kwargs.get("max_bridge_len", 6)),
+        )
 
     # Optimize (Greedy Packing)
     print(f"      [Step] Optimization (Greedy Packing) starting...")
     o_start = time.time()
+    keep_unanchored_default = False
     optimized = optimize_bricks(
         bricks_data,
+        support_direction=str(kwargs.get("support_direction", "topdown")),
         kind=kind,
         plates_per_voxel=plates_per_voxel,
         interlock=interlock,
-        max_area=max_area
+        max_area=max_area,
+        cross_color_bridge_cells=int(kwargs.get("cross_color_bridge_cells", 1)),
+        detail_max_area=kwargs.get("detail_max_area"),
+        keep_unanchored_voxels=bool(kwargs.get("keep_unanchored_voxels", keep_unanchored_default)),
+        avoid_1x1=bool(kwargs.get("avoid_1x1", False)),
     )
     o_end = time.time()
     print(f"      [Step] Optimization Done: {o_end - o_start:.2f}s")
@@ -345,7 +508,7 @@ def convert_glb_to_ldr(
     glb_path: str,
     out_ldr_path: str,
     *,
-    target: int = 60,
+    target: int = 80,
     budget: int = 100,
     shrink: float = 0.85,
     search_iters: int = 3,
@@ -355,23 +518,22 @@ def convert_glb_to_ldr(
     kind: str = "brick",
     plates_per_voxel: int = 3,
     interlock: bool = True,
-    max_area: int = 20,
+    max_area: int = 32,
     solid_color: int = 4,
     use_mesh_color: bool = True,
     invert_y: bool = False,
     smart_fix: bool = True,
     step_order: str = "bottomup",
-    color_smooth: int = 1,
+    color_smooth: int = 0,
     **kwargs: Any
 ) -> Dict[str, Any]:
     """
-    GLB to LDR 변환 (예산 맞추기 루프 포함)
+    Convert GLB to LDR (with budget-seeking loop).
     
     Features:
-    - 대칭성 자동 감지 및 적용
-    - 부유 브릭 심지 박기
-    - 확장된 색상 팔레트
-    - SSE 로그 콜백 지원
+    - automatic stability detection and repair
+    - floating brick pre-repair
+    - expanded color palette and SSE log callback
     """
     # SSE log callback
     _log_cb = kwargs.pop("log_callback", None)
@@ -385,7 +547,7 @@ def convert_glb_to_ldr(
     print(f"[Engine] Starting conversion: {glb_path} -> {out_ldr_path}")
     print(f"[Engine] Target: {target} studs, Budget: {budget} bricks")
 
-    _log("brickify", "브릭으로 어떻게 만들지 고민하고 있어요...")
+    _log("brickify", "Computing a stable brickification strategy...")
 
     # 1. Load meshes
     scene = trimesh.load(glb_path, force='scene')
@@ -412,7 +574,7 @@ def convert_glb_to_ldr(
     for i in range(search_iters):
         print(f"\n[Engine] SEARCH ITERATION {i+1}/{search_iters}")
         print(f"[Engine] Current Target Studs: {int(curr_target)}")
-        _log("brickify", f"브릭을 하나씩 쌓아보고 있어요... ({i+1}/{search_iters})")
+        _log("brickify", f"Tuning brick count... ({i+1}/{search_iters})")
         
         parts_count, optimized = _single_conversion(
             combined=combined,
@@ -439,7 +601,7 @@ def convert_glb_to_ldr(
             
             if parts_count <= budget:
                 print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
-                _log("brickify", f"딱 맞게 {parts_count}개로 쌓았어요!")
+                _log("brickify", f"Budget met with {parts_count} bricks.")
                 break
         
         if i < search_iters - 1:
@@ -447,7 +609,7 @@ def convert_glb_to_ldr(
             if curr_target < 5:
                 curr_target = 5
             print(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
-            _log("brickify", "브릭이 좀 많네요, 다시 고민해볼게요...")
+            _log("brickify", "Too many bricks; retrying with lower resolution...")
         else:
             print(f"[Engine] WARNING: Failed to meet budget after {search_iters} iters.")
 
@@ -455,7 +617,7 @@ def convert_glb_to_ldr(
     if not final_optimized:
         raise RuntimeError("Failed to generate any bricks")
 
-    _log("brickify", "조립 순서를 고민하고 있어요...")
+    _log("brickify", "Preparing build steps...")
 
     write_ldr(
         out_ldr_path,
@@ -464,7 +626,7 @@ def convert_glb_to_ldr(
         title=Path(glb_path).stem
     )
 
-    _log("brickify", "브릭 설계가 끝났어요!")
+    _log("brickify", "Brick model generation complete.")
 
     return {
         "parts": len(final_optimized),
@@ -475,12 +637,12 @@ def convert_glb_to_ldr(
 
 # Compatibility shims
 def convert_glb_to_ldr_v3_inline(*args, **kwargs):
-    """호환성 유지용"""
+    """Compatibility wrapper."""
     return convert_glb_to_ldr(*args, **kwargs)
 
 
 def embed_voxels_downwards(grid):
-    """호환성 유지용 stub"""
+    """Compatibility stub."""
     pass
 
 
@@ -488,10 +650,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("glb")
     parser.add_argument("--out", default="output.ldr")
-    parser.add_argument("--target", type=int, default=60)
+    parser.add_argument("--target", type=int, default=80)
     parser.add_argument("--budget", type=int, default=100)
-    parser.add_argument("--smart-fix", action="store_true", default=True)
-    parser.add_argument("--color-smooth", type=int, default=1)
+    parser.add_argument("--smart-fix", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--color-smooth", type=int, default=0)
+    parser.add_argument("--support-direction", choices=["topdown", "bottomup"], default="topdown")
     args = parser.parse_args()
     
     convert_glb_to_ldr(
@@ -499,5 +662,9 @@ if __name__ == "__main__":
         target=args.target, 
         budget=args.budget,
         smart_fix=args.smart_fix,
-        color_smooth=args.color_smooth
+        color_smooth=args.color_smooth,
+        solid=True,
+        surface_only=False,
+        support_direction=args.support_direction,
     )
+
