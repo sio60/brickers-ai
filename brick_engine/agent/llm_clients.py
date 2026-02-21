@@ -283,7 +283,7 @@ class GeminiClient(BaseLLMClient):
         self.api_key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("API 키를 찾을 수 없습니다. GOOGLE_API_KEY 또는 GEMINI_API_KEY 환경 변수를 설정해주세요.")
-        self.model_name = model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        self.model_name = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         self._model = None # Kept _model for functional correctness with _get_model
         self.usage = {"input_tokens": 0, "output_tokens": 0} # [NEW]
 
