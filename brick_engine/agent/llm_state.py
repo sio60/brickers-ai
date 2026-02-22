@@ -90,8 +90,18 @@ class AgentState(TypedDict):
     internal_score: int                            # 가설 완성도 점수
     debate_history: List[str]                      # 토론 로그 기록
 
-    # 다음 노드 제어
-    next_action: Literal["generate", "verify", "model", "tool", "reflect", "hypothesize", "strategy", "merge", "end", "search", "draft", "critic", "refine"]
+    # 다음 노드 제어 (graph.py의 라우터가 참조)
+    next_action: Literal[
+        "generate",     # GLB→LDR 변환 실행
+        "verify",       # PyBullet/brick_judge 검증
+        "verifier",     # 검증 노드 재진입 (에러 재시도)
+        "model",        # LLM 호출 (CoScientist)
+        "tool",         # 도구 실행 (TuneParameters/RemoveBricks/MergeBricks)
+        "reflect",      # 검증 결과 분석
+        "hypothesize",  # 가설 생성
+        "strategy",     # 전략 수립
+        "end",          # 파이프라인 종료
+    ]
 
     # [시스템 컨텍스트]
     job_id: str

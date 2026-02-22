@@ -13,6 +13,7 @@ from ..hypothesis_maker import build_hypothesis_graph
 from ..memory_utils import memory_manager
 
 from .prompts import SYSTEM_PROMPT
+from .utils import trace_node
 from .nodes.hypothesize import node_hypothesize
 from .nodes.strategy import node_strategy
 from .nodes.generator import node_generator
@@ -48,78 +49,8 @@ class RegenerationGraph:
                 pass
 
     async def _trace(self, node_name: str, func, state):
-        """노드 실행 트레이싱 래퍼"""
-        import time
-        import anyio
-        import asyncio
-        from service.backend_client import send_agent_trace
-
-        start_ts = time.time()
-        # Input snapshot (Enriched for Admin UI)
-        def serialize_state(s):
-            """에이전트 상태를 JSON 직렬화 가능한 형태로 변환"""
-            if not isinstance(s, dict):
-                return str(s)
-            
-            clean_state = {}
-            for k, v in s.items():
-                if k == 'messages':
-                    # 메시지 내역을 읽기 쉬운 포맷으로 변환
-                    clean_state[k] = [
-                        {
-                            "role": "assistant" if "AI" in str(type(m)) else ("user" if "Human" in str(type(m)) else "system"),
-                            "content": m.content if hasattr(m, 'content') else str(m)
-                        } for m in v[-5:] # 최근 5개 메시지만
-                    ]
-                elif k in ['hypothesis_maker', 'verifier']: # 직렬화 불가능한 객체 제외
-                    continue
-                elif k in ['verification_raw_result']:
-                    # 수백 개의 브릭 데이터는 요약정보만 표시 (가독성 보호)
-                    count = len(v.get('issues', [])) if isinstance(v, dict) else 0
-                    clean_state[k] = f"[Filtered: {count} items for readability]"
-                elif isinstance(v, list) and len(v) > 20: # 너무 긴 리스트는 잘라냄
-                    clean_state[k] = [serialize_state(x) for x in v[:20]] + [f"... and {len(v)-20} more"]
-                elif isinstance(v, (str, int, float, bool, list, dict)) or v is None:
-                    clean_state[k] = v
-                else:
-                    clean_state[k] = str(v)
-            return clean_state
-
-        input_snap = serialize_state(state)
-        
-        status = "SUCCESS"
-        output_snap = {}
-        
-        try:
-            # Sync vs Async Check
-            if asyncio.iscoroutinefunction(func):
-                result = await func(self, state)
-            else:
-                # Run sync node in thread to avoid blocking loop
-                result = await anyio.to_thread.run_sync(func, self, state)
-            
-            output_snap = serialize_state(result) if isinstance(result, dict) else {"result": str(result)}
-            return result
-        
-        except Exception as e:
-            status = "FAILURE"
-            output_snap = {"error": str(e)}
-            raise e
-        finally:
-            duration = int((time.time() - start_ts) * 1000)
-            if self.job_id != "offline":
-                # Fire and forget trace sending
-                asyncio.create_task(
-                    send_agent_trace(
-                        self.job_id,
-                        step="TRACE",
-                        node_name=node_name,
-                        status=status,
-                        input_data=input_snap,
-                        output_data=output_snap,
-                        duration_ms=duration
-                    )
-                )
+        """노드 실행 트레이싱 래퍼 (utils.trace_node에 위임)"""
+        return await trace_node(self, node_name, func, state)
 
     # --- Node method wrappers ---
     # 각 노드 로직은 nodes/ 패키지에 분리되어 있고,

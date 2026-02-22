@@ -16,7 +16,7 @@ filelock==3.20.3
 frozenlist==1.8.0
 fsspec==2026.1.0
 google-auth==2.47.0
-google-genai==1.46.0
+google-genai>=1.56.0
 google-generativeai
 h11==0.16.0
 httpcore==1.0.9
@@ -37,8 +37,8 @@ pillow==12.1.0
 propcache==0.4.1
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
-pydantic==2.8.2
-pydantic_core==2.20.1
+pydantic>=2.9.0
+pydantic_core>=2.23.0
 pymongo==4.8.0
 python-dotenv==1.0.1
 python-multipart==0.0.21
@@ -69,7 +69,7 @@ websockets==15.0.1
 yarl==1.22.0
 pygltflib
 tripo3d
-langchain-google-genai
+langchain-google-genai>=4.0.0
 langchain-core
 langsmith
 boto3

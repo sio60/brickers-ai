@@ -35,30 +35,56 @@ def node_reflect(graph, state) -> Dict[str, Any]:
     # [FIX] 첫 번째 시도(Baseline)도 무조건 기록하여 전/후 비교 및 통계 지원
     if not previous_metrics:
         print("\n[Reflect] 첫 번째 시도 기록 (Baseline)")
-        # force_save=True 를 사용하여 개선 여부와 상관없이 기록
         if memory_manager:
             try:
                 memory_manager.log_experiment(
                     session_id=session_id,
-                    job_id=state.get("job_id"),
+                    model_id=Path(state.get('glb_path') or state['ldr_path']).name,
+                    agent_type="main_agent",
                     iteration=state.get("round_count", 0) + 1,
-                    metrics=current_metrics,
-                    improvement=0.0,
-                    improved=True, # Baseline은 항상 '개선됨'으로 간주하여 기록 유도
-                    action="baseline",
-                    thoughts="Initial baseline for comparison",
-                    ldr_path=state["ldr_path"],
-                    initial_ldr_path=state.get("initial_ldr_path")
+                    hypothesis=build_hypothesis(
+                        observation="Initial baseline",
+                        hypothesis="First attempt baseline for comparison",
+                        reasoning="No previous metrics available",
+                        prediction="Establishing baseline metrics"
+                    ) if build_hypothesis else {"observation": "Initial baseline"},
+                    experiment=build_experiment(
+                        tool="baseline",
+                        parameters={},
+                        model_name="gemini-2.5-flash"
+                    ) if build_experiment else {"tool": "baseline"},
+                    verification=build_verification(
+                        passed=True,
+                        metrics_before={},
+                        metrics_after=current_metrics,
+                        numerical_analysis="Baseline measurement"
+                    ) if build_verification else {"passed": True, "metrics_after": current_metrics},
+                    improvement=build_improvement(
+                        lesson_learned="Initial baseline for comparison",
+                        next_hypothesis="Start optimization"
+                    ) if build_improvement else {"lesson_learned": "Initial baseline"}
                 )
             except Exception as e:
                 print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
-        # Baseline 기록 후 바로 다음 단계로
+        # Baseline 기록 후 다음 단계로
+        # 첫 라운드만 가설 수립, 이후는 바로 도구 선택으로
+        round_count = state.get("round_count", 0) + 1
+        if round_count >= 2:
+            next_step = "model"
+            print(f"  [Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
+        else:
+            next_step = state.get("next_action_override") or "hypothesize"
         return {
-            "memory": memory, # memory도 함께 반환
+            "memory": memory,
             "previous_metrics": current_metrics,
+<<<<<<< HEAD
             "verification_raw_result": state.get("verification_raw_result"), # [FIX] Preserve data flow
             "next_action": state.get("next_action_override") or "hypothesize",
             "round_count": state.get("round_count", 0) + 1
+=======
+            "next_action": next_step,
+            "round_count": round_count
+>>>>>>> aab775de557f3ff0d220da6fb6a160289745ead9
         }
 
     # 메트릭 비교
@@ -142,13 +168,24 @@ def node_reflect(graph, state) -> Dict[str, Any]:
             "next_action": "end"
         }
 
-    print(" [Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
-    print("🎓" * 20)
+    # 2라운드 이상이면 가설 수립 건너뛰고 바로 도구 선택으로
+    round_count = state.get('round_count', 0)
+    if round_count >= 2:
+        print(f" [Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
+        next_step = "model"
+    else:
+        print(" [Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
+        print("🎓" * 20)
+        next_step = "hypothesize"
 
     return {
         "memory": memory,
         "observation": f"실패율={curr_failure:.2f}, 공중부양={curr_floating}개, 작은브릭={curr_small_ratio:.2f}",
         "previous_metrics": current_metrics,
+<<<<<<< HEAD
         "verification_raw_result": state.get("verification_raw_result"), # [FIX] Preserve data flow
         "next_action": "hypothesize"
+=======
+        "next_action": next_step
+>>>>>>> aab775de557f3ff0d220da6fb6a160289745ead9
     }

@@ -20,10 +20,87 @@ def node_model(graph, state) -> Dict[str, Any]:
     print("\n[Co-Scientist] 상황 분석 중...")
     graph._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")
 
-    tools = [TuneParameters, RemoveBricks, MergeBricks]
+    all_tools = [TuneParameters, RemoveBricks, MergeBricks]
+
+    # ── 점수 기반 도구 강제 선택 전략 ──
+    # 95점 미만 → TuneParameters, 95~99점 → MergeBricks
+    # 각 도구는 최대 5회까지만 사용 가능
+    # 둘 다 소진 시 → RemoveBricks 1회 (마지막 수단)
+    MAX_TOOL_USES = 5
+    MAX_REMOVE_FALLBACK = 1
+
+    tool_usage_count = state.get('tool_usage_count', {})
+    current_metrics = state.get('current_metrics', {})
+    score = current_metrics.get('score', 0)
+
+    tune_used = tool_usage_count.get('TuneParameters', 0)
+    merge_used = tool_usage_count.get('MergeBricks', 0)
+    remove_used = tool_usage_count.get('RemoveBricks', 0)
+
+    # 도구 선택 결정
+    forced_tool = None
+    if score >= 100:
+        # 완벽한 점수는 도구 불필요
+        pass
+    elif score < 95:
+        if tune_used < MAX_TOOL_USES:
+            forced_tool = 'TuneParameters'
+            tools = [TuneParameters]
+            print(f"  🎯 [전략] 점수 {score}점 < 95 → TuneParameters 강제 ({tune_used+1}/{MAX_TOOL_USES})")
+        elif merge_used < MAX_TOOL_USES:
+            forced_tool = 'MergeBricks'
+            tools = [MergeBricks]
+            print(f"  🎯 [전략] TuneParameters 소진({tune_used}회) → MergeBricks 전환 ({merge_used+1}/{MAX_TOOL_USES})")
+        elif remove_used < MAX_REMOVE_FALLBACK:
+            forced_tool = 'RemoveBricks'
+            tools = [RemoveBricks]
+            print(f"  🎯 [전략] 모든 도구 소진 → RemoveBricks 마지막 수단 ({remove_used+1}/{MAX_REMOVE_FALLBACK})")
+        else:
+            print(f"  ⛔ [전략] 모든 도구 사용 한도 초과. 현재 상태로 종료합니다.")
+            return {"messages": state['messages'], "next_action": "end"}
+    else:  # 95 <= score < 100
+        if merge_used < MAX_TOOL_USES:
+            forced_tool = 'MergeBricks'
+            tools = [MergeBricks]
+            print(f"  🎯 [전략] 점수 {score}점 (95~99) → MergeBricks 강제 ({merge_used+1}/{MAX_TOOL_USES})")
+        elif tune_used < MAX_TOOL_USES:
+            forced_tool = 'TuneParameters'
+            tools = [TuneParameters]
+            print(f"  🎯 [전략] MergeBricks 소진({merge_used}회) → TuneParameters 전환 ({tune_used+1}/{MAX_TOOL_USES})")
+        elif remove_used < MAX_REMOVE_FALLBACK:
+            forced_tool = 'RemoveBricks'
+            tools = [RemoveBricks]
+            print(f"  🎯 [전략] 모든 도구 소진 → RemoveBricks 마지막 수단 ({remove_used+1}/{MAX_REMOVE_FALLBACK})")
+        else:
+            print(f"  ⛔ [전략] 모든 도구 사용 한도 초과. 현재 상태로 종료합니다.")
+            return {"messages": state['messages'], "next_action": "end"}
+
+    # 도구가 강제 선택되지 않았으면 전체 도구 세트 사용
+    if forced_tool is None and score < 100:
+        tools = all_tools
+    elif forced_tool is None:
+        tools = all_tools
+
+    # 강제 도구 힌트를 메시지에 추가
+    if forced_tool:
+        force_hint = (
+            f"\n🔧 **필수 지시사항**: 현재 점수({score}점) 기준으로 반드시 `{forced_tool}` 도구를 사용하세요. "
+            f"다른 도구를 선택하지 마세요. 도구 사용 현황: TuneParameters={tune_used}/{MAX_TOOL_USES}, "
+            f"MergeBricks={merge_used}/{MAX_TOOL_USES}, RemoveBricks={remove_used}/{MAX_REMOVE_FALLBACK}"
+        )
+        # force_hint는 messages_to_send 초기화 이후에 삽입 (아래에서 처리)
 
 
     messages_to_send = state['messages'][:]
+
+    # 강제 도구 힌트를 메시지에 추가 (messages_to_send 초기화 이후)
+    if forced_tool:
+        force_hint = (
+            f"\n🔧 **필수 지시사항**: 현재 점수({score}점) 기준으로 반드시 `{forced_tool}` 도구를 사용하세요. "
+            f"다른 도구를 선택하지 마세요. 도구 사용 현황: TuneParameters={tune_used}/{MAX_TOOL_USES}, "
+            f"MergeBricks={merge_used}/{MAX_TOOL_USES}, RemoveBricks={remove_used}/{MAX_REMOVE_FALLBACK}"
+        )
+        messages_to_send.append(SystemMessage(content=force_hint))
     
     # --- [New] 1x1 브릭 비율 분석 및 MergeBricks 권장 로직 ---
     ldr_path = state.get('ldr_path')
@@ -207,12 +284,18 @@ def node_model(graph, state) -> Dict[str, Any]:
         if response.tool_calls:
             tc = response.tool_calls[0]
             tool_name = tc['name']
+
+            # 강제 도구가 지정되었는데 LLM이 다른 도구를 선택한 경우 → 강제 교정
+            if forced_tool and tool_name != forced_tool:
+                print(f"  ⚠️ LLM이 {tool_name}을 선택했으나 전략상 {forced_tool}로 교정합니다.")
+                tc['name'] = forced_tool
+
             print(f"  🔨 도구 선택: {[tc['name'] for tc in response.tool_calls]}")
 
             if tool_name == "RemoveBricks":
                 graph._log("MODEL", "구조가 거의 완성되었습니다! 불안정한 브릭들만 핀셋으로 도려낼게요.")
-            # elif tool_name == "TuneParameters":
-            #     graph._log("MODEL", "현재 파라미터로는 한계가 있네요. 새로운 관점에서 설계를 다시 시도해 보겠습니다.")
+            elif tool_name == "TuneParameters":
+                graph._log("MODEL", "현재 파라미터로는 한계가 있네요. 새로운 관점에서 설계를 다시 시도해 보겠습니다.")
             elif tool_name == "MergeBricks":
                 graph._log("MODEL", "브릭이 너무 조각나 있네요. 튼튼한 구조로 합병 작업을 진행합니다.")
 
@@ -221,6 +304,12 @@ def node_model(graph, state) -> Dict[str, Any]:
             print(f"  💭 LLM 의견: {response.content}")
 
             current_metrics = state.get('current_metrics', {})
+            # current_metrics가 비어있으면 아직 검증이 안 된 상태이므로 종료하면 안 됨
+            if not current_metrics:
+                print("⚠️ 검증 메트릭이 없습니다. 도구 선택을 재지시합니다.")
+                hint = HumanMessage(content="아직 검증 결과가 없습니다. 반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 최적화하세요.")
+                return {"messages": [response, hint], "next_action": "model"}
+
             floating_count = current_metrics.get('floating_count', 0)
             failure_ratio = current_metrics.get('failure_ratio', 0)
 
@@ -240,9 +329,30 @@ def node_model(graph, state) -> Dict[str, Any]:
                 return {"messages": [response, hint], "next_action": "model"}
 
     except Exception as e:
+        error_str = str(e)
         print(f"  ⚠️ LLM 호출 에러: {e}")
-        if "429" in str(e):
+        
+        # 연속 에러 카운트 추적
+        llm_errors = state.get('verification_errors', 0) + 1
+        
+        if "429" in error_str:
             print("  💤 API 할당량 초과. 잠시 대기 후 재시도합니다...")
             time.sleep(10)
-            return {"next_action": "model"}
-        return {"next_action": "end"}
+            return {"verification_errors": llm_errors, "next_action": "model"}
+        elif "400" in error_str and "thought_signature" in error_str:
+            # Gemini 3.x thought_signature 호환성 에러 → 재시도 1회
+            print("  🔄 thought_signature 에러 감지. 메시지를 정리하고 재시도합니다...")
+            if llm_errors < 2:
+                # 메시지 히스토리에서 tool_calls 관련 정보 정리 후 재시도
+                return {"verification_errors": llm_errors, "next_action": "model"}
+            else:
+                print("  ❌ thought_signature 에러 반복. 종료합니다.")
+                return {"next_action": "end"}
+        elif llm_errors < 2:
+            # 기타 에러도 1회 재시도
+            print(f"  🔄 일반 에러. 재시도합니다... ({llm_errors}/2)")
+            time.sleep(2)
+            return {"verification_errors": llm_errors, "next_action": "model"}
+        else:
+            print("  ❌ 반복 에러로 종료합니다.")
+            return {"next_action": "end"}
