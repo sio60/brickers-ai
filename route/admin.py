@@ -72,13 +72,21 @@ async def check_analytics_anomaly(request: Request):
     return result
 
 
+# Global state for Admin Analysis to prevent parallel execution
+_analysis_lock = False
+
 @router.post("/ai-admin/analytics/deep-analyze")
 async def deep_analyze():
     """
     [NEW] LangGraph 기반 심층 분석 실행.
-    데이터 수집 → 이상 탐지 → 인과 추론 → 전략 수립 파이프라인.
     """
+    global _analysis_lock
+    if _analysis_lock:
+        logger.warning("⚠️ [Admin] Deep Analysis is already running, skipping...")
+        return {"status": "busy", "message": "Analysis is already in progress"}
+
     logger.info("🧠 [Admin] LangGraph Deep Analysis 시작...")
+    _analysis_lock = True
     try:
         initial_state = {
             "raw_metrics": {},
@@ -88,7 +96,7 @@ async def deep_analyze():
             "diagnosis": None,
             "proposed_actions": [],
             "iteration": 0,
-            "max_iterations": 3,
+            "max_iterations": 1, # 단 1회 수행
             "next_action": "mine",
             "final_report": None,
             "moderation_queue": [],
@@ -98,25 +106,11 @@ async def deep_analyze():
 
         result = await analyst_graph.ainvoke(initial_state)
 
-        logger.info(f"🔍 [Admin] Deep Analysis Result Type: {type(result)}")
-        logger.info(f"🔍 [Admin] Deep Analysis Result Content: {str(result)[:500]}")
-
-        # If result is a list, try to get the last element (state)
-        if isinstance(result, list):
-             logger.warning("⚠️ [Admin] Result is a list, using the last element as state.")
-             if result:
-                 result = result[-1]
-             else:
-                 result = {}
-        elif not isinstance(result, dict):
-            logger.warning(f"⚠️ [Admin] Result is not a dict (type={type(result)}), using empty dict.")
-            result = {}
-
         logger.info(f"✅ [Admin] Deep Analysis 완료 (risk={result.get('risk_score', 0)})")
         
         final_report = result.get("final_report")
         if not final_report:
-            final_report = "보고서 생성에 실패했습니다. (No report generated)"
+            final_report = "보고서 생성에 실패했습니다."
 
         return {
             "status": "success",
@@ -125,12 +119,14 @@ async def deep_analyze():
             "anomalies": result.get("anomalies", []),
             "diagnosis": result.get("diagnosis") or {},
             "proposed_actions": result.get("proposed_actions", []),
-            "moderation_results": result.get("moderation_results", []), # ✅ [NEW]
+            "moderation_results": result.get("moderation_results", []),
             "iteration": result.get("iteration", 0),
         }
     except Exception as e:
         logger.error(f"❌ [Admin] Deep Analysis 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"Deep Analysis Failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Analysis Failed: {str(e)}")
+    finally:
+        _analysis_lock = False
  
  
 @router.post("/ai-admin/analytics/query")

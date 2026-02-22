@@ -78,7 +78,8 @@ def node_reflect(graph, state) -> Dict[str, Any]:
             "memory": memory,
             "previous_metrics": current_metrics,
             "next_action": next_step,
-            "round_count": round_count
+            "round_count": round_count,
+            "verification_raw_result": state.get("verification_raw_result"), # [FIX] Preserve data flow
         }
 
     # 메트릭 비교
@@ -176,5 +177,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
         "memory": memory,
         "observation": f"실패율={curr_failure:.2f}, 공중부양={curr_floating}개, 작은브릭={curr_small_ratio:.2f}",
         "previous_metrics": current_metrics,
+        "round_count": round_count + 1,
+        "verification_raw_result": state.get("verification_raw_result"), # [FIX] Preserve data flow
         "next_action": next_step
     }
