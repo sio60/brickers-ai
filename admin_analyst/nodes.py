@@ -31,71 +31,18 @@ log = logging.getLogger("admin_analyst.nodes")
 # Node 1: Miner — 데이터 수집
 # ═══════════════════════════════════════════════════════════════
 async def miner_node(state: AdminAnalystState) -> dict:
-    """GA4 Data API + Direct MongoDB에서 통합 지표 및 로우 데이터 수집."""
-    import asyncio
-    from datetime import datetime
-    from service.backend_client import get_full_report, get_product_intelligence
-    from db import get_db
+    """IntelligenceService를 통해 GA4 Data API + Direct MongoDB에서 통합 지표 수집."""
+    from .intelligence_service import IntelligenceService
 
     log.info("⛏️ [Miner] 통합 데이터 수집 및 정밀 분석 시작...")
     
     try:
-        # 1. Macro Analytics 병렬 수집 (GA4 기반 - 배치 요청)
-        full_report_task = get_full_report(days=7)
-        product_intel_task = get_product_intelligence(days=14)
+        # IntelligenceService를 통한 통합 데이터 마이닝 (days=7 기본값)
+        miner_data = await IntelligenceService.get_miner_data(days=7)
         
-        # 2. Micro Logs 정밀 분석 (Direct MongoDB - Ground Truth)
-        # 동기 pymongo 호출을 별도 스레드에서 실행하여 이벤트 루프 블로킹 방지
-        def _fetch_db_raw():
-            db = get_db()
-            one_day_ago = datetime.now().timestamp() - 86400
-            jobs_col = db["kids_jobs"]
-            
-            recent_jobs = list(jobs_col.find({
-                "createdAt": {"$gte": datetime.fromtimestamp(one_day_ago)}
-            }).sort("createdAt", -1).limit(100))
-
-            result = {
-                "total_jobs_24h": len(recent_jobs),
-                "avg_stability": 0.0,
-                "avg_gen_time": 0.0,
-                "avg_brick_count": 0,
-                "error_dist": {},
-                "stage_dist": {},
-                "input_type_dist": {"Text Prompt": 0, "Image Upload": 0}
-            }
-
-            if recent_jobs:
-                stabilities = [j["result"]["stabilityScore"] for j in recent_jobs if j.get("result", {}).get("stabilityScore")]
-                gen_times = []
-                brick_counts = []
-                for j in recent_jobs:
-                    if j.get("startedAt") and j.get("endedAt"):
-                        dur = (j["endedAt"] - j["startedAt"]).total_seconds()
-                        if 0 < dur < 600: gen_times.append(dur)
-                    
-                    if j.get("result", {}).get("brickCount"):
-                        brick_counts.append(j["result"]["brickCount"])
-                    
-                    inp = j.get("inputType", "Text Prompt")
-                    result["input_type_dist"][inp] = result["input_type_dist"].get(inp, 0) + 1
-                    
-                    stage = j.get("stage", "UNKNOWN")
-                    result["stage_dist"][stage] = result["stage_dist"].get(stage, 0) + 1
-                    if j.get("status") == "FAILED" and j.get("error"):
-                        err = str(j["error"])[:50]
-                        result["error_dist"][err] = result["error_dist"].get(err, 0) + 1
-
-                result["avg_stability"] = round(sum(stabilities) / len(stabilities), 2) if stabilities else 0.82
-                result["avg_gen_time"] = round(sum(gen_times) / len(gen_times), 1) if gen_times else 45.0
-                result["avg_brick_count"] = int(sum(brick_counts) / len(brick_counts)) if brick_counts else 120
-
-            return result
-
-        db_raw = await asyncio.to_thread(_fetch_db_raw)
-            
-        # 3. 비동기 작업 대기 및 결과 병합
-        full_report, product_intel = await asyncio.gather(full_report_task, product_intel_task, return_exceptions=True)
+        full_report = miner_data.get("full_report", {})
+        product_intel = miner_data.get("product_intelligence", {})
+        db_metrics = miner_data.get("db_metrics", {})
         
         if isinstance(full_report, Exception):
             log.error(f"⚠️ [Miner] Full Report Fetch Failed: {full_report}")
@@ -116,7 +63,7 @@ async def miner_node(state: AdminAnalystState) -> dict:
             "event_stats": event_stats,
             "top_posts": raw_data.get("topPages", []), # Diagnoser/Reporting용
             "product_intelligence": product_intel or {}, # [NEW] 검색 키워드 대신 제품 지능화 데이터 사용
-            "db_raw": db_raw,
+            "db_raw": db_metrics,
             "today_stats": {
                 "gen_success": sum(e.get("count", 0) for e in (event_stats.get("success_1d") or [])),
                 "gen_fail": sum(e.get("count", 0) for e in (event_stats.get("fail_1d") or [])),
