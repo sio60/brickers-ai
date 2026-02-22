@@ -22,6 +22,8 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
     tool_usage_count = state.get('tool_usage_count', {})
     last_tool_used = state.get('last_tool_used', None)
     consecutive_same_tool = state.get('consecutive_same_tool', 0)
+    hallucination_count = state.get('hallucination_count', 0)
+    mod_attempts = state.get('modification_attempts', 0)
 
     # 도구별 최대 사용 횟수 제한
     MAX_TOOL_USES = 5
@@ -102,8 +104,7 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
                 # [BUG FIX] issue_type 케이스 불일치 방지 및 brick_id 0 누락 해결
                 itype = issue.get('type', '').lower()
                 bid = issue.get('brick_id')
-                
-                if itype in ['floating', 'isolated', 'unstable_base']:
+                if any(word in itype for word in ['floating', 'isolated', 'unstable', 'top_only']):
                     if bid is not None:
                         unstable_ids.append(bid)
             
@@ -152,6 +153,10 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
                     result_content = "현재 구조상 더 이상 인접한 같은 색상의 1x1 브릭을 병합할 수 없습니다. 파라미터 튜닝(TuneParameters) 등 다른 전략을 고려하세요."
             else:
                 try:
+                    # [Refinement] 먼저 같은 색상의 1x1 브릭들을 최대한 병합하여 토대를 만듭니다.
+                    import brick_engine.agent.ldr_modifier as mod
+                    mod.merge_small_bricks(state['ldr_path'], min_merge_count=2, group_by_color=True)
+                    
                     print(f"  [Merge] 구조적 병합 시작 (Target: {len(unstable_ids)} unstable bricks)")
                     struct_stats = ldr_modifier.structural_merge(state['ldr_path'], unstable_ids)
                     
@@ -168,8 +173,19 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
                     import traceback
                     traceback.print_exc()
                     result_content = f"구조적 병합 중 오류 발생: {e}"
+            
+            # 실제 수정 도구 실행 시 카운트 증가
+            mod_attempts += 1
+            
         else:
-            result_content = f"알 수 없는 도구: {tool_name}"
+            # 존재하지 않는 도구 (Hallucination)
+            hallucination_count += 1
+            result_content = (
+                f"❌ 알 수 없는 도구: '{tool_name}'. "
+                f"사용 가능한 도구는 [RemoveBricks, MergeBricks] 뿐입니다. "
+                f"존재하지 않는 도구를 생성하지 마세요. (현재 {hallucination_count}회 경고)"
+            )
+            print(f"  ⚠️ [Hallucination] {tool_name} (총 {hallucination_count}회)")
 
         print(f"  결과: {result_content}")
         tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))
@@ -179,6 +195,8 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
         "next_action": next_step,
         "params": state['params'],
         "tool_usage_count": tool_usage_count,
-        "last_tool_used": tool_name,
+        "last_tool_used": tool_name if 'tool_name' in locals() else None,
         "consecutive_same_tool": consecutive_same_tool,
+        "modification_attempts": mod_attempts,
+        "hallucination_count": hallucination_count
     }

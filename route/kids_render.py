@@ -38,6 +38,8 @@ from service.kids_config import (
     AGE_TO_BUDGET,
     budget_to_start_target,
     DEBUG,
+    calculate_token_cost,
+    TRIPO_GEN_COST,
 )
 from service.s3_client import USE_S3, S3_BUCKET, to_generated_url, upload_bytes_to_s3
 from service.gemini_image import render_one_image_async
@@ -307,16 +309,14 @@ async def process_kids_request_internal(
                 await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
                 corrected_bytes, ai_subject, ai_category, ai_tags, gemini_usage = await render_one_image_async(img_bytes, "image/png", language=language)
                 
-                # [NEW] Calculate Gemini Image Cost (Step 1)
-                # Gemini 1.5 Flash Image: Input $0.075/1M, Output $0.30/1M
-                g_input = gemini_usage.get("input_tokens", 0)
-                g_output = gemini_usage.get("output_tokens", 0)
-                gemini_cost = (g_input * 0.000000075) + (g_output * 0.00000030)
+                # [REFACTORED] Calculate Gemini Image Cost (Step 1)
+                g_model = os.environ.get("NANO_BANANA_MODEL", "gemini-2.0-flash")
+                gemini_cost = calculate_token_cost(g_model, gemini_usage.get("input_tokens", 0), gemini_usage.get("output_tokens", 0))
                 
                 running_est_cost += gemini_cost
-                running_token_count += (g_input + g_output)
+                running_token_count += (gemini_usage.get("input_tokens", 0) + gemini_usage.get("output_tokens", 0))
 
-                _log(f"   [Cost] Gemini Image: ${gemini_cost:.5f} (In: {g_input}, Out: {g_output})")
+                _log(f"   [Cost] Gemini Image: ${gemini_cost:.5f} (In: {gemini_usage.get('input_tokens', 0)}, Out: {gemini_usage.get('output_tokens', 0)})")
 
                 final_subject = subject or ai_subject
 
@@ -391,12 +391,8 @@ async def process_kids_request_internal(
                     # [NEW] Tripo Cost Logic (Fixed $0.00 for beta, assume $0.30 for future if needed)
                     # But if we want to track it, we can. Let's stick to user request: tokens * cost + $0.30 (Tripo?)
                     pass # Tripo cost logic might be handled in fallback or final aggregation. 
-                    # Actually, let's assume Tripo has no cost in `running_est_cost` yet? 
-                    # In previous viewed code, `fallback_cost = gemini_cost + tripo_cost (0.30)`.
-                    # So let's add it here if success.
-                    # But wait, Tripo is $0.00 right now? The plan said "fixed Tripo generation cost ($0.30)".
-                    # So let's add it.
-                    # running_est_cost += 0.30
+                    # [NEW] Tripo Cost Logic
+                    running_est_cost += TRIPO_GEN_COST
 
                 tripo_elapsed = time.time() - step_start
                 _log(f"[STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
@@ -587,9 +583,8 @@ async def process_kids_request_internal(
 
                     result = await anyio.to_thread.run_sync(run_brickify)
                     
-                    # [NEW] Cost for Fallback (Only Gemini Image + Tripo)
-                    tripo_cost = 0.30
-                    fallback_cost = gemini_cost + tripo_cost
+                    # [REFACTORED] Cost for Fallback (Only Gemini Image + Tripo)
+                    fallback_cost = gemini_cost + TRIPO_GEN_COST
                     running_est_cost = fallback_cost # Update global
                     
                     result["est_cost"] = round(fallback_cost, 5)

@@ -22,18 +22,8 @@ async def node_hypothesize(graph, state) -> Dict[str, Any]:
     if isinstance(last_msg, HumanMessage):
         current_observation = str(last_msg.content)[:500]
 
-    similar_cases = []
-    if memory_manager:
-        verification_metrics = state.get("verification_result")
-        raw_cases = memory_manager.search_similar_cases(
-            current_observation,
-            limit=10,
-            min_score=0.5,
-            verification_metrics=verification_metrics
-        )
-        similar_cases = rerank_and_filter_cases(graph.default_client, current_observation, raw_cases)
-        print(f"  📚 유사 실패 사례 {len(similar_cases)}건 선정 (Re-ranked)")
-
+    # 2. 가설 생성 (HypothesisMaker 사용)
+    # RAG 검색은 HypothesisMaker 내부에서 수행됨
     # 2. 가설 생성 (HypothesisMaker 사용)
     try:
         hypothesis_result = await graph.hypothesis_maker.make_hypothesis(state)

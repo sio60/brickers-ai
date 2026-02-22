@@ -24,12 +24,14 @@ def get_draft_prompt(observation: str, success_text: str, current_metrics_json: 
 - smart_fix (bool): 알고리즘 보정 활성화.
 
 위 가이드를 바탕으로, 오로지 '성공 사례'와 '물리 원칙'에 기반한 1차 초안을 JSON으로 성실히 답변하세요.
+당신의 가설이 얼마나 효과적일지 스스로 평가하여 **internal_score (0~100점)**를 매기세요.
 모든 설명(hypothesis, reasoning)은 반드시 한국어로 작성하세요.
 
 JSON 출력 형식:
 {{
     "hypothesis": "가설 내용 (한국어)",
     "reasoning": "수립 근거 (한국어)",
+    "internal_score": 70,
     "proposed_params": {{
         "target": 60,
         "support_ratio": 1.2,
