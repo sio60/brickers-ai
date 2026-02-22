@@ -19,17 +19,17 @@ class AnalyticsAgentService:
     async def get_analyst_report(self, days: int = 7) -> str:
         """
         1번 기능: 데이터 분석가 에이전트
-        백엔드 API에서 데이터를 가져와 LLM이 해석한 보고서를 반환합니다.
+        IntelligenceService에서 통합 데이터를 가져와 LLM이 해석한 보고서를 반환합니다.
         """
-        # [NEW] Product Intelligence 추가
-        top_tags, product_intel, analytics_summary, performance_summary = await asyncio.gather(
-            backend_client.get_top_tags(days, limit=10),
-            backend_client.get_product_intelligence(days),
-            backend_client.get_analytics_summary(days),
-            backend_client.get_performance_summary(days),
-        )
-
-        heavy_users = await backend_client.get_heavy_users(days, limit=5)
+        from admin_analyst.intelligence_service import IntelligenceService
+        
+        snapshot = await IntelligenceService.get_combined_snapshot(days)
+        
+        analytics_summary = snapshot.get("analytics_summary")
+        product_intel = snapshot.get("product_intelligence")
+        performance = snapshot.get("performance", {})
+        top_tags = snapshot.get("popular_trends", [])
+        heavy_users = snapshot.get("heavy_users", [])
         
         if not analytics_summary:
             return "현재 분석 데이터를 불러올 수 없습니다. 백엔드 연결을 확인해주세요."
@@ -48,10 +48,10 @@ class AnalyticsAgentService:
 {top_tags}
 
 [System Performance]
-- Avg Wait Time: {performance_summary.get('performance', {}).get('avgWaitTime', 0)/1000:.1f}s
-- Avg Latency (AI): {performance_summary.get('performance', {}).get('avgLatency', 0)/1000:.1f}s
-- Avg Cost: ${performance_summary.get('performance', {}).get('avgCost', 0):.4f}
-- Avg Brick Count: {performance_summary.get('performance', {}).get('avgBrickCount', 0):.1f}
+- Avg Wait Time: {performance.get('avgWaitTime', 0)/1000:.1f}s
+- Avg Latency (AI): {performance.get('avgLatency', 0)/1000:.1f}s
+- Avg Cost: ${performance.get('avgCost', 0):.4f}
+- Avg Brick Count: {performance.get('avgBrickCount', 0):.1f}
 
 [Power Users (Top 5)]
 {heavy_users}
