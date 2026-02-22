@@ -146,3 +146,70 @@ async def render_6_views(
     return await anyio.to_thread.run_sync(
         lambda: _render_6_views_sync(ldr_text, width, height)
     )
+
+
+def _render_custom_angles_sync(
+    ldr_text: str,
+    angles: Dict[str, Dict[str, float]],
+    width: int = 512,
+    height: int = 512,
+) -> Dict[str, bytes]:
+    """
+    (sync) LDR 텍스트를 커스텀 앵글로 렌더링 → {"FRONT": PNG bytes, ...}
+    패딩 없이 raw PNG 반환 (비전 분석용).
+    """
+    tmpdir = tempfile.mkdtemp(prefix="brickers_render_")
+    results: Dict[str, bytes] = {}
+
+    try:
+        ldr_file = os.path.join(tmpdir, "model.ldr")
+        with open(ldr_file, "w", encoding="utf-8") as f:
+            f.write(ldr_text)
+
+        ok_count = 0
+        for name, angle in angles.items():
+            png_file = os.path.join(tmpdir, f"{name}.png")
+            ok = _render_snapshot(
+                ldr_path=ldr_file,
+                output_path=png_file,
+                width=width,
+                height=height,
+                lat=angle["lat"],
+                lon=angle["lon"],
+            )
+            if ok:
+                with open(png_file, "rb") as pf:
+                    results[name] = pf.read()
+                ok_count += 1
+                print(f"  [Render] {name}: OK")
+            else:
+                results[name] = b""
+                print(f"  [Render] {name}: FAILED")
+
+        print(f"[Render] Done: {ok_count}/{len(angles)} angles rendered")
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return results
+
+
+async def render_custom_angles(
+    ldr_text: str,
+    angles: Dict[str, Dict[str, float]],
+    width: int = 512,
+    height: int = 512,
+) -> Dict[str, bytes]:
+    """
+    LDR 텍스트를 커스텀 앵글로 렌더링 (async wrapper).
+    Returns: {"FRONT": PNG bytes, ...}
+    """
+    if not RENDER_ENABLED:
+        raise RuntimeError(
+            f"LDView binary not found ({LDVIEW_BIN}). "
+            "Rendering requires LDView installed."
+        )
+
+    return await anyio.to_thread.run_sync(
+        lambda: _render_custom_angles_sync(ldr_text, angles, width, height)
+    )
