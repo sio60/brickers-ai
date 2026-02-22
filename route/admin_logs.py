@@ -13,7 +13,8 @@ from db import get_db
 try:
     from brick_engine.agent.log_analyzer.graph import app as log_agent_app
 except ImportError:
-    import os, sys
+    import os
+    import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
     from brick_engine.agent.log_analyzer.graph import app as log_agent_app
 
