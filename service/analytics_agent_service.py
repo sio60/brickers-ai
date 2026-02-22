@@ -19,32 +19,39 @@ class AnalyticsAgentService:
         1번 기능: 데이터 분석가 에이전트
         백엔드 API에서 데이터를 가져와 LLM이 해석한 보고서를 반환합니다.
         """
-        summary = await backend_client.get_analytics_summary(days)
-        daily_users = await backend_client.get_daily_users(days)
-        top_tags = await backend_client.get_top_tags(days, limit=10)
-        top_keywords = await backend_client.get_top_keywords(days, limit=10) # [NEW]
+        # [NEW] Product Intelligence 추가
+        top_tags, product_intel, analytics_summary, performance_summary = await asyncio.gather(
+            backend_client.get_top_tags(days, limit=10),
+            backend_client.get_product_intelligence(days),
+            backend_client.get_analytics_summary(days),
+            backend_client.get_performance_summary(days),
+        )
+
         heavy_users = await backend_client.get_heavy_users(days, limit=5)
         
-        if not summary:
+        if not analytics_summary:
             return "현재 분석 데이터를 불러올 수 없습니다. 백엔드 연결을 확인해주세요."
 
         # LLM에게 전달할 컨텍스트 구성
         context = f"""
 [Brickers GA4 Analytics Data - Last {days} days]
-- Total Active Users: {summary.get('activeUsers')}
-- Total Page Views: {summary.get('pageViews')}
-- Total Sessions: {summary.get('sessions')}
+- Active Users: {analytics_summary.get('activeUsers', 'N/A')}
+- Page Views: {analytics_summary.get('pageViews', 'N/A')}
+- Sessions: {analytics_summary.get('sessions', 'N/A')}
 
-[Daily Users Trend]
-{daily_users}
+[Product Intelligence (Conversion & Churn)]
+{json.dumps(product_intel, ensure_ascii=False, indent=2)}
 
-[Popular Brick Tags (Top 10)]
+[Popular Tags (Top 10)]
 {top_tags}
 
-[Popular Search Keywords (Top 10)]
-{top_keywords}
+[System Performance]
+- Avg Wait Time: {performance_summary.get('performance', {}).get('avgWaitTime', 0)/1000:.1f}s
+- Avg Latency (AI): {performance_summary.get('performance', {}).get('avgLatency', 0)/1000:.1f}s
+- Avg Cost: ${performance_summary.get('performance', {}).get('avgCost', 0):.4f}
+- Avg Brick Count: {performance_summary.get('performance', {}).get('avgBrickCount', 0):.1f}
 
-[Key Active Users (Top 5)]
+[Power Users (Top 5)]
 {heavy_users}
 """
         prompt = f"""

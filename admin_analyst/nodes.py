@@ -111,11 +111,11 @@ async def miner_node(state: AdminAnalystState) -> dict:
             "summary": raw_data.get("summary", {}),
             "daily_users": raw_data.get("dailyUsers", []),
             "top_tags": raw_data.get("topTags", []),
-            "top_keywords": raw_data.get("topKeywords", []), # [NEW] 검색 키워드 추가
+            # "top_keywords": raw_data.get("topKeywords", []), # [REMOVED] 검색 키워드 대신 제품 지능화 데이터 사용
             "heavy_users": raw_data.get("heavyUsers", []),
             "event_stats": event_stats,
             "top_posts": raw_data.get("topPages", []), # Diagnoser/Reporting용
-            "product_intelligence": product_intel or {},
+            "product_intelligence": product_intel or {}, # [NEW] 검색 키워드 대신 제품 지능화 데이터 사용
             "db_raw": db_raw,
             "today_stats": {
                 "gen_success": sum(e.get("count", 0) for e in (event_stats.get("success_1d") or [])),
@@ -307,7 +307,8 @@ async def diagnoser_node(state: AdminAnalystState) -> dict:
     
     # [Logic] DeepInvestigator가 수집한 30일 데이터가 있으면 우선 사용 (심층 진단 모드)
     tags = raw_metrics.get("top_tags_30d") or raw_metrics.get("top_tags", [])
-    keywords = raw_metrics.get("top_keywords_30d") or raw_metrics.get("top_keywords", [])
+    # keywords = raw_metrics.get("top_keywords_30d") or raw_metrics.get("top_keywords", []) # [REMOVED]
+    product_intel = raw_metrics.get("product_intelligence") or {} # [NEW] 검색 키워드 대신 제품 정보(퍼널/이탈) 사용
 
     prompt = DIAGNOSER_PROMPT.format(
         anomaly_text=anomaly_text,
@@ -321,7 +322,8 @@ async def diagnoser_node(state: AdminAnalystState) -> dict:
         error_dist=json.dumps(db_raw.get('error_dist', {}), ensure_ascii=False),
         input_type_dist=json.dumps(db_raw.get('input_type_dist', {}), ensure_ascii=False),
         top_tags=json.dumps(tags[:20], ensure_ascii=False), # 30일 데이터일 경우 더 많이 보여줌
-        top_keywords=json.dumps(keywords[:20], ensure_ascii=False),
+        # top_keywords=json.dumps(keywords[:20], ensure_ascii=False), # [REMOVED]
+        product_intel=json.dumps(product_intel, ensure_ascii=False), # [NEW]
         date=temporal.get('date'),
         hour=temporal.get('hour'),
         day_of_week=temporal.get('day_of_week')
@@ -469,12 +471,10 @@ async def deep_investigator_node(state: AdminAnalystState) -> dict:
 
     long_daily = await backend_client.get_daily_users(30)
     long_tags = await backend_client.get_top_tags(30, limit=20)
-    long_keywords = await backend_client.get_top_keywords(30, limit=20)
 
     metrics = dict(state.get("raw_metrics", {}))
     metrics["daily_users_30d"] = long_daily or []
     metrics["top_tags_30d"] = long_tags or []
-    metrics["top_keywords_30d"] = long_keywords or []  # [NEW] 장기 검색어 트렌드
 
     return {"raw_metrics": metrics, "next_action": "diagnose"}
 
@@ -510,7 +510,7 @@ async def reporter_green_node(state: AdminAnalystState) -> dict:
         page_views=summary.get("screenPageViews", 0),
         sessions=summary.get("sessions", 0),
         trend_desc=trend_desc,
-        top_keywords=json.dumps(metrics.get("top_keywords", [])[:10], ensure_ascii=False),
+        top_tags=json.dumps(metrics.get("top_tags", [])[:10], ensure_ascii=False), # [MODIFIED]
         funnel=json.dumps(intel.get("funnel", []), ensure_ascii=False),
         exits=json.dumps(intel.get("exits", []), ensure_ascii=False),
         quality=json.dumps(intel.get("quality", {}), ensure_ascii=False),
@@ -602,9 +602,9 @@ async def query_analyst_node(state: AdminAnalystState) -> dict:
         history_context = "\n[이전 대화 맥락]\n" + "\n".join([f"{h['role']}: {h['content']}" for h in history[-3:]])
 
     prompt = QUERY_ANALYST_PROMPT.format(
-        history_context=history_context,
         user_query=user_query,
-        summary=json.dumps(summary, ensure_ascii=False),
+        history_context=history_context, # [MODIFIED]
+        summary=json.dumps(summary, ensure_ascii=False), # [MODIFIED]
         today_gen_success=today.get('gen_success'),
         today_gen_fail=today.get('gen_fail'),
         today_gallery=today.get('gallery_uploads'),
@@ -612,7 +612,7 @@ async def query_analyst_node(state: AdminAnalystState) -> dict:
         stage_dist=json.dumps(db_raw.get('stage_dist', {}), ensure_ascii=False),
         daily=json.dumps(daily, ensure_ascii=False),
         tags=json.dumps(tags[:10], ensure_ascii=False),
-        keywords=json.dumps(metrics.get("top_keywords", [])[:10], ensure_ascii=False),
+        # keywords=json.dumps(metrics.get("top_keywords", [])[:10], ensure_ascii=False), # [REMOVED]
         top_posts=json.dumps(top_posts, ensure_ascii=False),
         product_intel=json.dumps(metrics.get("product_intelligence", {}), ensure_ascii=False),
         temporal=json.dumps(temporal, ensure_ascii=False)

@@ -18,9 +18,14 @@ class IntelligenceService:
         log.info(f"📊 [Intel] 종합 스냅샷 수집 시작 (기간: {days}일)")
         
         # 1. Analytics (거시)
-        summary = await backend_client.get_analytics_summary(days)
-        tags = await backend_client.get_top_tags(days, limit=10)
-        keywords = await backend_client.get_top_keywords(days, limit=10) # [NEW]
+        summary_task = backend_client.get_analytics_summary(days)
+        tags_task = backend_client.get_top_tags(days, limit=10)
+        product_intel_task = backend_client.get_product_intelligence(days=14)
+        
+        # Parallel execution
+        tags, product_intel, summary = await asyncio.gather(
+            tags_task, product_intel_task, summary_task
+        )
         
         # 2. Database (미시)
         db_stats = {}

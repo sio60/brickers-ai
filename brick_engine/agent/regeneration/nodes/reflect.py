@@ -56,6 +56,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
         return {
             "memory": memory, # memory도 함께 반환
             "previous_metrics": current_metrics,
+            "verification_raw_result": state.get("verification_raw_result"), # [FIX] Preserve data flow
             "next_action": state.get("next_action_override") or "hypothesize",
             "round_count": state.get("round_count", 0) + 1
         }
@@ -148,5 +149,6 @@ def node_reflect(graph, state) -> Dict[str, Any]:
         "memory": memory,
         "observation": f"실패율={curr_failure:.2f}, 공중부양={curr_floating}개, 작은브릭={curr_small_ratio:.2f}",
         "previous_metrics": current_metrics,
+        "verification_raw_result": state.get("verification_raw_result"), # [FIX] Preserve data flow
         "next_action": "hypothesize"
     }
