@@ -2,7 +2,7 @@
 Intelligence Service (MCP-Ready Toolset)
 DB(MongoDB)와 Analytics(GA4) 데이터를 통합하여 전략적 분석을 수행하는 핵심 서비스 모듈.
 """
-from __future__ import annotations
+import asyncio
 import logging
 from typing import Dict, Any, List
 from datetime import datetime
@@ -20,11 +20,12 @@ class IntelligenceService:
         # 1. Analytics (거시)
         summary_task = backend_client.get_analytics_summary(days)
         tags_task = backend_client.get_top_tags(days, limit=10)
+        keywords_task = backend_client.get_top_keywords(days)
         product_intel_task = backend_client.get_product_intelligence(days=14)
         
         # Parallel execution
-        tags, product_intel, summary = await asyncio.gather(
-            tags_task, product_intel_task, summary_task
+        tags, keywords, product_intel, summary = await asyncio.gather(
+            tags_task, keywords_task, product_intel_task, summary_task
         )
         
         # 2. Database (미시)
