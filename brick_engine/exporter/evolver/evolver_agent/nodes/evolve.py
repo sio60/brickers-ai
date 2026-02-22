@@ -24,8 +24,8 @@ from ..tools import (
 from ..constants import MAX_REMOVAL_RATIO
 from ..config import get_config
 
-# Vision 분석용 5방향 (TOP, LEFT 제외)
-VISION_ANGLES = ["FRONT", "BACK", "RIGHT", "BOTTOM", "FRONT_RIGHT"]
+# Vision 분석용 5방향 (앞뒤좌우+아래)
+VISION_ANGLES = ["FRONT", "BACK", "LEFT", "RIGHT", "BOTTOM"]
 
 # 모듈 레벨에서 한 번만 경로 설정
 _evolver_dir = Path(__file__).parent.parent.parent

@@ -146,8 +146,8 @@ def _summarize_lessons(lessons: list) -> list:
     # 실패 시 최근 5개만 유지
     return lessons[-5:]
 
-# Vision 분석용 5방향 (TOP, LEFT 제외)
-VISION_ANGLES = ["FRONT", "BACK", "RIGHT", "BOTTOM", "FRONT_RIGHT"]
+# Vision 분석용 5방향 (앞뒤좌우+아래)
+VISION_ANGLES = ["FRONT", "BACK", "LEFT", "RIGHT", "BOTTOM"]
 
 def node_reflect(state: AgentState) -> AgentState:
     """Analyze results and update memory (물리 + Vision 통합 검증 + 롤백)"""
