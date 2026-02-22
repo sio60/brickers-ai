@@ -20,12 +20,11 @@ class IntelligenceService:
         # 1. Analytics (거시)
         summary_task = backend_client.get_analytics_summary(days)
         tags_task = backend_client.get_top_tags(days, limit=10)
-        keywords_task = backend_client.get_top_keywords(days)
         product_intel_task = backend_client.get_product_intelligence(days=14)
         
         # Parallel execution
-        tags, keywords, product_intel, summary = await asyncio.gather(
-            tags_task, keywords_task, product_intel_task, summary_task
+        tags, product_intel, summary = await asyncio.gather(
+            tags_task, product_intel_task, summary_task
         )
         
         # 2. Database (미시)
@@ -47,7 +46,6 @@ class IntelligenceService:
             "timestamp": datetime.now().isoformat(),
             "analytics_summary": summary,
             "popular_trends": tags,
-            "popular_keywords": keywords, # [NEW]
             "db_raw_insights": {
                 "total_jobs_24h": db_stats.get("total_recent_jobs", 0),
                 "failure_count": len(db_stats.get("error_jobs", [])),
