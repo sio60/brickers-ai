@@ -60,6 +60,12 @@ class AgentState(TypedDict):
     # 최종 결과 리포트
     final_report: Dict[str, Any]
     
+    # [Best of 3] 최적 결과 추적용
+    modification_attempts: int          # 실제 도구 실행(LDR 수정) 횟수
+    best_score: int                     # 최고 물리 점수
+    best_ldr_content: Optional[str]     # 최고 점수 시점의 LDR 내용
+    hallucination_count: int            # 존재하지 않는 도구 호출 횟수
+    
     # [Hypothesis] 관찰 결과 (Verifier -> Reflect -> Hypothesize)
     observation: str
 

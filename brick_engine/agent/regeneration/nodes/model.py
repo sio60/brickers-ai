@@ -20,7 +20,7 @@ def node_model(graph, state) -> Dict[str, Any]:
     print("\n[Co-Scientist] 상황 분석 중...")
     graph._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")
 
-    tools = [RemoveBricks, MergeBricks] # TuneParameters 일시 비활성화
+    tools = [TuneParameters, RemoveBricks, MergeBricks]
 
 
     messages_to_send = state['messages'][:]
@@ -63,14 +63,17 @@ def node_model(graph, state) -> Dict[str, Any]:
 
     if memory_manager:
         verification_metrics = state.get("verification_result")
+        
+        # Native vector search is already sorted by similarity score. 
+        # Skipping LLM reranking to save ~10s of latency.
         raw_cases = memory_manager.search_similar_cases(
             current_observation,
-            limit=10,
+            limit=3, # limit to 3 directly
             min_score=0.4,
             verification_metrics=verification_metrics,
             subject_name=state.get("subject_name", "Object")
         )
-        similar_cases = rerank_and_filter_cases(graph.default_client, current_observation, raw_cases)
+        similar_cases = raw_cases
 
         if similar_cases:
             memory_info = "\n**📚 유사한 과거 실험 사례 (RAG):**\n"
@@ -130,23 +133,76 @@ def node_model(graph, state) -> Dict[str, Any]:
         grade = grade_match.group(1) if grade_match else "UNKNOWN"
         score = int(score_match.group(1)) if score_match else 0
 
-        hint = build_stability_hint(grade, score)
-        if hint:
-            if score >= 90:
-                print(f"  💡 [Strategy Hint] 🌟 안정 (점수: {score}) -> 잔존물 삭제 모드")
-            elif grade == "UNSTABLE":
-                print(f"  💡 [Strategy Hint] 불안정 (점수: {score}) -> 파라미터 대폭 변경 필요")
-            elif grade == "MEDIUM":
-                print(f"  💡 [Strategy Hint] 중간 (점수: {score}) -> 파라미터 소폭 조정 필요")
-            messages_to_send.append(SystemMessage(content=hint))
+    # --- [Loop Control] 시도 횟수 제한 확인 ---
+    mod_attempts = state.get('modification_attempts', 0)
+    hal_count = state.get('hallucination_count', 0)
+
+    if mod_attempts >= 3:
+        print(f"  🛑 [Stop] 최대 수정 시도 횟수(3회) 도달. 최적 결과 복원 단계로 이동합니다.")
+        return {"next_action": "end"}
+
+    if hal_count >= 3:
+        print(f"  🛑 [Stop] 존재하지 않는 도구 반복 호출(3회) 감지. 강제 종료합니다.")
+        return {"next_action": "end"}
+
+    # 힌트 주입
+    hint = build_stability_hint(grade, score)
+    if hint:
+        if score >= 90:
+            print(f"  💡 [Strategy Hint] 🌟 안정 (점수: {score}) -> 잔존물 삭제 모드")
+        elif grade == "UNSTABLE":
+            print(f"  💡 [Strategy Hint] 불안정 (점수: {score}) -> 파라미터 대폭 변경 필요")
+        elif grade == "MEDIUM":
+            print(f"  💡 [Strategy Hint] 중간 (점수: {score}) -> 파라미터 소폭 조정 필요")
+        messages_to_send.append(SystemMessage(content=hint))
 
     # 모델 호출
     try:
         client_to_use = graph.gemini_client
-        print(f"  🤖 Active Model: Gemini-2.5-Flash (Fixed)")
+        # [FIX] 하드코딩된 이름 대신 실제 모델명을 표시
+        print(f"  🤖 Active Model: {client_to_use.model_name}")
 
-        model_with_tools = client_to_use.bind_tools(tools)
-        response = model_with_tools.invoke(messages_to_send)
+        try:
+            model_with_tools = client_to_use.bind_tools(tools)
+            response = model_with_tools.invoke(messages_to_send)
+        except Exception as e:
+            if "400" in str(e) and "thought_signature" in str(e):
+                print(f"  ⚠️ Gemini 400 (thought_signature) 에러 발생. 수동 파싱 폴백을 시도합니다.")
+                # 도구 호출을 JSON 형식으로 요청하는 시스템 메시지 추가
+                fallback_prompt = (
+                    "\n\n[FALLBACK] 현재 API 오류로 인해 도구 호출 기능을 직접 사용할 수 없습니다. "
+                    "대신 다음 JSON 형식으로 사용할 도구를 답변의 처음에 명시해주세요.\n"
+                    "예: {\"tool\": \"MergeBricks\", \"args\": {\"reasoning\": \"...\"}}\n"
+                    "또는 {\"tool\": \"RemoveBricks\", \"args\": {\"brick_ids\": [\"...\"], \"reasoning\": \"...\"}}"
+                )
+                messages_to_send.append(SystemMessage(content=fallback_prompt))
+                
+                # 도구 없이 일반 텍스트로 생성 요청
+                response = client_to_use.invoke(messages_to_send)
+                
+                # 응답에서 JSON 추출 시도
+                import json
+                try:
+                    # JSON 블록(```json ... ```) 또는 중괄호 내용 추출
+                    json_match = re.search(r'(\{.*?"tool".*?\})', response.content, re.DOTALL)
+                    if json_match:
+                        tool_data = json.loads(json_match.group(1))
+                        tool_name = tool_data.get("tool")
+                        args = tool_data.get("args", {})
+                        
+                        # AIMessage의 tool_calls 구조 모사
+                        from langchain_core.messages import ToolCall
+                        response.tool_calls = [{
+                            "name": tool_name,
+                            "args": args,
+                            "id": "manual_fallback_" + str(int(time.time())),
+                            "type": "tool_call"
+                        }]
+                        print(f"  🛠️ 수동 도구 추출 성공: {tool_name}")
+                except Exception as ex:
+                    print(f"  ❌ 수동 도구 파싱 실패: {ex}")
+            else:
+                raise e
 
         if response.tool_calls:
             tc = response.tool_calls[0]
@@ -172,8 +228,14 @@ def node_model(graph, state) -> Dict[str, Any]:
                 print("🎉 모든 조건 충족. 종료합니다.")
                 return {"messages": [response], "next_action": "end"}
             else:
+                # [FIX] 무한 루프 방지: 도구 선택 재지시 횟수 제한
+                retry_count = sum(1 for m in messages_to_send if "아직 완료되지 않았습니다" in str(m.content))
+                if retry_count >= 2:
+                    print("⚠️ 무한 루프 감지: 도구 선택을 2회 이상 거부함. 강제 종료합니다.")
+                    return {"messages": [response], "next_action": "end"}
+
                 print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 도구 선택을 재지시합니다.")
-                error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. 반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 수정하세요. 도구 없이 종료할 수 없습니다."
+                error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. 반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 수정하세요. 도구 없이 종료할 수 없습니다. (현재 {retry_count+1}차 경고)"
                 hint = HumanMessage(content=error_feedback)
                 return {"messages": [response, hint], "next_action": "model"}
 

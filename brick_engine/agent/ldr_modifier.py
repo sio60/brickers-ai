@@ -471,18 +471,7 @@ def remove_brick(ldr_path: str, brick_id: str) -> bool:
 # 같은 색상의 인접 1x1 브릭들을 큰 브릭으로 통합하여 구조적 안정성 향상
 # ============================================================================
 
-# 병합 가능한 1x1 브릭 파트 번호 (플레이트 포함)
-SMALL_BRICK_PARTS = {"3005.dat", "3024.dat"}  # 1x1 브릭 및 플레이트 대상
-
-# 큰 브릭으로 교체할 매핑 (길이 -> 파트 번호)
-# 플레이트는 사용하지 않음 (1x5, 1x7 브릭은 레고에 존재하지 않아 제외)
-MERGE_TARGET_BRICKS = {
-    2: "3004.dat",   # 1x2 브릭
-    3: "3622.dat",   # 1x3 브릭
-    4: "3010.dat",   # 1x4 브릭
-    6: "3009.dat",   # 1x6 브릭
-    8: "3008.dat",   # 1x8 브릭
-}
+# (상수는 상단에 통합됨)
 
 
 def merge_small_bricks(ldr_path: str, target_brick_ids: Optional[list] = None, min_merge_count: int = 2, max_len: Optional[int] = None, group_by_color: bool = True) -> dict:
@@ -603,6 +592,18 @@ BRICK_STUD_COUNT = {
     "3020.dat": 8, # 2x4 Plate
 }
 
+# 병합 가능한 1x1 브릭 파트 번호 (플레이트 포함)
+SMALL_BRICK_PARTS = {"3005.dat", "3024.dat"}  # 1x1 브릭 및 플레이트 대상
+
+# 큰 브릭으로 교체할 매핑 (길이 -> 파트 번호)
+MERGE_TARGET_BRICKS = {
+    2: "3004.dat",   # 1x2 브릭
+    3: "3622.dat",   # 1x3 브릭
+    4: "3010.dat",   # 1x4 브릭
+    6: "3009.dat",   # 1x6 브릭
+    8: "3008.dat",   # 1x8 브릭
+}
+
 # 플레이트 병합 매핑
 PLATE_MERGE_TARGETS = {
     2: "3023.dat",   # 1x2 Plate
@@ -611,6 +612,8 @@ PLATE_MERGE_TARGETS = {
     6: "3666.dat",   # 1x6 Plate
     8: "3460.dat",   # 1x8 Plate
 }
+
+
 
 def _is_plate(part_name: str) -> bool:
     """부품 번호를 기준으로 플레이트 여부 판별"""
@@ -1001,10 +1004,13 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
     groups = defaultdict(list)
     for i, b in enumerate(bricks):
         is_p = _is_plate(b["part"])
+        # [COORD FIX] 좌표 정수화하여 그룹화 (부동소수점 오차 방지)
+        ry = int(round(b["y"]))
+        rc = b["color"]
         if group_by_color:
-            groups[(b["y"], b["color"], is_p)].append((i, b))
+            groups[(ry, rc, is_p)].append((i, b))
         else:
-            groups[(b["y"], "all", is_p)].append((i, b))
+            groups[(ry, "all", is_p)].append((i, b))
 
     for key, group in groups.items():
         if len(group) < min_merge_count:
@@ -1020,7 +1026,8 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
         # --- X 방향 병합 (같은 Z에서) ---
         z_groups = defaultdict(list)
         for idx, brick in group:
-            z_groups[brick["z"]].append((idx, brick))
+            rz = int(round(brick["z"]))
+            z_groups[rz].append((idx, brick))
 
         for z, z_items in z_groups.items():
             if len(z_items) < min_merge_count:
@@ -1128,7 +1135,8 @@ def _merge_all_1x1(bricks: list, min_merge_count: int = 2, group_by_color: bool 
         for idx, brick in group:
             if idx in already_merged:
                 continue
-            x_groups[brick["x"]].append((idx, brick))
+            rx = int(round(brick["x"]))
+            x_groups[rx].append((idx, brick))
 
         for x, x_items in x_groups.items():
             if len(x_items) < min_merge_count:
@@ -1378,7 +1386,20 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
     if not all_bricks:
         return {"merged": 0, "split": 0, "rounds": 0}
 
-    unstable_set = set(int(uid) for uid in unstable_ids if uid is not None)
+    # [FIX] 문자열 ID 지원 (part_index 형태 대응)
+    unstable_set = set()
+    for uid in unstable_ids:
+        if uid is None: continue
+        if isinstance(uid, (int, float)):
+            unstable_set.add(int(uid))
+        elif isinstance(uid, str):
+            if "_" in uid: # "3005.dat_15" -> 15
+                unstable_set.add(int(uid.split("_")[-1]))
+            else: # "15" -> 15
+                try:
+                    unstable_set.add(int(uid))
+                except ValueError:
+                    continue
 
     # 2. 분해 대상 선정 (불안정 + 수평 인접 안정)
     indices_to_split = set()
@@ -1420,9 +1441,10 @@ def structural_merge(ldr_path: str, unstable_ids: list) -> dict:
                         neighbor_brick = idx_to_brick.get(n_idx)
                         if neighbor_brick:
                             # [FIX] 이미 튼튼한 규격(2x2 이상)을 가진 안정 브릭은 분해에서 '제외'
-                            # 오직 1xN 형태만 분해하여 병합 재료로 사용
+                            # 오직 1xN 형태 또는 작은 2xN 형태만 분해하여 병합 재료로 사용
                             rows, cols = BRICK_DIMENSIONS.get(neighbor_brick["part"], (0, 0))
-                            if rows == 1: 
+                            # [IMPROVED] 더 공격적인 분해: 2x2, 2x3 도 인접해 있다면 분해해서 표면 브릭과 결합 시도
+                            if rows == 1 or (rows == 2 and cols <= 3): 
                                 stable_boundary_indices.add(n_idx)
 
     # 3. 분해 대상 선정
