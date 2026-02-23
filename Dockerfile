@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # LDraw parts library — same GitHub source as frontend CDN
 RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
-    && wget -q https://github.com/gkjohnson/ldraw-parts-library/archive/refs/heads/master.zip -O /tmp/ldraw-gh.zip \
+    && wget -q --tries=10 --timeout=30 https://github.com/gkjohnson/ldraw-parts-library/archive/refs/heads/master.zip -O /tmp/ldraw-gh.zip \
     && unzip -q /tmp/ldraw-gh.zip -d /tmp/ \
     && mv /tmp/ldraw-parts-library-master/complete/ldraw /usr/share/ldraw \
     && rm -rf /tmp/ldraw-gh.zip /tmp/ldraw-parts-library-master \
