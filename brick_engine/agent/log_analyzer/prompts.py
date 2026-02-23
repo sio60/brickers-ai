@@ -1,3 +1,5 @@
+import json
+
 # ============================================================
 # BIA Insight 노드: 어드민 전용 시스템 인사이트 프롬프트
 # ============================================================
@@ -29,6 +31,44 @@ INSIGHT_SYSTEM_PROMPT = """당신은 Brickers AI의 **비즈니스 운영 분석
     "business_insight": "최근 흐린 이미지가 많이 유입되고 있습니다. 업로드 창에 '밝은 곳에서 찍어주세요' 문구를 추가할 필요가 있습니다.",
     "is_error": true
 }"""
+
+
+def get_insight_generation_prompt(error_ctx: dict, notes: list, logs: str) -> str:
+    """BIA 인사이트 생성을 위한 사용자 프롬프트 구성"""
+    notes_text = "\n".join(notes)
+    return f"""[에러 정보]
+{json.dumps(error_ctx, indent=2, ensure_ascii=False)}
+
+[조사 기록]
+{notes_text}
+
+[원본 로그 (최근 3000자)]
+{logs[-3000:]}"""
+
+
+def get_investigation_initial_context(error_ctx: dict, logs: str) -> str:
+    """조사 에이전트의 첫 라운드 컨텍스트 생성"""
+    return f"""[에러 정보]
+- Type: {error_ctx.get('error_type', 'Unknown')}
+- Message: {error_ctx.get('error_message', 'Unknown')}
+- File: {error_ctx.get('primary_file', 'Unknown')}:{error_ctx.get('primary_line', '?')}
+- Function: {error_ctx.get('primary_function', 'Unknown')}
+
+[호출 스택 (사용자 코드)]
+{json.dumps(error_ctx.get('call_stack', []), indent=2, ensure_ascii=False)}
+
+[Traceback]
+{error_ctx.get('traceback_raw', '없음')}
+
+[로그 (최근)]
+{logs[-3000:]}
+
+위 정보를 바탕으로 도구를 사용하여 조사를 시작하세요. 에러 발생 파일부터 읽어보세요."""
+
+
+def get_investigation_round_prompt(iteration: int) -> str:
+    """조사 루프의 추가 라운드 프롬프트 생성"""
+    return f"[조사 라운드 {iteration + 1}] 이전 조사 결과를 바탕으로, 추가로 확인이 필요한 파일이나 인프라가 있으면 도구를 호출하세요. 충분하다면 도구 호출 없이 응답하세요."
 
 # 기존 REPORT_SYSTEM_PROMPT는 하단에 유지하거나 삭제 (여기서는 INSIGHT로 대체)
 
