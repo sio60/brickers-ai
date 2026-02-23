@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import asyncio
+from typing import List, Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 from .state import LogAnalysisState
@@ -51,6 +52,30 @@ from .prompts import (
 from ..llm_clients import GeminiClient
 
 logger = logging.getLogger("agent.log_analyzer.nodes")
+
+
+# ============================================================
+# HELPERS: 로그 파싱 유틸리티
+# ============================================================
+
+def _extract_traceback(logs: str) -> List[str]:
+    """로그에서 모든 Traceback 블록을 추출합니다."""
+    traceback_pattern = r'(Traceback \(most recent call last\):.*?)(?=\n\S|\Z)'
+    return re.findall(traceback_pattern, logs, re.DOTALL)
+
+
+def _parse_stack_frames(logs: str) -> List[Dict[str, Any]]:
+    """로그에서 호출 스택 프레임을 추출합니다."""
+    file_pattern = r'File "(?P<file>[^"]+)", line (?P<line>\d+), in (?P<func>\S+)'
+    frames = []
+    for m in re.finditer(file_pattern, logs):
+        frames.append({
+            "file": m.group("file"),
+            "line": int(m.group("line")),
+            "function": m.group("func"),
+            "is_user_code": "site-packages" not in m.group("file")
+        })
+    return frames
 
 
 # ============================================================
@@ -128,41 +153,26 @@ async def parse_error_node(state: LogAnalysisState):
     logs = state.get("logs", "")
     logger.info("--- [Node 2: parse_error] 에러 분석 중 ---")
 
-    # 전체 Traceback 블록 추출
-    traceback_pattern = r'(Traceback \(most recent call last\):.*?)(?=\n\S|\Z)'
-    traceback_blocks = re.findall(traceback_pattern, logs, re.DOTALL)
+    # 1. Traceback 블록 추출
+    traceback_blocks = _extract_traceback(logs)
 
-    # 에러 타입/메시지 추출
-    error_type = ""
-    error_message = ""
+    # 2. 에러 타입/메시지 추출 (하단부터 탐색)
+    error_type, error_message = "", ""
     for line in reversed(logs.splitlines()):
         err_match = re.match(r'^(\w+(?:Error|Exception|Warning|Timeout))\s*:\s*(.+)', line.strip())
         if err_match:
-            error_type = err_match.group(1)
-            error_message = err_match.group(2).strip()
+            error_type, error_message = err_match.group(1), err_match.group(2).strip()
             break
 
-    # 카테고리 분류
+    # 3. 카테고리 분류 (Infra vs Code)
     category = "code_bug"
-    if error_type in INFRA_ERROR_TYPES:
+    if error_type in INFRA_ERROR_TYPES or any(kw in error_message.lower() for kw in INFRA_ERROR_KEYWORDS):
         category = "infra_issue"
-    else:
-        # 메시지 키워드 검사
-        msg_lower = error_message.lower()
-        if any(kw in msg_lower for kw in INFRA_ERROR_KEYWORDS):
-            category = "infra_issue"
 
-    # 호출 스택 추출
-    file_pattern = r'File "(?P<file>[^"]+)", line (?P<line>\d+), in (?P<func>\S+)'
-    all_frames = []
-    user_frames = []
-    for m in re.finditer(file_pattern, logs):
-        frame = {"file": m.group("file"), "line": int(m.group("line")), "function": m.group("func")}
-        all_frames.append(frame)
-        if "site-packages" not in frame["file"]:
-            user_frames.append(frame)
-
-    primary = user_frames[-1] if user_frames else (all_frames[-1] if all_frames else {})
+    # 4. 호출 스택 분석
+    frames = _parse_stack_frames(logs)
+    user_frames = [f for f in frames if f["is_user_code"]]
+    primary = user_frames[-1] if user_frames else (frames[-1] if frames else {})
 
     error_context = {
         "error_type": error_type,
@@ -171,7 +181,7 @@ async def parse_error_node(state: LogAnalysisState):
         "primary_file": primary.get("file", "unknown"),
         "primary_line": primary.get("line", 0),
         "primary_function": primary.get("function", "unknown"),
-        "total_frames": len(all_frames),
+        "total_frames": len(frames),
         "user_code_frames": len(user_frames),
         "traceback_raw": traceback_blocks[-1][:800] if traceback_blocks else "",
     }
@@ -270,7 +280,6 @@ async def generate_report_node(state: LogAnalysisState):
     prompt = get_insight_generation_prompt(error_ctx, notes, logs)
     
     try:
-        from service.nano_banana import GeminiClient
         llm = GeminiClient()
         # INSIGHT_SYSTEM_PROMPT 사용 (비개발자 관리자 타겟)
         response = await asyncio.to_thread(llm.generate_json, prompt, INSIGHT_SYSTEM_PROMPT)
