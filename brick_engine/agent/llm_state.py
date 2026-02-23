@@ -106,3 +106,4 @@ class AgentState(TypedDict):
     # [시스템 컨텍스트]
     job_id: str
     initial_ldr_path: Optional[str] # [NEW] 초기 생성 LDR 백업 경로
+    raw_before_metrics: Optional[Dict[str, Any]]  # [NEW] 공중부양 제거 전 안정성 점수

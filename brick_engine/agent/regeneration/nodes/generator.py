@@ -24,8 +24,11 @@ def node_generator(graph, state) -> Dict[str, Any]:
 
         brick_count = result.get('parts', 0)
         final_target = result.get('final_target', 0)
+        raw_before_metrics = result.get('raw_before_metrics')
 
         print(f"  [OK] 변환 완료: {brick_count}개 브릭 (Final Target: {final_target})")
+        if raw_before_metrics:
+            print(f"  [Before] Raw 안정성: {raw_before_metrics.get('score')}점, 공중부양: {raw_before_metrics.get('floating_count')}개")
         
         # [FIX] 초기 모델 백업 (첫 번째 시도에서만)
         initial_ldr_path = state.get("initial_ldr_path")
@@ -48,6 +51,8 @@ def node_generator(graph, state) -> Dict[str, Any]:
         }
         if initial_ldr_path:
             result["initial_ldr_path"] = initial_ldr_path
+        if raw_before_metrics:
+            result["raw_before_metrics"] = raw_before_metrics
         return result
 
     except Exception as e:

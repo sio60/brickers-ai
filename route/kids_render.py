@@ -559,7 +559,8 @@ async def process_kids_request_internal(
                         "parts": parts_count,
                         "final_target": start_target,
                         "est_cost": round(final_est_cost, 5),
-                        "token_count": running_token_count
+                        "token_count": running_token_count,
+                        "raw_before_metrics": final_state.get("raw_before_metrics"),
                     }
                     used_coscientist = True
                     _log(f"[CoScientist] 완료 | 성공={report.get('success', '?')} | 시도={report.get('total_attempts', '?')}회")
@@ -697,6 +698,7 @@ async def process_kids_request_internal(
                         "est_cost": result.get("est_cost"), # [NEW]
                         "token_count": result.get("token_count"), # [NEW]
                     },
+                    "raw_before_metrics": result.get("raw_before_metrics"),
                 }
                 # CoScientist 사용 시 추가 정보 (Fallback이어도 기록이 있으면 포함)
                 if used_coscientist or report.get("total_attempts", 0) > 0:
@@ -761,6 +763,7 @@ async def process_kids_request_internal(
                 "estCost": result.get("est_cost"),
                 "tokenCount": result.get("token_count"),
                 "stabilityScore": result.get("stability_score", 80), # Default to 80 if missing
+                "rawBeforeMetrics": result.get("raw_before_metrics"),
             }
 
     except Exception as e:

@@ -352,12 +352,14 @@ def _single_conversion(
     smart_fix: bool = True,
     color_smooth: int = 0,
     **kwargs: Any
-) -> Tuple[int, List[Dict]]:
+) -> Tuple[int, List[Dict], Optional[Dict]]:
     """
-    Single conversion pass: voxelization + optimization. Returns (brick_count, optimized_bricks).
+    Single conversion pass: voxelization + optimization.
+    Returns (brick_count, optimized_bricks, raw_before_metrics).
     """
     import time
     start_t = time.time()
+    raw_before_metrics = None
     mesh = combined.copy()
     
     # Scale to target studs
@@ -402,7 +404,7 @@ def _single_conversion(
     
     indices = vg.sparse_indices
     if indices is None or len(indices) == 0:
-        return 0, []
+        return 0, [], None
         
     logger.info(f"[Step] Voxel count: {len(indices)}")
     
@@ -423,7 +425,7 @@ def _single_conversion(
             )
         else:
             logger.error(f"[Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
-            return -1, []
+            return -1, [], None
 
     # Color sampling (KDTree-based speed optimization)
     logger.info("[Step] Color Sampling...")
@@ -470,6 +472,43 @@ def _single_conversion(
     if color_smooth > 0:
         bricks_data = smooth_colors(bricks_data, passes=color_smooth)
 
+    # ── [Before 스냅샷] 공중부양 브릭 제거 전 brick_judge 안정성 점수 측정 ──
+    try:
+        from brick_judge import (
+            parse_ldr_string as _parse_ldr,
+            full_judge as _full_judge,
+            calc_score_from_issues as _calc_score,
+        )
+        # 복셀 데이터를 메모리 상의 LDR 문자열로 변환 (모든 복셀 = 1x1 브릭)
+        _ldr_lines = ["0 Before Snapshot"]
+        for _v in bricks_data:
+            _lx = _v["x"] * 20.0
+            _ly = _v["y"] * -24.0
+            _lz = _v["z"] * 20.0
+            _ldr_lines.append(
+                f"1 {_v['color']} {_lx:.2f} {_ly:.2f} {_lz:.2f} "
+                f"1 0 0 0 1 0 0 0 1 3005.dat"
+            )
+        _model = _parse_ldr("\n".join(_ldr_lines))
+        _issues = _full_judge(_model)
+        _bscore = _calc_score(_issues, len(_model.bricks))
+        raw_before_metrics = {
+            "score": _bscore,
+            "total_bricks": len(_model.bricks),
+            "floating_count": sum(
+                1 for _i in _issues if _i.issue_type.value == "floating"
+            ),
+            "isolated_count": sum(
+                1 for _i in _issues if _i.issue_type.value == "isolated"
+            ),
+        }
+        logger.info(
+            f"[Before] Raw 안정성: {_bscore}점, "
+            f"공중부양: {raw_before_metrics['floating_count']}개"
+        )
+    except Exception as _e:
+        logger.warning(f"[Before] 스냅샷 측정 실패 (무시됨): {_e}")
+
     if kwargs.get("prune_fragments", False):
         bricks_data = prune_detached_fragments(
             bricks_data,
@@ -505,7 +544,7 @@ def _single_conversion(
     o_end = time.time()
     logger.info(f"[Step] Optimization Done: {o_end - o_start:.2f}s")
     
-    return len(optimized), optimized
+    return len(optimized), optimized, raw_before_metrics
 
 
 def convert_glb_to_ldr(
@@ -574,13 +613,14 @@ def convert_glb_to_ldr(
     # 3. Budget-Seeking Loop
     curr_target = float(target)
     final_optimized = []
+    final_before_metrics = None
     
     for i in range(search_iters):
         logger.info(f"[Engine] SEARCH ITERATION {i+1}/{search_iters}")
         logger.info(f"[Engine] Current Target Studs: {int(curr_target)}")
         _log("brickify", f"Tuning brick count... ({i+1}/{search_iters})")
         
-        parts_count, optimized = _single_conversion(
+        parts_count, optimized, before_metrics = _single_conversion(
             combined=combined,
             out_ldr_path=out_ldr_path,
             target=int(curr_target),
@@ -601,6 +641,7 @@ def convert_glb_to_ldr(
             logger.warning(f"[Engine] Iter {i+1} Result: VOXEL_THRESHOLD EXCEEDED")
         else:
             final_optimized = optimized
+            final_before_metrics = before_metrics
             logger.info(f"[Engine] Iter {i+1} Result: {parts_count} bricks (Budget: {budget})")
             
             if parts_count <= budget:
@@ -635,7 +676,8 @@ def convert_glb_to_ldr(
     return {
         "parts": len(final_optimized),
         "final_target": int(curr_target),
-        "out": out_ldr_path
+        "out": out_ldr_path,
+        "raw_before_metrics": final_before_metrics,
     }
 
 
