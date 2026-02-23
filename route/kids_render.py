@@ -185,7 +185,6 @@ class ProcessResp(BaseModel):
     estCost: Optional[float] = None # [New] 예상 비용 (USD)
     tokenCount: Optional[int] = None # [New] 총 토큰 수
     stabilityScore: Optional[int] = None
-    initialLdrUrl: Optional[str] = None # [New] 초기 모델 URL (비교용)
 
 
 
@@ -698,29 +697,6 @@ async def process_kids_request_internal(
 
             # Ensure background URL ready before returning
             # Ensure background requested log
-            # [NEW] Initial Model URL (for comparison) - Always attempt if path exists
-            initial_ldr_url = None
-            # report는 CoScientist 시도 시 혹은 실패 시에도 최대한 보존됨
-            initial_model_path = report.get("initial_model_path")
-            
-            # [FIX] 만약 report에 없더라도 out_brick_dir 내부에 *_initial.ldr 파일이 있는지 체크 (Fallback)
-            if not initial_model_path:
-                initial_backups = list(out_brick_dir.glob("*_initial.ldr"))
-                if initial_backups:
-                    initial_model_path = str(initial_backups[0])
-                    _log(f"   [Found] 초기 모델 백업 발견: {initial_model_path}")
-
-            if initial_model_path:
-                try:
-                    p = Path(initial_model_path)
-                    if p.exists():
-                        # out_brick_dir 내부에 있으므로 out_dir 지정
-                        initial_ldr_url = to_generated_url(p, out_dir=out_brick_dir)
-                    else:
-                        _log(f"   [Warn] 초기 모델 경로가 존재하지 않음: {initial_model_path}")
-                except Exception as e:
-                    _log(f"초기 모델 URL 생성 실패: {e}")
-
             if background_requested:
                 _log("   Background generation requested to Screenshot Server")
 
@@ -729,7 +705,6 @@ async def process_kids_request_internal(
                 "correctedUrl": corrected_url,
                 "modelUrl": model_url,
                 "ldrUrl": ldr_url,
-                "initialLdrUrl": initial_ldr_url, # [NEW]
                 "bomUrl": bom_url,
                 "pdfUrl": pdf_url,
                 "subject": final_subject,
@@ -822,7 +797,6 @@ async def process(request: KidsProcessRequest):
             "lmmLatency": result.get("lmmLatency"), # [New]
             "estCost": result.get("estCost"),
             "tokenCount": result.get("tokenCount"),
-            "initialLdrUrl": result.get("initialLdrUrl"), # [NEW]
         }
 
     except HTTPException:
