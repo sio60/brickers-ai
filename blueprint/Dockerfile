@@ -48,12 +48,11 @@ RUN wget -q https://github.com/tcobbs/ldview/releases/download/v4.5/ldview-qt5-4
     && rm -f /tmp/ldview.deb \
     && rm -rf /var/lib/apt/lists/*
 
-# LDraw parts library — unified with root Dockerfile (much faster than library.ldraw.org)
-RUN wget -q --tries=10 --timeout=30 https://github.com/gkjohnson/ldraw-parts-library/archive/refs/heads/master.zip -O /tmp/ldraw-gh.zip && \
-    unzip -q /tmp/ldraw-gh.zip -d /tmp/ && \
-    mkdir -p /usr/share/ldraw && \
-    mv /tmp/ldraw-parts-library-master/complete/ldraw /usr/share/ && \
-    rm -rf /tmp/ldraw-gh.zip /tmp/ldraw-parts-library-master
+# LDraw parts library
+RUN mkdir -p /usr/share/ldraw && \
+    wget -q https://library.ldraw.org/library/updates/complete.zip -O /tmp/ldraw.zip && \
+    unzip -q /tmp/ldraw.zip -d /usr/share/ && \
+    rm /tmp/ldraw.zip
 
 ENV LDRAWDIR=/usr/share/ldraw
 
