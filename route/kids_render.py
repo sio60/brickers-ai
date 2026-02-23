@@ -60,6 +60,7 @@ from service.brickify_loader import (
     find_glb_in_dir,
     pick_glb_from_downloaded,
 )
+from service.cost_calculator import CostTracker
 
 # PDF Generation (SQS로 Blueprint 서버에 위임)
 from route.sqs_producer import (
@@ -278,9 +279,8 @@ async def process_kids_request_internal(
     #     except Exception as e:
     #         print(f"⚠️ [LogArchive] Failed: {e}")
 
-    # [NEW] Cost Accumulators
-    running_est_cost = 0.0
-    running_token_count = 0
+    # [NEW] Cost Control via CostTracker
+    tracker = CostTracker()
 
     try:
         # [CHANGE] Global Context 사용
@@ -309,14 +309,11 @@ async def process_kids_request_internal(
                 await _sse("gemini", "명암과 형태를 분석합니다. 브릭 색상으로 옮기기 좋은 상태로 보정하고 있어요.")
                 corrected_bytes, ai_subject, ai_category, ai_tags, gemini_usage = await render_one_image_async(img_bytes, "image/png", language=language)
                 
-                # [REFACTORED] Calculate Gemini Image Cost (Step 1)
+                # [REFACTORED] TRACK GEMINI IMAGE COST
                 g_model = os.environ.get("NANO_BANANA_MODEL", "gemini-2.0-flash")
-                gemini_cost = calculate_token_cost(g_model, gemini_usage.get("input_tokens", 0), gemini_usage.get("output_tokens", 0))
-                
-                running_est_cost += gemini_cost
-                running_token_count += (gemini_usage.get("input_tokens", 0) + gemini_usage.get("output_tokens", 0))
+                tracker.add_llm_cost(g_model, gemini_usage)
 
-                _log(f"   [Cost] Gemini Image: ${gemini_cost:.5f} (In: {gemini_usage.get('input_tokens', 0)}, Out: {gemini_usage.get('output_tokens', 0)})")
+                _log("   [Cost] Gemini Image recorded via Tracker")
 
                 final_subject = subject or ai_subject
 
@@ -388,11 +385,8 @@ async def process_kids_request_internal(
                     # [Trace] Tripo Success
                     await _trace("Tripo3D", "SUCCESS", "Model Generated", {"task_id": task_id}, {"files": list(downloaded.keys())}, int((time.time() - step_start) * 1000))
                     
-                    # [NEW] Tripo Cost Logic (Fixed $0.00 for beta, assume $0.30 for future if needed)
-                    # But if we want to track it, we can. Let's stick to user request: tokens * cost + $0.30 (Tripo?)
-                    pass # Tripo cost logic might be handled in fallback or final aggregation. 
-                    # [NEW] Tripo Cost Logic
-                    running_est_cost += TRIPO_GEN_COST
+                    # [REFACTORED] ADD TRIPO COST
+                    tracker.add_tripo_cost()
 
                 tripo_elapsed = time.time() - step_start
                 _log(f"[STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
@@ -538,28 +532,16 @@ async def process_kids_request_internal(
                         parts_count = sum(1 for line in ldr_text.splitlines() if line.startswith('1 '))
                     
                     # [NEW] Cost & Token Extraction (Aggregate Step 1 + Step 3)
-                    agent_est_cost = metrics.get("est_cost", 0.0) # Includes Tripo $0.30 via agent logic?
-                    # The assumption "agent_est_cost already includes Tripo $0.30" from previous code 
-                    # implies the agent calculates it.
-                    # Let's trust the agent logic for now, but ensure we update global trackers.
-                    
                     agent_token_usage = metrics.get("token_usage", {})
+                    # [REFACTORED] AGGREGATE AGENT TOKENS
+                    tracker.add_llm_cost(report.get("model_name", "gemini-1.5-flash"), agent_token_usage)
                     
-                    # Update running totals
-                    running_token_count += agent_token_usage.get("input_tokens", 0) + agent_token_usage.get("output_tokens", 0)
-                    
-                    # If Agent calculated cost, we use it. 
-                    # But we need to be careful not to double count Gemini Image if Agent includes it?
-                    # Assuming agent_est_cost is ONLY for the agent part + Tripo.
-                    
-                    final_est_cost = gemini_cost + agent_est_cost
-                    running_est_cost = final_est_cost # Update global
-
+                    final_res = tracker.get_result()
                     result = {
                         "parts": parts_count,
                         "final_target": start_target,
-                        "est_cost": round(final_est_cost, 5),
-                        "token_count": running_token_count
+                        "est_cost": final_res["est_cost"],
+                        "token_count": final_res["token_count"]
                     }
                     used_coscientist = True
                     _log(f"[CoScientist] 완료 | 성공={report.get('success', '?')} | 시도={report.get('total_attempts', '?')}회")
@@ -583,12 +565,10 @@ async def process_kids_request_internal(
 
                     result = await anyio.to_thread.run_sync(run_brickify)
                     
-                    # [REFACTORED] Cost for Fallback (Only Gemini Image + Tripo)
-                    fallback_cost = gemini_cost + TRIPO_GEN_COST
-                    running_est_cost = fallback_cost # Update global
-                    
-                    result["est_cost"] = round(fallback_cost, 5)
-                    result["token_count"] = running_token_count
+                    # [REFACTORED] FALLBACK COST (Already includes Gemini Image + Tripo)
+                    final_res = tracker.get_result()
+                    result["est_cost"] = final_res["est_cost"]
+                    result["token_count"] = final_res["token_count"]
 
                 # [FIX] Calculate Stability Score
                 # CoScientist 성공 시 metrics에서, fallback 시 기본값 사용
@@ -784,11 +764,12 @@ async def process_kids_request_internal(
         
         # [NEW] Return Failure Dictionary instead of raising RuntimeError
         # This allows SQS Consumer to capture partial cost/token usage
+        final_res = tracker.get_result()
         return {
             "success": False,
             "error": str(e),
-            "estCost": running_est_cost,
-            "tokenCount": running_token_count
+            "estCost": final_res["est_cost"],
+            "tokenCount": final_res["token_count"]
         }
 
 
