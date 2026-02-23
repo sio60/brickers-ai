@@ -724,7 +724,7 @@ async def process_kids_request_internal(
             if background_requested:
                 _log("   Background generation requested to Screenshot Server")
 
-            return {
+            res_dict = {
                 "success": True, # [NEW] Explicit success flag
                 "correctedUrl": corrected_url,
                 "modelUrl": model_url,
