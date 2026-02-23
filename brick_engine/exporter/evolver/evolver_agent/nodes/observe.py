@@ -97,7 +97,7 @@ def node_observe(state: AgentState) -> AgentState:
             from ..tools.vision_analyzer import find_problems, analyze_multi_angle
             from ..tools.ldr_renderer import render_model_multi_angle
 
-            VISION_ANGLES = ["FRONT", "BACK", "RIGHT", "BOTTOM", "FRONT_RIGHT"]
+            VISION_ANGLES = ["FRONT", "BACK", "LEFT", "RIGHT", "BOTTOM"]
             images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)
             if images:
                 import base64

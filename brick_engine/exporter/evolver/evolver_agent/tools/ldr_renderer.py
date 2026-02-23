@@ -1,4 +1,4 @@
-"""LDR → 이미지 렌더링 (LDView CLI 사용)
+"""LDR → 이미지 렌더링 (로컬 LDView 우선, 없으면 screenshot-server HTTP 폴백)
 
 방향 규칙 (LDraw 좌표계 기준):
 - Z 음수 = 앞 (FRONT)
@@ -6,7 +6,9 @@
 - X 음수 = 왼쪽 (LEFT)
 - X 양수 = 오른쪽 (RIGHT)
 """
+import os
 import subprocess
+import shutil
 import tempfile
 import base64
 import io
@@ -20,22 +22,31 @@ except ImportError:
     PIL_AVAILABLE = False
     print("[WARNING] PIL not available, direction labels disabled")
 
-import os
+# 로컬 LDView 경로: 환경변수 우선, 없으면 시스템 PATH에서 탐색
+LDVIEW_BIN = os.environ.get("LDVIEW_BIN", "LDView")
+_ldview_resolved = shutil.which(LDVIEW_BIN)
+LDVIEW_LOCAL_AVAILABLE = _ldview_resolved is not None
+if LDVIEW_LOCAL_AVAILABLE:
+    LDVIEW_BIN = _ldview_resolved
 
-LDVIEW_PATH = os.getenv("LDVIEW_PATH", r"C:\Program Files\LDView\LDView64.exe")
+# screenshot-server HTTP 폴백
+SCREENSHOT_SERVER_URL = os.environ.get(
+    "SCREENSHOT_SERVER_URL", "http://screenshot-api:8002"
+)
 
 # 카메라 각도 프리셋 (latitude, longitude, 방향 라벨)
-# LDraw: Z- = 앞, Z+ = 뒤, X- = 왼, X+ = 오
 CAMERA_ANGLES = {
-    "FRONT": (20, 0, "FRONT (Z-)"),           # 앞에서 봄
-    "BACK": (20, 180, "BACK (Z+)"),           # 뒤에서 봄
-    "RIGHT": (20, 90, "RIGHT (X+)"),          # 오른쪽에서 봄
-    "LEFT": (20, -90, "LEFT (X-)"),           # 왼쪽에서 봄
-    "TOP": (90, 0, "TOP"),                    # 위에서 봄
-    "BOTTOM": (-90, 0, "BOTTOM"),             # 아래에서 봄
-    "FRONT_RIGHT": (30, 45, "FRONT-RIGHT"),   # 앞-오른쪽 대각선
+    "FRONT":  (20, 0, "FRONT (Z-)"),
+    "BACK":   (20, 180, "BACK (Z+)"),
+    "LEFT":   (20, -90, "LEFT (X-)"),
+    "RIGHT":  (20, 90, "RIGHT (X+)"),
+    "BOTTOM": (-90, 0, "BOTTOM"),
 }
 
+
+# ============================================================
+# 로컬 LDView 렌더링 (Windows/로컬 개발용)
+# ============================================================
 
 def render_ldr_to_image(
     ldr_path: str,
@@ -45,22 +56,8 @@ def render_ldr_to_image(
     latitude: int = 30,
     longitude: int = 45
 ) -> str:
-    """
-    LDR 파일을 이미지로 렌더링
-
-    Args:
-        ldr_path: LDR 파일 경로
-        output_path: 출력 이미지 경로 (없으면 임시 파일)
-        width: 이미지 너비
-        height: 이미지 높이
-        latitude: 카메라 위도 (위아래 각도)
-        longitude: 카메라 경도 (좌우 회전)
-
-    Returns:
-        렌더링된 이미지 경로
-    """
-    if not Path(LDVIEW_PATH).exists():
-        raise FileNotFoundError(f"LDView not found: {LDVIEW_PATH}")
+    if not LDVIEW_LOCAL_AVAILABLE:
+        raise FileNotFoundError(f"LDView not found: {LDVIEW_BIN}")
 
     if not Path(ldr_path).exists():
         raise FileNotFoundError(f"LDR file not found: {ldr_path}")
@@ -69,7 +66,7 @@ def render_ldr_to_image(
         output_path = tempfile.mktemp(suffix=".png")
 
     cmd = [
-        LDVIEW_PATH,
+        LDVIEW_BIN,
         str(ldr_path),
         f"-SaveSnapshot={output_path}",
         f"-SaveWidth={width}",
@@ -96,13 +93,11 @@ def _add_direction_label(image_path: str, label: str) -> bytes:
     img = Image.open(image_path)
     draw = ImageDraw.Draw(img)
 
-    # 폰트 (시스템 기본 폰트 사용)
     try:
         font = ImageFont.truetype("arial.ttf", 24)
-    except:
+    except Exception:
         font = ImageFont.load_default()
 
-    # 텍스트 배경 (검정 반투명)
     text_bbox = draw.textbbox((10, 10), label, font=font)
     padding = 5
     draw.rectangle(
@@ -111,10 +106,8 @@ def _add_direction_label(image_path: str, label: str) -> bytes:
         fill=(0, 0, 0, 180)
     )
 
-    # 텍스트 (흰색)
     draw.text((10, 10), label, fill=(255, 255, 255), font=font)
 
-    # bytes로 변환
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -128,12 +121,7 @@ def render_ldr_to_base64(
     longitude: int = 45,
     label: str = None
 ) -> str:
-    """
-    LDR 파일을 렌더링하고 base64로 반환 (LLM 전송용)
-
-    Args:
-        label: 이미지에 표시할 방향 라벨 (예: "FRONT (Z-)")
-    """
+    """LDR 파일을 렌더링하고 base64로 반환 (LLM 전송용)"""
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         output_path = f.name
 
@@ -157,20 +145,7 @@ def render_ldr_multi_angle(
     width: int = 512,
     height: int = 512
 ) -> Dict[str, str]:
-    """
-    LDR 파일을 지정된 방향에서 렌더링하고 base64로 반환
-    각 이미지에 방향 라벨 표시됨
-
-    Args:
-        ldr_path: LDR 파일 경로
-        angles: 렌더링할 각도 목록 (기본: 7방향 전체)
-        width: 이미지 너비
-        height: 이미지 높이
-
-    Returns:
-        {angle_name: base64_image, ...}
-        예: {"FRONT": "...", "BACK": "...", ...}
-    """
+    """LDR 파일을 지정된 방향에서 렌더링하고 base64로 반환"""
     if angles is None:
         angles = list(CAMERA_ANGLES.keys())
 
@@ -191,20 +166,46 @@ def render_ldr_multi_angle(
     return results
 
 
+# ============================================================
+# screenshot-server HTTP 폴백 (프로덕션 Docker용)
+# ============================================================
+
+def _render_via_http(ldr_text: str, angles: List[str],
+                     width: int = 512, height: int = 512) -> Dict[str, str]:
+    """screenshot-server의 /render/multi-angle API를 HTTP로 호출"""
+    import httpx
+
+    url = f"{SCREENSHOT_SERVER_URL}/render/multi-angle"
+    print(f"  [Render] HTTP fallback → {url}")
+
+    resp = httpx.post(
+        url,
+        json={
+            "ldr_text": ldr_text,
+            "angles": angles,
+            "width": width,
+            "height": height,
+        },
+        timeout=120.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    return data.get("images", {})
+
+
+# ============================================================
+# 메인 엔트리포인트 (observe.py에서 호출)
+# ============================================================
+
 def render_model_multi_angle(model, parts_db, angles: List[str] = None,
                              width: int = 512, height: int = 512) -> Dict[str, str]:
     """
-    BrickModel을 지정된 방향에서 렌더링
+    BrickModel을 지정된 방향에서 렌더링.
 
-    Args:
-        model: BrickModel 객체
-        parts_db: 파츠 DB
-        angles: 렌더링할 각도 목록
-        width: 이미지 너비
-        height: 이미지 높이
-
-    Returns:
-        {angle_name: base64_image, ...}
+    전략:
+      1. 로컬 LDView 있으면 → 직접 렌더링
+      2. 없으면 → screenshot-server HTTP 호출
     """
     import sys
     exporter_dir = Path(__file__).parent.parent
@@ -213,23 +214,36 @@ def render_model_multi_angle(model, parts_db, angles: List[str] = None,
 
     from ldr_converter import model_to_ldr
 
-    with tempfile.NamedTemporaryFile(suffix=".ldr", delete=False, mode='w', encoding='utf-8') as f:
-        ldr_content = model_to_ldr(model, parts_db, skip_validation=True, skip_physics=True)
-        f.write(ldr_content)
-        ldr_path = f.name
+    ldr_content = model_to_ldr(model, parts_db, skip_validation=True, skip_physics=True)
 
+    if angles is None:
+        angles = list(CAMERA_ANGLES.keys())
+
+    # 전략 1: 로컬 LDView
+    if LDVIEW_LOCAL_AVAILABLE:
+        print(f"  [Render] Local LDView: {LDVIEW_BIN}")
+        with tempfile.NamedTemporaryFile(suffix=".ldr", delete=False, mode='w', encoding='utf-8') as f:
+            f.write(ldr_content)
+            ldr_path = f.name
+
+        try:
+            return render_ldr_multi_angle(ldr_path, angles, width, height)
+        finally:
+            Path(ldr_path).unlink(missing_ok=True)
+
+    # 전략 2: screenshot-server HTTP 폴백
+    print(f"  [Render] LDView not found locally, using HTTP fallback")
     try:
-        results = render_ldr_multi_angle(ldr_path, angles, width, height)
-    finally:
-        Path(ldr_path).unlink(missing_ok=True)
-
-    return results
+        return _render_via_http(ldr_content, angles, width, height)
+    except Exception as e:
+        print(f"  [Render] HTTP fallback failed: {e}")
+        return {}
 
 
 if __name__ == "__main__":
     test_ldr = r"C:\Users\301\Desktop\Brickers 관련 문서\테스트 LDR\냥이.ldr"
 
-    print("=== 7방향 렌더링 테스트 ===")
+    print("=== 5방향 렌더링 테스트 ===")
     multi = render_ldr_multi_angle(test_ldr)
     for angle, b64 in multi.items():
         if b64:

@@ -2,8 +2,11 @@
 # Reflect 노드: 회고 + 학습 데이터 기록
 # ============================================================================
 
+import logging
 from pathlib import Path
 from typing import Dict, Any
+
+logger = logging.getLogger("agent.regeneration.reflect")
 
 
 def node_reflect(graph, state) -> Dict[str, Any]:
@@ -16,7 +19,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
         build_verification, build_improvement,
     )
 
-    print("\n[Reflect] 실제 결과 분석 중...")
+    logger.info("[Reflect] 실제 결과 분석 중...")
     graph._log("REFLECT", "이전 시도와 비교해서 개선된 점을 정리하고 있어요.")
 
     # Memory 초기화
@@ -34,7 +37,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
 
     # [FIX] 첫 번째 시도(Baseline)도 무조건 기록하여 전/후 비교 및 통계 지원
     if not previous_metrics:
-        print("\n[Reflect] 첫 번째 시도 기록 (Baseline)")
+        logger.info("[Reflect] 첫 번째 시도 기록 (Baseline)")
         if memory_manager:
             try:
                 memory_manager.log_experiment(
@@ -65,13 +68,13 @@ def node_reflect(graph, state) -> Dict[str, Any]:
                     ) if build_improvement else {"lesson_learned": "Initial baseline"}
                 )
             except Exception as e:
-                print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
+                logger.error(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
         # Baseline 기록 후 다음 단계로
         # 첫 라운드만 가설 수립, 이후는 바로 도구 선택으로
         round_count = state.get("round_count", 0) + 1
         if round_count >= 2:
             next_step = "model"
-            print(f"  [Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
+            logger.info(f"[Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
         else:
             next_step = state.get("next_action_override") or "hypothesize"
         return {
@@ -102,12 +105,12 @@ def node_reflect(graph, state) -> Dict[str, Any]:
         lesson = f"✅ {last_tool} 성공: {hyp_text} (Gained Improvement)"
         memory["successful_patterns"].append(f"{last_tool}: 효과 있음")
         memory["consecutive_failures"] = 0
-        print(f"  {lesson}")
+        logger.info(lesson)
     else:
         lesson = f"❌ {last_tool} 실패: {hyp_text} (No Improvement)"
         memory["failed_approaches"].append(f"{last_tool}: 효과 미미")
         memory["consecutive_failures"] += 1
-        print(f"  {lesson}")
+        logger.info(lesson)
 
     memory["lessons"].append(lesson)
 
@@ -151,11 +154,11 @@ def node_reflect(graph, state) -> Dict[str, Any]:
         except Exception as e:
             print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
 
-    print("\n" + "🎓" * 20)
+    logger.info("🎓 학습 데이터 기록 완료")
 
     # force_end 플래그가 있으면 (max_retries 초과) 저장만 하고 종료
     if state.get("force_end", False):
-        print(" [Reflect] 마지막 결과 기록 완료. 종료합니다.")
+        logger.info("[Reflect] 마지막 결과 기록 완료. 종료합니다.")
         return {
             "memory": memory,
             "observation": f"실패율={curr_failure:.2f}, 공중부양={curr_floating}개, 작은브릭={curr_small_ratio:.2f}",
@@ -166,11 +169,10 @@ def node_reflect(graph, state) -> Dict[str, Any]:
     # 2라운드 이상이면 가설 수립 건너뛰고 바로 도구 선택으로
     round_count = state.get('round_count', 0)
     if round_count >= 2:
-        print(f" [Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
+        logger.info(f"[Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
         next_step = "model"
     else:
-        print(" [Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
-        print("🎓" * 20)
+        logger.info("[Deep Debate] 비평가와 설계자의 심층 토론 단계로 진입합니다.")
         next_step = "hypothesize"
 
     return {

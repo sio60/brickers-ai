@@ -2,6 +2,7 @@
 # 메인 오케스트레이션: regeneration_loop
 # ============================================================================
 
+import logging
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -15,6 +16,8 @@ from ..memory_utils import memory_manager
 from .constants import DEFAULT_PARAMS
 from .graph import RegenerationGraph
 from .evolver_runner import run_evolver
+
+logger = logging.getLogger("agent.regeneration.pipeline")
 
 
 # ============================================================================
@@ -35,7 +38,7 @@ def save_memory_to_db(model_id: str, memory: Dict):
 
         mongo_uri = os.getenv("MONGODB_URI")
         if not mongo_uri:
-            print("  [Memory] MONGODB_URI not set, skip save")
+            logger.warning("[Memory] MONGODB_URI not set, skip save")
             return
 
         client = MongoClient(mongo_uri, serverSelectionTimeoutMS=3000)
@@ -55,10 +58,10 @@ def save_memory_to_db(model_id: str, memory: Dict):
             {"$set": doc},
             upsert=True,
         )
-        print(f"  [Memory] Saved to DB: {model_id} (lessons={len(doc['lessons'])})")
+        logger.info(f"[Memory] Saved to DB: {model_id} (lessons={len(doc['lessons'])})")
 
     except Exception as e:
-        print(f"  [Memory] DB save failed: {e}")
+        logger.error(f"[Memory] DB save failed: {e}")
 
 
 def _is_truthy(value: Optional[str]) -> bool:
@@ -79,9 +82,9 @@ async def regeneration_loop(
     gui: bool = False,
     params: Optional[Dict[str, Any]] = None,
 ):
-    print("=" * 60)
-    print("Co-Scientist Agent (Tool-Use Ver.)")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Co-Scientist Agent (Tool-Use Ver.)")
+    logger.info("=" * 60)
 
     # 로그 콜백 추출 (kids_render.py에서 주입)
     log_callback = params.pop("log_callback", None) if params else None
@@ -116,13 +119,13 @@ async def regeneration_loop(
         if loaded_mem:
             initial_memory.update(loaded_mem)
     except Exception as e:
-        print(f"⚠️ [Memory] 초기 로드 실패: {e}")
+        logger.error(f"⚠️ [Memory] 초기 로드 실패: {e}")
 
     # 파라미터 병합
     merged_params = DEFAULT_PARAMS.copy()
     if params:
         merged_params.update(params)
-        print(f"⚙️  Custom Params Applied: {list(params.keys())}")
+        logger.info(f"⚙️  Custom Params Applied: {list(params.keys())}")
 
     initial_state = AgentState(
         glb_path=glb_path,
@@ -224,70 +227,70 @@ async def regeneration_loop(
 
     if Path(output_ldr_path).exists():
         file_size = Path(output_ldr_path).stat().st_size
-        print(f"[DEBUG] LDR File exists before Evolver: {output_ldr_path} (Size: {file_size} bytes)")
+        logger.debug(f"[DEBUG] LDR File exists before Evolver: {output_ldr_path} (Size: {file_size} bytes)")
     else:
-        print(f"[DEBUG] LDR File MISSING before Evolver: {output_ldr_path}")
+        logger.warning(f"[DEBUG] LDR File MISSING before Evolver: {output_ldr_path}")
         should_run_evolver = False
 
     if should_run_evolver:
         # Pre-Evolver merge pass (optional)
         try:
             from ..ldr_modifier import merge_small_bricks
-            print("\n[Pre-Processing] Try merging 1x1 bricks before Evolver...")
+            logger.info("[Pre-Processing] Try merging 1x1 bricks before Evolver...")
             merge_stats = merge_small_bricks(output_ldr_path, min_merge_count=2)
             if merge_stats.get("merged", 0) > 0:
-                print(
+                logger.info(
                     "[Pre-Processing] Merged "
                     f"{merge_stats['merged']} groups "
                     f"(Total: {merge_stats['original_count']} -> {merge_stats['new_count']})"
                 )
                 pass  # SSE 제거 (유저 불필요)
             else:
-                print("[Pre-Processing] No mergeable 1x1 groups")
+                logger.info("[Pre-Processing] No mergeable 1x1 groups")
         except Exception as e:
-            print(f"[Pre-Processing] Merge failed (continue): {e}")
+            logger.error(f"[Pre-Processing] Merge failed (continue): {e}")
 
-        print("\n[Evolver] Running Evolver post-processing...")
+        logger.info("[Evolver] Running Evolver post-processing...")
         evolver_result = run_evolver(output_ldr_path, glb_path, log_callback=log_callback)
         if evolver_result.get("success"):
-            print("[Evolver] Post-processing completed")
+            logger.info("[Evolver] Post-processing completed")
         else:
             reason = evolver_result.get("reason", "unknown")
-            print(f"[Evolver] Skipped/failed: {reason}")
+            logger.warning(f"[Evolver] Skipped/failed: {reason}")
     else:
         skip_reason = f"mode={evolver_mode}, success={final_success}, failure_ratio={failure_ratio:.3f}"
-        print(f"[Evolver] Skipped ({skip_reason})")
+        logger.info(f"[Evolver] Skipped ({skip_reason})")
 
     # 최종 리포트
-    print("\n" + "=" * 60)
-    print("📋 최종 결과 리포트")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("📋 최종 결과 리포트")
+    logger.info("=" * 60)
 
     report = final_state.get('final_report', {})
     if report:
         success = report.get('success', False)
         status = "✅ 성공" if success else "❌ 실패"
-        print(f"상태: {status}")
-        print(f"총 시도: {report.get('total_attempts', final_state['attempts'])}회")
+        logger.info(f"상태: {status}")
+        logger.info(f"총 시도: {report.get('total_attempts', final_state['attempts'])}회")
 
         tool_usage = report.get('tool_usage', {})
         if tool_usage:
-            print(f"도구 사용 현황:")
+            logger.info("도구 사용 현황:")
             for tool, count in tool_usage.items():
-                print(f"  - {tool}: {count}회")
+                logger.info(f"  - {tool}: {count}회")
 
         metrics = report.get('final_metrics', {})
         if metrics:
-            print(f"최종 메트릭:")
-            print(f"  - 실패율: {metrics.get('failure_ratio', 0) * 100:.1f}%")
-            print(f"  - 1x1 비율: {metrics.get('small_brick_ratio', 0) * 100:.1f}%")
-            print(f"  - 총 브릭: {metrics.get('total_bricks', 0)}개")
+            logger.info("최종 메트릭:")
+            logger.info(f"  - 실패율: {metrics.get('failure_ratio', 0) * 100:.1f}%")
+            logger.info(f"  - 1x1 비율: {metrics.get('small_brick_ratio', 0) * 100:.1f}%")
+            logger.info(f"  - 총 브릭: {metrics.get('total_bricks', 0)}개")
 
-        print(f"메시지: {report.get('message', '')}")
+        logger.info(f"메시지: {report.get('message', '')}")
     else:
-        print(f"총 시도: {final_state['attempts']}회")
+        logger.info(f"총 시도: {final_state['attempts']}회")
 
-    print("=" * 60)
+    logger.info("=" * 60)
 
     # 세션 피드백 보고서
     if memory_manager:
@@ -296,12 +299,12 @@ async def regeneration_loop(
             if session_id and session_id != 'offline':
                 feedback_report = memory_manager.generate_session_report(session_id)
                 if 'error' not in feedback_report:
-                    print("\n📊 [Co-Scientist] 세션 피드백 보고서 생성 완료")
-                    print(f"   - 총 반복: {feedback_report.get('statistics', {}).get('total_iterations', 0)}회")
-                    print(f"   - 성공률: {feedback_report.get('statistics', {}).get('success_rate', 0)}%")
-                    print(f"   - 권장사항: {feedback_report.get('final_recommendation', '')}")
+                    logger.info("📊 [Co-Scientist] 세션 피드백 보고서 생성 완료")
+                    logger.info(f"   - 총 반복: {feedback_report.get('statistics', {}).get('total_iterations', 0)}회")
+                    logger.info(f"   - 성공률: {feedback_report.get('statistics', {}).get('success_rate', 0)}%")
+                    logger.info(f"   - 권장사항: {feedback_report.get('final_recommendation', '')}")
         except Exception as e:
-            print(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
+            logger.error(f"⚠️ [Co-Scientist] 보고서 생성 실패: {e}")
 
     # 학습 데이터 DB 저장
     try:
@@ -318,7 +321,7 @@ async def regeneration_loop(
         }
         save_memory_to_db(model_id, mem)
     except Exception as e:
-        print(f"⚠️ [Memory] 저장 중 오류: {e}")
+        logger.error(f"⚠️ [Memory] 저장 중 오류: {e}")
 
     # COMPLETE SSE 제거 (kids_render.py의 complete와 중복)
 
@@ -327,6 +330,6 @@ async def regeneration_loop(
         if "final_report" not in final_state:
             final_state["final_report"] = {}
         final_state["final_report"]["initial_model_path"] = final_state["initial_ldr_path"]
-        print(f"[Pipeline] Initial Model Path added to report: {final_state['initial_ldr_path']}")
+        logger.info(f"[Pipeline] Initial Model Path added to report: {final_state['initial_ldr_path']}")
 
     return final_state
