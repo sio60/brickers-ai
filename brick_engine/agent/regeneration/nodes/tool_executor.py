@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Tuple
 from langchain_core.messages import AIMessage, ToolMessage
 
 from ..constants import MAX_TOOL_USES, MAX_REMOVE_FALLBACK
+from ... import ldr_modifier  # 네이티브 패키지 임포트
 
 logger = logging.getLogger("agent.regeneration.tool_executor")
 
@@ -32,8 +33,6 @@ def _execute_remove_bricks(
     args: Dict, ldr_path: str
 ) -> Tuple[str, str]:
     """RemoveBricks 도구 실행. (result_content, next_step) 반환."""
-    from ... import ldr_modifier
-
     brick_ids = args.get('brick_ids', [])
     if not brick_ids:
         return "삭제할 브릭 ID가 제공되지 않았습니다.", "model"
@@ -51,9 +50,6 @@ def _execute_merge_bricks(
     state: Dict[str, Any]
 ) -> Tuple[str, str, bool]:
     """MergeBricks 도구 실행. (result_content, next_step, merged_flag) 반환."""
-    from ... import ldr_modifier
-    import brick_engine.agent.ldr_modifier as mod
-
     ldr_path = state['ldr_path']
     raw_result = state.get('verification_raw_result') or {}
     issues = raw_result.get('issues', [])
@@ -73,7 +69,7 @@ def _execute_merge_bricks(
             logger.info(
                 f"[Merge] 구조적 문제는 없으나 파편화율({small_ratio:.1%})이 높아 공격적 병합(Aggressive)을 수행합니다."
             )
-            unstable_ids = _find_fragmented_bricks(ldr_path, mod)
+            unstable_ids = _find_fragmented_bricks(ldr_path)
 
     if not unstable_ids:
         # 정말로 병합할 게 아무것도 없는 경우 (Fallback)
@@ -111,12 +107,11 @@ def _execute_merge_bricks(
         else:
             return "구조적 병합을 시도했으나 변경된 부분이 없습니다.", "model", False
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.error(f"구조적 병합 중 오류 발생: {e}", exc_info=True)
         return f"구조적 병합 중 오류 발생: {e}", "model", False
 
 
-def _find_fragmented_bricks(ldr_path: str, mod) -> List[int]:
+def _find_fragmented_bricks(ldr_path: str) -> List[int]:
     """파편화된 1x1/1x2 브릭의 인덱스를 반환."""
     fragmented_ids = []
     try:
@@ -126,7 +121,8 @@ def _find_fragmented_bricks(ldr_path: str, mod) -> List[int]:
         target_parts = {"3005.dat", "3024.dat", "3004.dat", "3023.dat"}
         brick_idx = 0
         for line in lines:
-            p = mod.parse_ldr_line(line)
+            # ldr_modifier.parse_ldr_line 사용
+            p = ldr_modifier.parse_ldr_line(line)
             if p:
                 if p['part'] in target_parts:
                     fragmented_ids.append(brick_idx)

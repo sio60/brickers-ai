@@ -491,7 +491,8 @@ def node_model(graph, state) -> Dict[str, Any]:
             logger.warning("💤 API 할당량 초과. 잠시 대기 후 재시도합니다...")
             time.sleep(10)
             return {"verification_errors": llm_errors, "next_action": "model"}
-        elif "400" in error_str and "thought_signature" in error_str:
+        
+        if "400" in error_str and "thought_signature" in error_str:
             # Gemini 3.x thought_signature 호환성 에러 → 재시도 1회
             logger.warning("🔄 thought_signature 에러 감지. 메시지를 정리하고 재시도합니다...")
             if llm_errors < 2:
@@ -499,7 +500,8 @@ def node_model(graph, state) -> Dict[str, Any]:
             else:
                 logger.error("❌ thought_signature 에러 반복. 종료합니다.")
                 return {"next_action": "end"}
-        elif llm_errors < 2:
+        
+        if llm_errors < 2:
             logger.warning(f"🔄 일반 에러. 재시도합니다... ({llm_errors}/2)")
             time.sleep(2)
             return {"verification_errors": llm_errors, "next_action": "model"}
