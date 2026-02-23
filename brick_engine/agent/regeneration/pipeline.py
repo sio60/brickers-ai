@@ -138,7 +138,7 @@ async def regeneration_loop(
         acceptable_failure_ratio=acceptable_failure_ratio,
         verification_duration=2.0,
         gui=gui,
-        messages=[
+        messages=merged_params.get("override_messages") or [
             system_msg,
             HumanMessage(content=f"'{subject_name}' 모델의 물리적 안정성을 최적화하고 LDR 파일을 설계하세요.")
         ],
@@ -147,6 +147,12 @@ async def regeneration_loop(
         verification_errors=0,
         tool_usage_count={},
         last_tool_used=None,
+        
+        # [Best of 3]
+        modification_attempts=0,
+        best_score=-1,
+        best_ldr_content=None,
+        hallucination_count=0,
         
         # [Hypothesis]
         observation="",
@@ -181,14 +187,13 @@ async def regeneration_loop(
         # Inject Tokens
         report["final_metrics"]["token_usage"] = usage
         
-        # Calculate Estimated Cost (USD)
-        # Gemini 1.5 Flash: Input $0.075/1M, Output $0.30/1M
-        # Tripo Base: $0.30 (Assumption)
-        input_cost = usage["input_tokens"] * 0.000000075
-        output_cost = usage["output_tokens"] * 0.00000030
-        tripo_cost = 0.30
+        # [REFACTORED] Calculate Estimated Cost (USD)
+        from service.kids_config import calculate_token_cost, TRIPO_GEN_COST
         
-        total_cost = input_cost + output_cost + tripo_cost
+        model_name = getattr(llm_client, "model_name", "gemini-1.5-flash")
+        gemini_cost = calculate_token_cost(model_name, usage.get("input_tokens", 0), usage.get("output_tokens", 0))
+        
+        total_cost = gemini_cost + TRIPO_GEN_COST
         report["final_metrics"]["est_cost"] = round(total_cost, 5)
         
         # Update state

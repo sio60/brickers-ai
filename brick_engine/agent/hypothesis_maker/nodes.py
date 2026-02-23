@@ -48,7 +48,7 @@ async def node_search_cases(state: HypothesisState) -> Dict[str, Any]:
         "failure_cases": failure_cases,
         "round_count": 0,
         "debate_history": [],
-        "internal_score": 0,
+        "internal_score": state.get("internal_score", 0),
         "job_id": job_id # Pass through
     }
 

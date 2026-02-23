@@ -263,21 +263,6 @@ async def get_top_tags(days: int = 30, limit: int = 10) -> list | None:
     return None
 
 
-async def get_top_keywords(days: int = 30, limit: int = 10) -> list | None:
-    """백엔드로부터 실시간 인기 검색어 순위를 가져옵니다."""
-    token = os.environ.get("INTERNAL_API_TOKEN", "")
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/top-keywords",
-                params={"days": days, "limit": limit},
-                headers={"X-Internal-Token": token},
-            )
-            if resp.status_code == 200:
-                return resp.json()
-    except Exception as e:
-        print(f"  ⚠️ [BackendClient] Top Keywords Fail: {e}")
-    return None
 
 
 async def get_heavy_users(days: int = 30, limit: int = 10) -> list | None:
@@ -406,4 +391,23 @@ async def get_product_intelligence(days: int = 7) -> dict | None:
                 return resp.json()
     except Exception as e:
         print(f"  ⚠️ [BackendClient] Product Intelligence Fail: {e}")
+    return None
+
+
+async def get_performance_summary(days: int = 7) -> dict | None:
+    """백엔드로부터 전체 성능 통계(Wait time, Latency, Cost, Brick Count)를 가져옵니다."""
+    token = os.environ.get("INTERNAL_API_TOKEN", "")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(
+                f"{BACKEND_URL}/api/admin/analytics/performance",
+                params={"days": days},
+                headers={"X-Internal-Token": token},
+            )
+            if resp.status_code == 200:
+                print("  ✅ [BackendClient] Performance Summary Fetched")
+                return resp.json()
+            print(f"  ⚠️ [BackendClient] Performance Summary Error: {resp.status_code}")
+    except Exception as e:
+        print(f"  ⚠️ [BackendClient] Performance Summary Fail: {e}")
     return None
