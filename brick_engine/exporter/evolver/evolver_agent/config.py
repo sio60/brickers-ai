@@ -7,7 +7,7 @@ class AgentConfig:
     parts_db: Dict[str, Any]
     exporter_dir: Path
     is_initialized: bool = False
-    vision_model: str = "gpt-4o-mini"
+    vision_model: str = "gpt-4o"
     log_callback: Optional[Callable] = None
 
 _CONFIG: Optional[AgentConfig] = None

@@ -86,7 +86,7 @@ def analyze_glb(glb_path: str, vision_model: str = None) -> Dict[str, Any]:
 
         # Vision 모델 설정
         config = get_config()
-        model_name = vision_model or getattr(config, 'vision_model', None) or "gpt-4o-mini"
+        model_name = vision_model or getattr(config, 'vision_model', None) or "gpt-4o"
 
         # 1. GLB 로드 및 렌더링
         try:
