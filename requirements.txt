@@ -81,3 +81,4 @@ fpdf2
 maturin
 docker>=7.0.0
 psutil
+apscheduler
