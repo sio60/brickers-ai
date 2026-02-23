@@ -296,6 +296,20 @@ def node_reflect(state: AgentState) -> AgentState:
             ldr_text = model_to_ldr(state["model"], get_config().parts_db, skip_validation=True, skip_physics=True)
             snapshot_path.write_text(ldr_text, encoding="utf-8")
             print(f"  [SNAPSHOT] 롤백 전 모델 저장: {snapshot_path}")
+
+            # S3 업로드
+            try:
+                from service.s3_client import upload_to_s3, USE_S3, S3_PREFIX
+                if USE_S3:
+                    from datetime import datetime
+                    now = datetime.now()
+                    model_name = state["model"].name if hasattr(state["model"], "name") else "unknown"
+                    s3_key = f"{S3_PREFIX}/evolver-snapshots/{now:%Y-%m-%d}/{model_name}_iter{iteration}_before_rollback.ldr"
+                    s3_url = upload_to_s3(snapshot_path, s3_key, "text/plain")
+                    if s3_url:
+                        print(f"  [SNAPSHOT] S3 업로드 완료: {s3_url}")
+            except Exception as s3_err:
+                print(f"  [SNAPSHOT] S3 업로드 실패 (무시): {s3_err}")
         except Exception as e:
             print(f"  [SNAPSHOT] 저장 실패 (무시): {e}")
 
