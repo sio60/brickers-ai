@@ -6,6 +6,10 @@ glb_to_ldr_embedded.py - Enhanced Brickify Engine
 - SSE real-time logs (brick only, no plates)
 """
 
+import logging
+
+logger = logging.getLogger("brick_engine.glb_to_ldr")
+
 import os
 import sys
 import argparse
@@ -375,7 +379,7 @@ def _single_conversion(
     surface_dilate_iters = int(kwargs.pop("surface_dilate_iters", 0))
     surface_only = bool(kwargs.pop("surface_only", False))
     solid_fill = bool(kwargs.pop("solid", True))
-    print(f"      [Step] Voxelizing (Target: {target}, Pitch: {pitch})...")
+    logger.info(f"[Step] Voxelizing (Target: {target}, Pitch: {pitch})...")
     v_start = time.time()
     vg = mesh.voxelized(pitch=pitch)
     if solid_fill:
@@ -394,13 +398,13 @@ def _single_conversion(
             dense = shell
     vg = trimesh.voxel.base.VoxelGrid(dense, transform=vg.transform)
     v_end = time.time()
-    print(f"      [Step] Voxelization Done: {v_end - v_start:.2f}s")
+    logger.info(f"[Step] Voxelization Done: {v_end - v_start:.2f}s")
     
     indices = vg.sparse_indices
     if indices is None or len(indices) == 0:
         return 0, []
         
-    print(f"      [Step] Voxel count: {len(indices)}")
+    logger.info(f"[Step] Voxel count: {len(indices)}")
     
     # Voxel threshold check (memory guard).
     voxel_threshold = kwargs.get("max_new_voxels", 50000)
@@ -409,8 +413,8 @@ def _single_conversion(
     if len(indices) > voxel_threshold:
         if pitch < max_pitch:
             new_pitch = pitch + 0.5
-            print(f"      [Warning] Voxels ({len(indices)}) > threshold ({voxel_threshold})")
-            print(f"      [Retry] Lowering resolution: pitch {pitch} -> {new_pitch}")
+            logger.warning(f"[Warning] Voxels ({len(indices)}) > threshold ({voxel_threshold})")
+            logger.info(f"[Retry] Lowering resolution: pitch {pitch} -> {new_pitch}")
             return _single_conversion(
                 combined, out_ldr_path, target, kind, plates_per_voxel,
                 interlock, max_area, solid_color, use_mesh_color, step_order, glb_path,
@@ -418,11 +422,11 @@ def _single_conversion(
                 pitch=new_pitch, **kwargs
             )
         else:
-            print(f"      [Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
+            logger.error(f"[Error] Pitch at max ({max_pitch}), still {len(indices)} voxels > {voxel_threshold}")
             return -1, []
 
     # Color sampling (KDTree-based speed optimization)
-    print(f"      [Step] Color Sampling...")
+    logger.info("[Step] Color Sampling...")
     c_start = time.time()
     centers = vg.points
     if use_mesh_color:
@@ -449,7 +453,7 @@ def _single_conversion(
     else:
         colors_raw = np.tile([200, 200, 200], (len(centers), 1))
     c_end = time.time()
-    print(f"      [Step] Color Sampling Done: {c_end - c_start:.2f}s")
+    logger.info(f"[Step] Color Sampling Done: {c_end - c_start:.2f}s")
 
     # Build voxel list
     bricks_data = []
@@ -475,7 +479,7 @@ def _single_conversion(
     
     # Floating brick repair
     if smart_fix:
-        print(f"      [Step] Embedding floating parts...")
+        logger.info("[Step] Embedding floating parts...")
         bricks_data = embed_floating_parts(
             bricks_data,
             max_iters=int(kwargs.get("support_repair_iters", 3)),
@@ -483,7 +487,7 @@ def _single_conversion(
         )
 
     # Optimize (Greedy Packing)
-    print(f"      [Step] Optimization (Greedy Packing) starting...")
+    logger.info("[Step] Optimization (Greedy Packing) starting...")
     o_start = time.time()
     keep_unanchored_default = False
     optimized = optimize_bricks(
@@ -499,7 +503,7 @@ def _single_conversion(
         avoid_1x1=bool(kwargs.get("avoid_1x1", False)),
     )
     o_end = time.time()
-    print(f"      [Step] Optimization Done: {o_end - o_start:.2f}s")
+    logger.info(f"[Step] Optimization Done: {o_end - o_start:.2f}s")
     
     return len(optimized), optimized
 
@@ -544,8 +548,8 @@ def convert_glb_to_ldr(
             except Exception:
                 pass
 
-    print(f"[Engine] Starting conversion: {glb_path} -> {out_ldr_path}")
-    print(f"[Engine] Target: {target} studs, Budget: {budget} bricks")
+    logger.info(f"[Engine] Starting conversion: {glb_path} -> {out_ldr_path}")
+    logger.info(f"[Engine] Target: {target} studs, Budget: {budget} bricks")
 
     _log("brickify", "Computing a stable brickification strategy...")
 
@@ -572,8 +576,8 @@ def convert_glb_to_ldr(
     final_optimized = []
     
     for i in range(search_iters):
-        print(f"\n[Engine] SEARCH ITERATION {i+1}/{search_iters}")
-        print(f"[Engine] Current Target Studs: {int(curr_target)}")
+        logger.info(f"[Engine] SEARCH ITERATION {i+1}/{search_iters}")
+        logger.info(f"[Engine] Current Target Studs: {int(curr_target)}")
         _log("brickify", f"Tuning brick count... ({i+1}/{search_iters})")
         
         parts_count, optimized = _single_conversion(
@@ -594,13 +598,13 @@ def convert_glb_to_ldr(
         )
         
         if parts_count < 0:
-            print(f"[Engine] Iter {i+1} Result: VOXEL_THRESHOLD EXCEEDED")
+            logger.warning(f"[Engine] Iter {i+1} Result: VOXEL_THRESHOLD EXCEEDED")
         else:
             final_optimized = optimized
-            print(f"[Engine] Iter {i+1} Result: {parts_count} bricks (Budget: {budget})")
+            logger.info(f"[Engine] Iter {i+1} Result: {parts_count} bricks (Budget: {budget})")
             
             if parts_count <= budget:
-                print(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
+                logger.info(f"[Engine] SUCCESS: Budget met! ({parts_count} <= {budget})")
                 _log("brickify", f"Budget met with {parts_count} bricks.")
                 break
         
@@ -608,10 +612,10 @@ def convert_glb_to_ldr(
             curr_target *= shrink
             if curr_target < 5:
                 curr_target = 5
-            print(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
+            logger.info(f"[Engine] Budget EXCEEDED. Shrinking target to {curr_target:.1f}")
             _log("brickify", "Too many bricks; retrying with lower resolution...")
         else:
-            print(f"[Engine] WARNING: Failed to meet budget after {search_iters} iters.")
+            logger.warning(f"[Engine] Failed to meet budget after {search_iters} iters.")
 
     # 4. Write LDR
     if not final_optimized:

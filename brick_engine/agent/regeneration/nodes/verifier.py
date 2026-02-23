@@ -4,8 +4,11 @@
 
 import os
 import time
+import logging
 import traceback
 from typing import Dict, Any
+
+logger = logging.getLogger("agent.regeneration.verifier")
 
 from langchain_core.messages import HumanMessage
 
@@ -17,7 +20,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
     """물리 검증 노드 (brick_judge 기반 - Rust 네이티브)"""
     from brick_judge import full_judge, calc_score_from_issues, parse_ldr_string
 
-    print("\n[Verifier] 물리 검증 수행 중 (brick_judge)...")
+    logger.info("[Verifier] 물리 검증 수행 중 (brick_judge)...")
     graph._log("VERIFY", "내구성과 조립 가능성을 확인 중이에요.")
 
     if not os.path.exists(state['ldr_path']):
@@ -126,13 +129,13 @@ def node_verifier(graph, state) -> Dict[str, Any]:
         else:
             short_status = "❌ 불안정"
 
-        print(f"  결과: {short_status} (점수: {score}점)")
+        logger.info(f"결과: {short_status} (점수: {score}점)")
 
         if not stable:
             summary_text = feedback_text.replace('\n', ', ').replace('\r', '')
             if len(summary_text) > 200:
                 summary_text = summary_text[:200] + "..."
-            print(f"  요약: {summary_text}")
+            logger.info(f"요약: {summary_text}")
 
         # 현재 메트릭 저장
         budget = state['params'].get('budget', 200)
@@ -163,7 +166,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             base_warning = ""
             if has_unstable_base:
                 base_warning = " (⚠️ 무게중심 불안정 경고 있음)"
-            print(f"🎉 목표 달성! 프로세스를 종료합니다.{base_warning}")
+            logger.info(f"🎉 목표 달성! 프로세스를 종료합니다.{base_warning}")
             final_report = {
                 "success": True,
                 "total_attempts": state['attempts'],
@@ -179,7 +182,7 @@ def node_verifier(graph, state) -> Dict[str, Any]:
             pass
 
         if state['attempts'] > state['max_retries']:
-            print("💥 최대 시도 횟수 초과. 마지막 결과를 기록한 뒤 종료합니다.")
+            logger.warning("💥 최대 시도 횟수 초과. 마지막 결과를 기록한 뒤 종료합니다.")
             final_report = {
                 "success": False,
                 "total_attempts": state['attempts'],
@@ -227,18 +230,17 @@ def node_verifier(graph, state) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        print(f"  ❌ 검증 중 에러: {e}")
-        traceback.print_exc()
+        logger.error(f"❌ 검증 중 에러: {e}", exc_info=True)
 
         verification_errors = state.get('verification_errors', 0) + 1
         if verification_errors >= 3:
-            print(f"  ⚠️ 검증 에러 {verification_errors}회 - 재생성으로 전환합니다.")
+            logger.warning(f"⚠️ 검증 에러 {verification_errors}회 - 재생성으로 전환합니다.")
             return {
                 "messages": [HumanMessage(content=f"검증 시스템 에러가 반복됨: {e}")],
                 "verification_errors": 0,
                 "next_action": "model"
             }
         else:
-            print(f"  🔄 검증 재시도 ({verification_errors}/3)...")
+            logger.info(f"🔄 검증 재시도 ({verification_errors}/3)...")
             time.sleep(1)
             return {"verification_errors": verification_errors, "next_action": "verifier"}
