@@ -9,10 +9,6 @@ logger = logging.getLogger("agent.log_analyzer.persistence")
 # API Base URL (관리자 로그 관련 API 엔드포인트)
 ADMIN_API_BASE = f"{config.API_PUBLIC_BASE_URL}/ai-admin"
 
-
-
-
-
 async def archive_job_logs(job_id: str, logs: list[str], status: str = "FAILED", container_name: str = "brickers-ai-container"):
     """
     Apply in-memory log persistence (No Docker API).
