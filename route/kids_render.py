@@ -312,8 +312,7 @@ async def process_kids_request_internal(
                 # [REFACTORED] TRACK GEMINI IMAGE COST
                 g_model = os.environ.get("NANO_BANANA_MODEL", "gemini-2.0-flash")
                 tracker.add_llm_cost(g_model, gemini_usage)
-
-                _log("   [Cost] Gemini Image recorded via Tracker")
+                _log(f"💰 [COST] Step 1 (Gemini) added. Current Total: ${tracker.total_cost:.6f}")
 
                 final_subject = subject or ai_subject
 
@@ -385,8 +384,9 @@ async def process_kids_request_internal(
                     # [Trace] Tripo Success
                     await _trace("Tripo3D", "SUCCESS", "Model Generated", {"task_id": task_id}, {"files": list(downloaded.keys())}, int((time.time() - step_start) * 1000))
                     
-                    # [REFACTORED] ADD TRIPO COST
+                    # [REFACTORED] ADD TRIPO_COST
                     tracker.add_tripo_cost()
+                    _log(f"💰 [COST] Step 2 (Tripo) added ($0.30). Current Total: ${tracker.total_cost:.6f}")
 
                 tripo_elapsed = time.time() - step_start
                 _log(f"[STEP 2/4] Tripo 완료 | {tripo_elapsed:.2f}s")
@@ -535,6 +535,7 @@ async def process_kids_request_internal(
                     agent_token_usage = metrics.get("token_usage", {})
                     # [REFACTORED] AGGREGATE AGENT TOKENS
                     tracker.add_llm_cost(report.get("model_name", "gemini-1.5-flash"), agent_token_usage)
+                    _log(f"💰 [COST] Step 3 (CoScientist) tokens added. Final Total: ${tracker.total_cost:.6f}")
                     
                     final_res = tracker.get_result()
                     result = {
@@ -742,6 +743,8 @@ async def process_kids_request_internal(
                 "tokenCount": result.get("token_count"),
                 "stabilityScore": result.get("stability_score", 80), # Default to 80 if missing
             }
+            _log(f"🏆 [COST] FINAL ESTIMATED COST: ${final_res['est_cost']:.6f} / Tokens: {final_res['token_count']}")
+            return res_dict
 
     except Exception as e:
         total_elapsed = time.time() - total_start
