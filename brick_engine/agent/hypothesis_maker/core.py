@@ -23,6 +23,8 @@ except ImportError:
     from memory_utils import MemoryUtils, build_hypothesis
     import config
 
+from . import prompts
+
 logger = logging.getLogger("HypothesisMaker")
 
 
@@ -129,42 +131,9 @@ class HypothesisMaker:
         if not success_text:
             success_text = "직접적인 성공 사례가 없습니다. 일반적인 물리학 원리에 의존하세요."
 
-        prompt = f"""
-        You are a Structural Engineer Expert.
+        prompt = prompts.get_draft_creator_prompt(observation, success_text, verification)
         
-        [Current Context]
-        Observation: {observation}
-        Current Metrics: {json.dumps(verification.get('metrics_after', {}), indent=2)}
-        
-        [Tweakable Parameters]
-        - target (int): Overall size. Decrease to reduce weight.
-        - shrink (float: 0.1-1.0): Scales the model. Lower = smaller/lighter.
-        - plates_per_voxel (int: 1-3): Vertical density. Higher = stronger but heavier.
-        - support_ratio (float: 0.0-2.0): Support density. Higher = more stability.
-        - fill (bool): Fill internal cavities. True = stronger.
-        - interlock (bool): Overlap bricks. True = much stronger.
-        - erosion_iters (int: 0-3): Removes thin parts. Higher = cleaner but might lose detail.
-        - auto_remove_1x1 (bool): Removes weak 1x1 bricks. True = safer.
-        - smart_fix (bool): Enable algorithmic repair logic.
-        
-        [Success Patterns]
-        {success_text}
-        
-        Based ONLY on success patterns and physics, propose an initial hypothesis to fix the issue.
-        Write the 'hypothesis' and 'reasoning' in Korean.
-        Respond in JSON: 
-        {{ 
-            "hypothesis": "가설 (한국어)", 
-            "reasoning": "근거 (한국어)", 
-            "proposed_params": {{
-                "target": 60,
-                "support_ratio": 1.2,
-                ...
-            }} 
-        }}
-        """
         try:
-            # Fix: Wrap synchronous call in to_thread
             return await asyncio.to_thread(self.gemini_client.generate_json, prompt)
         except Exception as e:
             logger.error(f"초안 생성 실패: {e}")
@@ -187,22 +156,7 @@ class HypothesisMaker:
         
         draft_summary = f"Plan: {draft.get('hypothesis')}, Params: {draft.get('proposed_params')}"
         
-        prompt = f"""
-        Review this proposed plan against past failures.
-        
-        [Proposed Plan]
-        {draft_summary}
-        
-        [Past Failures for similar issue "{current_observation}"]
-        {failures_text}
-        
-        Task:
-        1. Does the proposed plan resemble any past failure?
-        2. Identify specific risks.
-        3. Suggest 1 concrete modification to avoid failure (Write this in Korean!).
-        
-        Be concise. Write everything in Korean.
-        """
+        prompt = prompts.get_critic_prompt(failures_text, draft_summary, current_observation)
         
         try:
             return await asyncio.to_thread(self.gpt_client.generate, prompt)
@@ -220,43 +174,9 @@ class HypothesisMaker:
         """
         Gemini (Refine): 초안 + 비판을 반영하여 최종 가설 수립
         """
-        prompt = f"""
-        Finalize the structural hypothesis.
+        prompt = prompts.get_final_refine_prompt(draft, critique)
         
-        [Draft Plan]
-        {draft.get('hypothesis')} (Reason: {draft.get('reasoning')})
-        
-        [Critic Feedback (Risk Analysis)]
-        {critique}
-        
-        [Task]
-        Refine the draft plan to address the critic's warnings. 
-        If the critic found no issues, expand on the draft.
-        Ensure you provide a complete set of proposed parameters in JSON format.
-        
-        CRITICAL: All text fields ("hypothesis", "reasoning", "prediction") MUST be in Korean.
-        
-        Respond in JSON:
-        {{
-            "hypothesis": "최종 가설 (한국어)",
-            "reasoning": "왜 이 방법이 안전하고 효과적인지 (한국어, 비평가 내용 인용)",
-            "prediction": "예상되는 결과 (한국어)",
-            "proposed_params": {{
-                "target": 60,
-                "shrink": 0.8,
-                "plates_per_voxel": 3,
-                "support_ratio": 1.2,
-                "fill": true,
-                "interlock": true,
-                "erosion_iters": 1,
-                "auto_remove_1x1": true,
-                "smart_fix": true,
-                "step_order": "bottomup"
-            }}
-        }}
-        """
         try:
-            # Fix: Wrap synchronous call in to_thread
             return await asyncio.to_thread(self.gemini_client.generate_json, prompt)
         except Exception as e:
             logger.error(f"최종 생성 실패: {e}")

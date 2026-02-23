@@ -174,24 +174,16 @@ async def regeneration_loop(
     # [ASYNC CHANGE] invoke -> ainvoke
     final_state = await app.ainvoke(initial_state, config={"recursion_limit": 100})
 
-    # [NEW] Token Usage & Cost Injection
+    # [NEW] Token Usage Injection (Cost calculation moved to router)
     if llm_client and hasattr(llm_client, "usage"):
         usage = llm_client.usage
         report = final_state.get("final_report", {})
         if "final_metrics" not in report:
             report["final_metrics"] = {}
         
-        # Inject Tokens
+        # Inject Tokens & Model Name
         report["final_metrics"]["token_usage"] = usage
-        
-        # [REFACTORED] Calculate Estimated Cost (USD)
-        from service.kids_config import calculate_token_cost, TRIPO_GEN_COST
-        
-        model_name = getattr(llm_client, "model_name", "gemini-1.5-flash")
-        gemini_cost = calculate_token_cost(model_name, usage.get("input_tokens", 0), usage.get("output_tokens", 0))
-        
-        total_cost = gemini_cost + TRIPO_GEN_COST
-        report["final_metrics"]["est_cost"] = round(total_cost, 5)
+        report["model_name"] = getattr(llm_client, "model_name", "gemini-1.5-flash")
         
         # Update state
         final_state["final_report"] = report
