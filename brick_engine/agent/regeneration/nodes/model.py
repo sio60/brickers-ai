@@ -39,18 +39,18 @@ def _select_forced_tool(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     if score >= 100:
         # 완벽한 점수는 도구 불필요
-        return {"forced_tool": None, "tools": [TuneParameters, RemoveBricks, MergeBricks], "end": False}
+        return {"forced_tool": None, "tools": [RemoveBricks, MergeBricks], "end": False}
 
     if score < 95:
         candidates = [
-            ('TuneParameters', tune_used, MAX_TOOL_USES, [TuneParameters]),
+            # ('TuneParameters', tune_used, MAX_TOOL_USES, [TuneParameters]),  # [DISABLED]
             ('MergeBricks', merge_used, MAX_TOOL_USES, [MergeBricks]),
             ('RemoveBricks', remove_used, MAX_REMOVE_FALLBACK, [RemoveBricks]),
         ]
     else:  # 95 <= score < 100
         candidates = [
             ('MergeBricks', merge_used, MAX_TOOL_USES, [MergeBricks]),
-            ('TuneParameters', tune_used, MAX_TOOL_USES, [TuneParameters]),
+            # ('TuneParameters', tune_used, MAX_TOOL_USES, [TuneParameters]),  # [DISABLED]
             ('RemoveBricks', remove_used, MAX_REMOVE_FALLBACK, [RemoveBricks]),
         ]
 
@@ -332,7 +332,7 @@ def node_model(graph, state) -> Dict[str, Any]:
         return {"messages": state['messages'], "next_action": "end"}
 
     forced_tool = selection["forced_tool"]
-    tools = selection["tools"] if forced_tool else [TuneParameters, RemoveBricks, MergeBricks]
+    tools = selection["tools"] if forced_tool else [RemoveBricks, MergeBricks]  # TuneParameters disabled
 
     # ── 3단계: 메시지 준비 ──
     messages_to_send = state['messages'][:]
