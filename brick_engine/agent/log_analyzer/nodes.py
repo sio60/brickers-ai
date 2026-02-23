@@ -44,6 +44,9 @@ from .prompts import (
     SIMPLE_SUMMARY_SYSTEM_PROMPT,
     SIMPLE_SUMMARY_USER_TEMPLATE,
     INSIGHT_SYSTEM_PROMPT,
+    get_investigation_initial_context,
+    get_investigation_round_prompt,
+    get_insight_generation_prompt,
 )
 from ..llm_clients import GeminiClient
 
@@ -189,31 +192,14 @@ async def _run_investigation(state: LogAnalysisState, system_prompt: str, node_n
 
     # ── 메시지 구성 ──
     if iteration == 0:
-        initial_context = f"""[에러 정보]
-- Type: {error_ctx.get('error_type', 'Unknown')}
-- Message: {error_ctx.get('error_message', 'Unknown')}
-- File: {error_ctx.get('primary_file', 'Unknown')}:{error_ctx.get('primary_line', '?')}
-- Function: {error_ctx.get('primary_function', 'Unknown')}
-
-[호출 스택 (사용자 코드)]
-{json.dumps(error_ctx.get('call_stack', []), indent=2, ensure_ascii=False)}
-
-[Traceback]
-{error_ctx.get('traceback_raw', '없음')}
-
-[로그 (최근)]
-{logs}
-
-위 정보를 바탕으로 도구를 사용하여 조사를 시작하세요. 에러 발생 파일부터 읽어보세요."""
+        initial_context = get_investigation_initial_context(error_ctx, logs)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=initial_context)]
     else:
         current_msgs = state.get("messages", [])
         if iteration >= DEEP_DIVE_THRESHOLD:
-            # 3라운드 이상 시 Deep Dive 유도
-            deep_dive_msg = HumanMessage(content=DEEP_DIVE_PROMPT.format(iteration=iteration+1, prev_rounds=iteration))
-            messages = current_msgs + [deep_dive_msg]
+            messages = current_msgs + [HumanMessage(content=DEEP_DIVE_PROMPT.format(iteration=iteration+1, prev_rounds=iteration))]
         else:
-            messages = current_msgs + [HumanMessage(content=f"[조사 라운드 {iteration + 1}] 이전 조사 결과를 바탕으로, 추가로 확인이 필요한 파일이나 인프라가 있으면 도구를 호출하세요. 충분하다면 도구 호출 없이 응답하세요.")]
+            messages = current_msgs + [HumanMessage(content=get_investigation_round_prompt(iteration))]
 
     # ── LLM 호출 ──
     llm = GeminiClient()
@@ -279,9 +265,9 @@ async def generate_report_node(state: LogAnalysisState):
     logger.info("--- [Node 5: generate_insight] 어드민 인사이트 생성 시작 ---")
     error_ctx = state.get("error_context", {})
     notes = state.get("investigation_notes", [])
-    logs = state.get("logs", "")[-3000:]
+    logs = state.get("logs", "")
 
-    prompt = f"[에러 정보]\n{json.dumps(error_ctx)}\n\n[조사 기록]\n{chr(10).join(notes)}\n\n[원본 로그]\n{logs}"
+    prompt = get_insight_generation_prompt(error_ctx, notes, logs)
     
     try:
         from service.nano_banana import GeminiClient
