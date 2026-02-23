@@ -54,13 +54,17 @@ def _execute_merge_bricks(
     raw_result = state.get('verification_raw_result') or {}
     issues = raw_result.get('issues', [])
 
-    # 불안정 브릭 ID 추출 (floating, isolated, unstable_base)
-    unstable_ids = list(set(
-        issue.get('brick_id')
-        for issue in issues
-        if issue.get('type', '').lower() in ['floating', 'isolated', 'unstable_base']
-        and issue.get('brick_id') is not None
-    ))
+    # [사용자 추가 반영] 불안정 브릭 ID 추출 (floating, isolated, unstable_base, top_only)
+    unstable_ids = []
+    for issue in issues:
+        itype = issue.get('type', '').lower()
+        bid = issue.get('brick_id')
+        # top_only(아래 지지 없음) 등 모든 불안정 유형 포함
+        if any(word in itype for word in ['floating', 'isolated', 'unstable', 'top_only']):
+            if bid is not None:
+                unstable_ids.append(bid)
+    
+    unstable_ids = list(set(unstable_ids))
 
     # 불안정 브릭이 없으면 파편화 분석으로 대상 선정
     if not unstable_ids:
@@ -91,6 +95,9 @@ def _execute_merge_bricks(
 
     # 구조적 병합 수행
     try:
+        # [Refinement] 먼저 같은 색상의 1x1 브릭들을 최대한 병합하여 토대를 만듭니다.
+        ldr_modifier.merge_small_bricks(ldr_path, min_merge_count=2, group_by_color=True)
+        
         logger.info(f"[Merge] 구조적 병합 시작 (Target: {len(unstable_ids)} unstable bricks)")
         struct_stats = ldr_modifier.structural_merge(ldr_path, unstable_ids)
 
@@ -121,7 +128,6 @@ def _find_fragmented_bricks(ldr_path: str) -> List[int]:
         target_parts = {"3005.dat", "3024.dat", "3004.dat", "3023.dat"}
         brick_idx = 0
         for line in lines:
-            # ldr_modifier.parse_ldr_line 사용
             p = ldr_modifier.parse_ldr_line(line)
             if p:
                 if p['part'] in target_parts:
@@ -152,10 +158,12 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
     tool_usage_count = dict(state.get('tool_usage_count', {}))
     last_tool_used = state.get('last_tool_used', None)
     consecutive_same_tool = state.get('consecutive_same_tool', 0)
+    
+    # [사용자 추가 추적 변수]
     hallucination_count = state.get('hallucination_count', 0)
     mod_attempts = state.get('modification_attempts', 0)
 
-    # 반환할 상태 업데이트 (state 직접 변경 대신 반환값으로 전달)
+    # 반환할 상태 업데이트
     updated_params = dict(state['params'])
     updated_merged = state.get('merged', False)
 
@@ -164,29 +172,31 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
         args = tool_call['args']
         tool_call_id = tool_call['id']
 
-        graph._log("TOOL", f"도구를 활용해 브릭 구조를 조정하고 있어요. ({tool_name})")
-
         # 도구별 사용 횟수 체크
         current_count = tool_usage_count.get(tool_name, 0)
         max_allowed = MAX_REMOVE_FALLBACK if tool_name == "RemoveBricks" else MAX_TOOL_USES
 
+        if tool_name not in ["TuneParameters", "RemoveBricks", "MergeBricks"]:
+            # [사용자 추가] 존재하지 않는 도구 (Hallucination)
+            hallucination_count += 1
+            logger.warning(f"⚠️ [Hallucination] 존재하지 않는 도구 호출: {tool_name} (총 {hallucination_count}회)")
+            result_content = (
+                f"❌ 알 수 없는 도구: '{tool_name}'. 사용 가능한 도구는 [TuneParameters, RemoveBricks, MergeBricks] 뿐입니다. "
+                f"존재하지 않는 도구를 생성하지 마세요. (현재 {hallucination_count}회 경고)"
+            )
+            tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))
+            continue
+
         if current_count >= max_allowed:
             logger.warning(f"⛔ {tool_name} 사용 한도 초과! ({current_count}/{max_allowed})")
             warning_msg = (
-                f"'{tool_name}'은(는) 최대 {max_allowed}회까지만 사용 가능하며, "
-                f"이미 {current_count}회 사용하여 한도에 도달했습니다. "
-                f"다른 도구를 사용하거나 현재 상태를 수락해 주세요."
+                f"'{tool_name}'은(는) 최대 {max_allowed}회까지만 사용 가능하며 이미 도달했습니다. "
+                f"다른 전략을 고려해 주세요."
             )
             tool_results.append(ToolMessage(content=warning_msg, tool_call_id=tool_call_id))
-            return {
-                "messages": tool_results,
-                "next_action": "model",
-                "tool_usage_count": tool_usage_count,
-                "last_tool_used": tool_name,
-                "consecutive_same_tool": consecutive_same_tool,
-            }
+            continue
 
-        # 연속 사용 추적 (로깅용)
+        # 연속 사용 추적
         if tool_name == last_tool_used:
             consecutive_same_tool += 1
         else:
@@ -194,6 +204,7 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
 
         tool_usage_count[tool_name] = current_count + 1
         logger.info(f"\n[Tool Execution] {tool_name} 실행... (총 {tool_usage_count[tool_name]}/{max_allowed}회)")
+        graph._log("TOOL", f"도구를 활용해 브릭 구조를 조정하고 있어요. ({tool_name})")
 
         result_content = ""
 
@@ -206,105 +217,13 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
 
         elif tool_name == "RemoveBricks":
             result_content, next_step = _execute_remove_bricks(args, state['ldr_path'])
+            mod_attempts += 1 # 수정 시도 카운트 증가
 
         elif tool_name == "MergeBricks":
             result_content, next_step, merged_flag = _execute_merge_bricks(state)
             if merged_flag:
                 updated_merged = True
-            # [전략 통합] 사용자 요청에 따라 무조건 'structural_merge' (구조적 병합) 수행
-            # 불안정 브릭(Floating, Isolated)을 식별하여 그 주변을 분해/재조립함
-            
-            raw_result = state.get('verification_raw_result') or {}
-            issues = raw_result.get('issues', [])
-            
-            # 불안정 브릭 ID 추출 (top_only 포함: 아래 지지 없음)
-            unstable_ids = []
-            for issue in issues:
-                # [BUG FIX] issue_type 케이스 불일치 방지 및 brick_id 0 누락 해결
-                itype = issue.get('type', '').lower()
-                bid = issue.get('brick_id')
-                if any(word in itype for word in ['floating', 'isolated', 'unstable', 'top_only']):
-                    if bid is not None:
-                        unstable_ids.append(bid)
-            
-            # 중복 제거
-            unstable_ids = list(set(unstable_ids))
-            
-            if not unstable_ids:
-                # [STRATEGY] 불안정 브릭은 없으나, 모델이 너무 파편화(많은 1x1/1x2)된 경우 강제 병합 수행
-                # 파편화 지표: small_brick_ratio (verifier에서 제공)
-                small_ratio = raw_result.get('small_brick_ratio', 0)
-                
-                if small_ratio > 0.05: # 5% 이상이면 파편화로 간주
-                    print(f"  [Merge] 구조적 문제는 없으나 파편화율({small_ratio:.1%})이 높아 공격적 병합(Aggressive)을 수행합니다.")
-                    
-                    # 모든 1x1 및 1x2 브릭을 분해/재병합 대상으로 선정
-                    import brick_engine.agent.ldr_modifier as mod
-                    fragmented_ids = []
-                    try:
-                        with open(state['ldr_path'], 'r', encoding='utf-8') as f:
-                            lines = f.readlines()
-                        
-                        target_parts = {"3005.dat", "3024.dat", "3004.dat", "3023.dat"}
-                        brick_idx = 0
-                        for line in lines:
-                            p = mod.parse_ldr_line(line)
-                            if p:
-                                if p['part'] in target_parts:
-                                    fragmented_ids.append(brick_idx)
-                                brick_idx += 1
-                                
-                        if fragmented_ids:
-                            unstable_ids = fragmented_ids
-                            print(f"  [Merge] 파편화 브릭 {len(unstable_ids)}개를 재결합 대상으로 선정했습니다.")
-                    except Exception as e:
-                        print(f"  ⚠️ 파편화 분석 중 오류: {e}")
-
-            if not unstable_ids:
-                # 정말로 병합할 게 아무것도 없는 경우 (Fallback)
-                print("  [Merge] 불안정 브릭 없음 -> 단순 병합(simple) Fallback")
-                merge_stats = ldr_modifier.merge_small_bricks(state['ldr_path'], min_merge_count=2) # group_by_color=True (기본값)
-                if merge_stats.get('merged', 0) > 0:
-                    result_content = f"구조적 문제는 없으나, 1x1 브릭 {merge_stats['merged']}개 그룹을 같은 색상 단위로 병합하여 정리했습니다."
-                    next_step = "verifier"
-                    state['merged'] = True
-                else:
-                    result_content = "현재 구조상 더 이상 인접한 같은 색상의 1x1 브릭을 병합할 수 없습니다. 파라미터 튜닝(TuneParameters) 등 다른 전략을 고려하세요."
-            else:
-                try:
-                    # [Refinement] 먼저 같은 색상의 1x1 브릭들을 최대한 병합하여 토대를 만듭니다.
-                    import brick_engine.agent.ldr_modifier as mod
-                    mod.merge_small_bricks(state['ldr_path'], min_merge_count=2, group_by_color=True)
-                    
-                    print(f"  [Merge] 구조적 병합 시작 (Target: {len(unstable_ids)} unstable bricks)")
-                    struct_stats = ldr_modifier.structural_merge(state['ldr_path'], unstable_ids)
-                    
-                    merged_cnt = struct_stats.get('merged', 0)
-                    split_cnt = struct_stats.get('split', 0)
-                    
-                    if merged_cnt > 0 or split_cnt > 0:
-                        result_content = f"구조적 병합 완료: 불안정 부위 {split_cnt}곳을 분해하고 {merged_cnt}개 그룹으로 재조립하여 보강했습니다."
-                        next_step = "verifier"
-                        state['merged'] = True # 병합 완료 플래그
-                    else:
-                        result_content = "구조적 병합을 시도했으나 변경된 부분이 없습니다."
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    result_content = f"구조적 병합 중 오류 발생: {e}"
-            
-            # 실제 수정 도구 실행 시 카운트 증가
-            mod_attempts += 1
-            
-        else:
-            # 존재하지 않는 도구 (Hallucination)
-            hallucination_count += 1
-            result_content = (
-                f"❌ 알 수 없는 도구: '{tool_name}'. "
-                f"사용 가능한 도구는 [RemoveBricks, MergeBricks] 뿐입니다. "
-                f"존재하지 않는 도구를 생성하지 마세요. (현재 {hallucination_count}회 경고)"
-            )
-            print(f"  ⚠️ [Hallucination] {tool_name} (총 {hallucination_count}회)")
+            mod_attempts += 1 # 수정 시도 카운트 증가
 
         logger.info(f"  결과: {result_content}")
         tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))

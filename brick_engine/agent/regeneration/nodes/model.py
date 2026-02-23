@@ -158,23 +158,30 @@ def _inject_rag_context(
 
 
 # ---------------------------------------------------------------------------
-# 헬퍼 함수: Legacy Memory 주입
+# 헬퍼 함수: Legacy Memory 및 고속 RAG 주입
 # ---------------------------------------------------------------------------
-def _inject_legacy_memory(state: Dict[str, Any], messages: List) -> None:
-    """레거시 메모리(lessons, failed_approaches)를 메시지에 주입."""
+def _inject_memory_and_rag(graph, state: Dict[str, Any], messages: List) -> None:
+    """레거시 메모리 및 고속 RAG 사례를 메시지에 주입."""
+    from ...memory_utils import memory_manager
+
+    # 1. 고속 RAG (사용자 요청: Reranking 제외하여 지연시간 단축)
     if memory_manager:
+        last_human_msg = next(
+            (m for m in reversed(messages) if isinstance(m, HumanMessage)), None
+        )
+        subject_prefix = f"[{state.get('subject_name', 'Object')}] "
+        current_observation = subject_prefix + (last_human_msg.content if last_human_msg else "")
+        
         verification_metrics = state.get("verification_result")
         
-        # Native vector search is already sorted by similarity score. 
-        # Skipping LLM reranking to save ~10s of latency.
-        raw_cases = memory_manager.search_similar_cases(
+        # Native vector search 결과 그대로 사용 (Reranking 생략)
+        similar_cases = memory_manager.search_similar_cases(
             current_observation,
-            limit=3, # limit to 3 directly
+            limit=3,
             min_score=0.4,
             verification_metrics=verification_metrics,
             subject_name=state.get("subject_name", "Object")
         )
-        similar_cases = raw_cases
 
         if similar_cases:
             memory_info = "\n**📚 유사한 과거 실험 사례 (RAG):**\n"
@@ -201,25 +208,23 @@ def _inject_legacy_memory(state: Dict[str, Any], messages: List) -> None:
                 memory_info += f"    - 교훈: {lesson}\n"
 
             memory_info += "\n위 부피와 형태적 유사성을 고려하여 최적의 파라미터를 결정하세요.\n"
-            messages_to_send.append(SystemMessage(content=memory_info))
-            print(f"  📚 RAG 검색 결과 {len(similar_cases)}건 주입됨")
+            messages.append(SystemMessage(content=memory_info))
+            logger.info(f"📚 RAG 검색 결과 {len(similar_cases)}건 주입됨")
 
-    # Legacy Memory (Fallback)
+    # 2. Legacy Memory (Fallback)
     memory = state.get('memory', {})
     lessons = memory.get('lessons', [])
     failed_approaches = memory.get('failed_approaches', [])
 
-    if not lessons and not failed_approaches:
-        return
+    if lessons or failed_approaches:
+        memory_info = "\n**📚 이전 경험 (Memory):**\n"
+        if lessons:
+            memory_info += "- 최근 교훈: " + "; ".join(lessons[-3:]) + "\n"
+        if failed_approaches:
+            memory_info += "- 피해야 할 접근법: " + "; ".join(failed_approaches[-3:]) + "\n"
 
-    memory_info = "\n**📚 이전 경험 (Memory):**\n"
-    if lessons:
-        memory_info += "- 최근 교훈: " + "; ".join(lessons[-3:]) + "\n"
-    if failed_approaches:
-        memory_info += "- 피해야 할 접근법: " + "; ".join(failed_approaches[-3:]) + "\n"
-
-    messages.append(SystemMessage(content=memory_info))
-    logger.info(f"📚 Memory 정보 {len(lessons)}개 교훈 전달됨")
+        messages.append(SystemMessage(content=memory_info))
+        logger.info(f"📚 Memory 정보 {len(lessons)}개 교훈 전달됨")
 
 
 # ---------------------------------------------------------------------------
@@ -278,18 +283,28 @@ def _handle_no_tool_response(response, state: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("🎉 모든 조건 충족. 종료합니다.")
         return {"messages": [response], "next_action": "end"}
 
+    # [사용자 추가] 무한 루프 방지: 도구 선택 재지시 횟수 제한
+    messages = state.get('messages', [])
+    retry_count = sum(1 for m in messages if "아직 완료되지 않았습니다" in str(m.content))
+    if retry_count >= 2:
+        logger.warning(f"⚠️ 무한 루프 감지({retry_count}회 경고). 도구 선택을 지속 거부하여 강제 종료합니다.")
+        return {"messages": [response], "next_action": "end"}
+
     logger.warning(
         f"⚠️ 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 도구 선택을 재지시합니다."
     )
     error_feedback = (
         f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. "
         f"반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 수정하세요. "
-        f"도구 없이 종료할 수 없습니다."
+        f"도구 없이 종료할 수 없습니다. (현재 {retry_count+1}차 경고)"
     )
     hint = HumanMessage(content=error_feedback)
     return {"messages": [response, hint], "next_action": "model"}
 
 
+# ---------------------------------------------------------------------------
+# 메인 노드 함수
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # 메인 노드 함수
 # ---------------------------------------------------------------------------
@@ -300,7 +315,18 @@ def node_model(graph, state) -> Dict[str, Any]:
     logger.info("\n[Co-Scientist] 상황 분석 중...")
     graph._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")
 
-    # ── 1단계: 점수 기반 도구 강제 선택 전략 ──
+    # ── 1단계: 루프 제어 (사용자 추가) ──
+    mod_attempts = state.get('modification_attempts', 0)
+    hal_count = state.get('hallucination_count', 0)
+
+    if mod_attempts >= 3:
+        logger.warning("🛑 [Stop] 최대 수정 시도 횟수(3회) 도달. 종료합니다.")
+        return {"next_action": "end"}
+    if hal_count >= 3:
+        logger.warning("🛑 [Stop] 환각 반복 발생(3회)으로 강제 종료합니다.")
+        return {"next_action": "end"}
+
+    # ── 2단계: 점수 기반 도구 강제 선택 전략 ──
     selection = _select_forced_tool(state)
     if selection["end"]:
         return {"messages": state['messages'], "next_action": "end"}
@@ -308,7 +334,7 @@ def node_model(graph, state) -> Dict[str, Any]:
     forced_tool = selection["forced_tool"]
     tools = selection["tools"] if forced_tool else [TuneParameters, RemoveBricks, MergeBricks]
 
-    # ── 2단계: 메시지 준비 ──
+    # ── 3단계: 메시지 준비 ──
     messages_to_send = state['messages'][:]
 
     # 강제 도구 힌트 주입
@@ -324,77 +350,28 @@ def node_model(graph, state) -> Dict[str, Any]:
         )
         messages_to_send.append(SystemMessage(content=force_hint))
 
-    # ── 3단계: 1x1 브릭 비율 분석 ──
+    # ── 4단계: 시스템 가이드 및 힌트 주입 ──
     brick_warning = _analyze_brick_ratio(state)
     if brick_warning:
         messages_to_send.append(SystemMessage(content=brick_warning))
 
-    # ── 4단계: 전략 가이드 주입 ──
     messages_to_send.append(SystemMessage(content=STRATEGY_GUIDE))
-
-    # ── 5단계: RAG 메모리 주입 ──
-    last_human_msg = next(
-        (m for m in reversed(messages_to_send) if isinstance(m, HumanMessage)), None
-    )
-    subject_prefix = f"[{state.get('subject_name', 'Object')}] "
-    current_observation = subject_prefix + (last_human_msg.content if last_human_msg else "")
-
-    _inject_rag_context(graph, state, messages_to_send, current_observation)
-
-    # ── 6단계: Legacy Memory 주입 ──
-    _inject_legacy_memory(state, messages_to_send)
-
-    # ── 7단계: 안정성 힌트 주입 ──
     _inject_stability_hint(messages_to_send)
 
-    # ── 8단계: LLM 호출 ──
+    # ── 5단계: 메모리 및 RAG 주입 ──
+    _inject_memory_and_rag(graph, state, messages_to_send)
+
+    # ── 6단계: LLM 호출 ──
     try:
         client_to_use = graph.gemini_client
-        logger.info("🤖 Active Model: Gemini-2.5-Flash (Fixed)")
-    if target_msg:
-        content = str(target_msg.content)
-        grade_match = re.search(r"안정성 등급: \S+ \((\w+)\)", content)
-        score_match = re.search(r"점수:\s*(\d+)", content)
-
-        grade = grade_match.group(1) if grade_match else "UNKNOWN"
-        score = int(score_match.group(1)) if score_match else 0
-
-    # --- [Loop Control] 시도 횟수 제한 확인 ---
-    mod_attempts = state.get('modification_attempts', 0)
-    hal_count = state.get('hallucination_count', 0)
-
-    if mod_attempts >= 3:
-        print(f"  🛑 [Stop] 최대 수정 시도 횟수(3회) 도달. 최적 결과 복원 단계로 이동합니다.")
-        return {"next_action": "end"}
-
-    if hal_count >= 3:
-        print(f"  🛑 [Stop] 존재하지 않는 도구 반복 호출(3회) 감지. 강제 종료합니다.")
-        return {"next_action": "end"}
-
-    # 힌트 주입
-    hint = build_stability_hint(grade, score)
-    if hint:
-        if score >= 90:
-            print(f"  💡 [Strategy Hint] 🌟 안정 (점수: {score}) -> 잔존물 삭제 모드")
-        elif grade == "UNSTABLE":
-            print(f"  💡 [Strategy Hint] 불안정 (점수: {score}) -> 파라미터 대폭 변경 필요")
-        elif grade == "MEDIUM":
-            print(f"  💡 [Strategy Hint] 중간 (점수: {score}) -> 파라미터 소폭 조정 필요")
-        messages_to_send.append(SystemMessage(content=hint))
-
-    # 모델 호출
-    try:
-        client_to_use = graph.gemini_client
-        # [FIX] 하드코딩된 이름 대신 실제 모델명을 표시
-        print(f"  🤖 Active Model: {client_to_use.model_name}")
+        logger.info(f"🤖 Active Model: {client_to_use.model_name}")
 
         try:
             model_with_tools = client_to_use.bind_tools(tools)
             response = model_with_tools.invoke(messages_to_send)
         except Exception as e:
             if "400" in str(e) and "thought_signature" in str(e):
-                print(f"  ⚠️ Gemini 400 (thought_signature) 에러 발생. 수동 파싱 폴백을 시도합니다.")
-                # 도구 호출을 JSON 형식으로 요청하는 시스템 메시지 추가
+                logger.warning("⚠️ Gemini 400 에러 발생. 수동 파싱 폴백을 시도합니다.")
                 fallback_prompt = (
                     "\n\n[FALLBACK] 현재 API 오류로 인해 도구 호출 기능을 직접 사용할 수 없습니다. "
                     "대신 다음 JSON 형식으로 사용할 도구를 답변의 처음에 명시해주세요.\n"
@@ -402,31 +379,22 @@ def node_model(graph, state) -> Dict[str, Any]:
                     "또는 {\"tool\": \"RemoveBricks\", \"args\": {\"brick_ids\": [\"...\"], \"reasoning\": \"...\"}}"
                 )
                 messages_to_send.append(SystemMessage(content=fallback_prompt))
-                
-                # 도구 없이 일반 텍스트로 생성 요청
                 response = client_to_use.invoke(messages_to_send)
                 
-                # 응답에서 JSON 추출 시도
                 import json
                 try:
-                    # JSON 블록(```json ... ```) 또는 중괄호 내용 추출
                     json_match = re.search(r'(\{.*?"tool".*?\})', response.content, re.DOTALL)
                     if json_match:
                         tool_data = json.loads(json_match.group(1))
-                        tool_name = tool_data.get("tool")
-                        args = tool_data.get("args", {})
-                        
-                        # AIMessage의 tool_calls 구조 모사
-                        from langchain_core.messages import ToolCall
                         response.tool_calls = [{
-                            "name": tool_name,
-                            "args": args,
+                            "name": tool_data.get("tool"),
+                            "args": tool_data.get("args", {}),
                             "id": "manual_fallback_" + str(int(time.time())),
                             "type": "tool_call"
                         }]
-                        print(f"  🛠️ 수동 도구 추출 성공: {tool_name}")
+                        logger.info(f"🛠️ 수동 도구 추출 성공: {tool_data.get('tool')}")
                 except Exception as ex:
-                    print(f"  ❌ 수동 도구 파싱 실패: {ex}")
+                    logger.error(f"❌ 수동 도구 파싱 실패: {ex}")
             else:
                 raise e
 
@@ -434,18 +402,18 @@ def node_model(graph, state) -> Dict[str, Any]:
             tc = response.tool_calls[0]
             tool_name = tc['name']
 
-            # 강제 도구가 지정되었는데 LLM이 다른 도구를 선택한 경우 → 강제 교정
+            # 강제 도구 교정
             if forced_tool and tool_name != forced_tool:
                 logger.warning(f"⚠️ LLM이 {tool_name}을 선택했으나 전략상 {forced_tool}로 교정합니다.")
                 tc['name'] = forced_tool
 
-            logger.info(f"🔨 도구 선택: {[tc['name'] for tc in response.tool_calls]}")
+            logger.info(f"🔨 도구 선택: {[t['name'] for t in response.tool_calls]}")
 
-            # SSE 로그 메시지
+            # SSE 로그
             tool_log_msgs = {
-                "RemoveBricks": "구조가 거의 완성되었습니다! 불안정한 브릭들만 핀셋으로 도려낼게요.",
-                "TuneParameters": "현재 파라미터로는 한계가 있네요. 새로운 관점에서 설계를 다시 시도해 보겠습니다.",
-                "MergeBricks": "브릭이 너무 조각나 있네요. 튼튼한 구조로 합병 작업을 진행합니다.",
+                "RemoveBricks": "불안정한 브릭들만 핀셋으로 도려낼게요.",
+                "TuneParameters": "새로운 관점에서 설계를 다시 시도해 보겠습니다.",
+                "MergeBricks": "튼튼한 구조로 합병 작업을 진행합니다.",
             }
             log_msg = tool_log_msgs.get(tc['name'], "도구를 실행합니다.")
             graph._log("MODEL", log_msg)
@@ -453,53 +421,17 @@ def node_model(graph, state) -> Dict[str, Any]:
             return {"messages": [response], "next_action": "tool"}
         else:
             return _handle_no_tool_response(response, state)
-            print(f"  💭 LLM 의견: {response.content}")
-
-            current_metrics = state.get('current_metrics', {})
-            # current_metrics가 비어있으면 아직 검증이 안 된 상태이므로 종료하면 안 됨
-            if not current_metrics:
-                print("⚠️ 검증 메트릭이 없습니다. 도구 선택을 재지시합니다.")
-                hint = HumanMessage(content="아직 검증 결과가 없습니다. 반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 최적화하세요.")
-                return {"messages": [response, hint], "next_action": "model"}
-
-            floating_count = current_metrics.get('floating_count', 0)
-            failure_ratio = current_metrics.get('failure_ratio', 0)
-
-            if floating_count == 0 and failure_ratio <= state['acceptable_failure_ratio']:
-                print("🎉 모든 조건 충족. 종료합니다.")
-                return {"messages": [response], "next_action": "end"}
-            else:
-                # [FIX] 무한 루프 방지: 도구 선택 재지시 횟수 제한
-                retry_count = sum(1 for m in messages_to_send if "아직 완료되지 않았습니다" in str(m.content))
-                if retry_count >= 2:
-                    print("⚠️ 무한 루프 감지: 도구 선택을 2회 이상 거부함. 강제 종료합니다.")
-                    return {"messages": [response], "next_action": "end"}
-
-                print(f"⚠️ 경고: 문제가 남았는데({floating_count}개 공중부양) 종료 시도함. 도구 선택을 재지시합니다.")
-                error_feedback = f"아직 완료되지 않았습니다. {floating_count}개의 공중부양 브릭이 남아있습니다. 반드시 RemoveBricks 또는 MergeBricks 도구를 사용하여 구조를 수정하세요. 도구 없이 종료할 수 없습니다. (현재 {retry_count+1}차 경고)"
-                hint = HumanMessage(content=error_feedback)
-                return {"messages": [response, hint], "next_action": "model"}
 
     except Exception as e:
         error_str = str(e)
         logger.error(f"⚠️ LLM 호출 에러: {e}")
 
-        # 연속 에러 카운트 추적
         llm_errors = state.get('verification_errors', 0) + 1
 
         if "429" in error_str:
             logger.warning("💤 API 할당량 초과. 잠시 대기 후 재시도합니다...")
             time.sleep(10)
             return {"verification_errors": llm_errors, "next_action": "model"}
-        
-        if "400" in error_str and "thought_signature" in error_str:
-            # Gemini 3.x thought_signature 호환성 에러 → 재시도 1회
-            logger.warning("🔄 thought_signature 에러 감지. 메시지를 정리하고 재시도합니다...")
-            if llm_errors < 2:
-                return {"verification_errors": llm_errors, "next_action": "model"}
-            else:
-                logger.error("❌ thought_signature 에러 반복. 종료합니다.")
-                return {"next_action": "end"}
         
         if llm_errors < 2:
             logger.warning(f"🔄 일반 에러. 재시도합니다... ({llm_errors}/2)")
