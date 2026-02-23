@@ -1,7 +1,5 @@
 # vectordb/maintenance.py
 import time
-import requests
-import zipfile
 import logging
 from datetime import datetime, timezone
 from threading import Thread
@@ -12,43 +10,10 @@ from vectordb.processor import update_all_bboxes, update_all_embeddings
 
 logger = logging.getLogger("VectorDB.Maintenance")
 
-def download_and_extract_ldraw_zip():
-    """최신 LDraw 라이브러리를 공식 사이트에서 내려받아 압축을 풉니다."""
-    url = "https://library.ldraw.org/library/updates/complete.zip"
-    base_dir = config.LDRAW_BASE_DIR
-    temp_zip = base_dir.parent / "ldraw_complete.zip"
-    
-    logger.info(f"Downloading from {url}...")
-    try:
-        r = requests.get(url, timeout=300, stream=True)
-        r.raise_for_status()
-        total_size = int(r.headers.get('content-length', 0))
-        
-        from tqdm import tqdm
-        with open(temp_zip, "wb") as f, tqdm(
-            desc="Downloading LDraw Library",
-            total=total_size,
-            unit='B',
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as bar:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    bar.update(len(chunk))
-            
-        logger.info(f"Extracting to {base_dir}...")
-        with zipfile.ZipFile(temp_zip, 'r') as z: z.extractall(base_dir.parent)
-        return True
-    except Exception as e:
-        logger.error(f"Update failed: {e}"); return False
-    finally:
-        if temp_zip.exists(): temp_zip.unlink()
-
 _sync_running = False
 
 def run_full_sync(background=False):
-    """다운로드부터 DB 인제스트, BBox/임베딩 연산까지 전체를 동기화합니다."""
+    """DB 인제스트, BBox/임베딩 연산까지 전체를 동기화합니다. (다운로드는 제외)"""
     global _sync_running
     if _sync_running:
         logger.warning("Sync is already running. Skipping...")
@@ -58,15 +23,13 @@ def run_full_sync(background=False):
         global _sync_running
         _sync_running = True
         try:
-            # zip 다운로드 부분 임시 비활성화 (이미 파일이 있다고 가정)
-            logger.info("Skipping LDraw ZIP download as requested. Using existing files...")
-            if True: # download_and_extract_ldraw_zip() 대신 True 반환으로 대체
-                ensure_indexes()
-                ingest_parts()
-                ingest_models()
-                update_all_bboxes(only_missing=True)
-                update_all_embeddings(only_missing=True)
-                logger.info("Full sync completed successfully.")
+            # Docker에서 이미 파일을 받아두므로 바로 인제스트 시작
+            ensure_indexes()
+            ingest_parts()
+            ingest_models()
+            update_all_bboxes(only_missing=True)
+            update_all_embeddings(only_missing=True)
+            logger.info("Full sync (ingestion & processing) completed successfully.")
         finally:
             _sync_running = False
 
