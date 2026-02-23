@@ -285,8 +285,20 @@ def node_reflect(state: AgentState) -> AgentState:
     # Memory Summarize: lessons가 너무 많으면 요약
     memory["lessons"] = _summarize_lessons(memory["lessons"])
 
-    # 롤백 필요 시 원본 복원
+    # 롤백 필요 시: 롤백 전 스냅샷 저장 + 원본 복원
     if should_rollback and state.get("model_backup"):
+        try:
+            from ldr_converter import model_to_ldr
+            snapshot_dir = Path(__file__).resolve().parents[2] / "snapshots"
+            snapshot_dir.mkdir(exist_ok=True)
+            iteration = state.get("iteration", 0)
+            snapshot_path = snapshot_dir / f"iter{iteration}_before_rollback.ldr"
+            ldr_text = model_to_ldr(state["model"], get_config().parts_db, skip_validation=True, skip_physics=True)
+            snapshot_path.write_text(ldr_text, encoding="utf-8")
+            print(f"  [SNAPSHOT] 롤백 전 모델 저장: {snapshot_path}")
+        except Exception as e:
+            print(f"  [SNAPSHOT] 저장 실패 (무시): {e}")
+
         print(f"  [ROLLBACK] 모델을 원본으로 복원")
         restored_model = copy.deepcopy(state["model_backup"])
         restored_state = get_model_state(restored_model, get_config().parts_db)
