@@ -13,8 +13,7 @@ logger = logging.getLogger("VectorDB.Maintenance")
 _sync_running = False
 
 def run_full_sync(background=False):
-    # 다운로드 기믹 일단 삭제
-    """DB 인제스트, BBox/임베딩 연산까지 전체를 동기화합니다. (다운로드는 제외)"""
+    """DB 인제스트, BBox/임베딩 연산까지 전체를 동기화합니다."""
     global _sync_running
     if _sync_running:
         logger.warning("Sync is already running. Skipping...")
@@ -24,7 +23,6 @@ def run_full_sync(background=False):
         global _sync_running
         _sync_running = True
         try:
-            # Docker에서 이미 파일을 받아두므로 바로 인제스트 시작
             ensure_indexes()
             ingest_parts()
             ingest_models()
