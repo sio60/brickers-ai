@@ -72,7 +72,7 @@ SKIP_SYMMETRY_TYPES = frozenset(['plant'])  # 비대칭이 자연스러운 모�
 # ============================================================================
 # LLM 설정
 # ============================================================================
-LLM_MODEL = "gpt-4o-mini"    # 기본 LLM 모델
+LLM_MODEL = "gpt-4o"         # 기본 LLM 모델
 LLM_TIMEOUT = 180.0          # LLM 호출 타임아웃 (초)
 SUMMARIZE_TIMEOUT = 60.0     # 메모리 요약 타임아웃 (초)
 LESSONS_THRESHOLD = 10       # lessons 요약 임계값
