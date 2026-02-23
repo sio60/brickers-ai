@@ -264,6 +264,7 @@ async def _job_worker():
                         corrected_url=result.get("correctedUrl", ""),
                         glb_url=result.get("modelUrl", ""),
                         ldr_url=result.get("ldrUrl", ""),
+                        initial_ldr_url=result.get("initialLdrUrl", ""), # [New]
                         bom_url=result.get("bomUrl", ""),
                         pdf_url=result.get("pdfUrl", ""),
                         parts=result.get("parts", 0),
