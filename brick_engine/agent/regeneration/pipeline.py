@@ -317,11 +317,4 @@ async def regeneration_loop(
 
     # COMPLETE SSE 제거 (kids_render.py의 complete와 중복)
 
-    # [NEW] 초기 모델 경로를 최종 리포트에 포함 (프론트엔드 비교용)
-    if final_state.get("initial_ldr_path"):
-        if "final_report" not in final_state:
-            final_state["final_report"] = {}
-        final_state["final_report"]["initial_model_path"] = final_state["initial_ldr_path"]
-        logger.info(f"[Pipeline] Initial Model Path added to report: {final_state['initial_ldr_path']}")
-
     return final_state

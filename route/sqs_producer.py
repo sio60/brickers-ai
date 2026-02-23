@@ -118,7 +118,6 @@ async def send_result_message(
                 "correctedUrl": corrected_url,
                 "glbUrl": glb_url,
                 "ldrUrl": ldr_url,
-                "initialLdrUrl": initial_ldr_url, # [New]
                 "bomUrl": bom_url,
                 "pdfUrl": pdf_url,
                 "parts": parts,
