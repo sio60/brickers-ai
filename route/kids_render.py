@@ -541,11 +541,9 @@ async def process_kids_request_internal(
                     result = {
                         "parts": parts_count,
                         "final_target": start_target,
-                        "est_cost": round(final_est_cost, 5),
-                        "token_count": running_token_count,
                         "raw_before_metrics": final_state.get("raw_before_metrics"),
                         "est_cost": final_res["est_cost"],
-                        "token_count": final_res["token_count"]
+                        "token_count": final_res["token_count"],
                     }
                     used_coscientist = True
                     _log(f"[CoScientist] 완료 | 성공={report.get('success', '?')} | 시도={report.get('total_attempts', '?')}회")
