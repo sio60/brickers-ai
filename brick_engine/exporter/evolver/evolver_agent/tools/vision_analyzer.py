@@ -18,6 +18,9 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # API 타임아웃 (초)
 API_TIMEOUT = 120.0
 
+# Vision LLM 모델 (constants.py와 동일)
+from ..constants import LLM_MODEL as VISION_MODEL
+
 
 def _extract_json(text: str, is_array: bool = False) -> Optional[Dict | List]:
     """텍스트에서 JSON 추출 (공통 헬퍼)
@@ -56,7 +59,7 @@ def _call_vision_api(content: List[Dict], max_tokens: int = 1000) -> str:
     """
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=VISION_MODEL,
             messages=[{"role": "user", "content": content}],
             max_tokens=max_tokens,
             temperature=0.0,
@@ -168,7 +171,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=1500,
         temperature=0.0
@@ -225,7 +228,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=500,
         temperature=0.0
@@ -306,7 +309,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=500,
         temperature=0.0
@@ -412,7 +415,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=1000,
         temperature=0.0
@@ -499,7 +502,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=1000,
         temperature=0.0
@@ -609,7 +612,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=800,
         temperature=0.0
@@ -677,7 +680,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=500,
         temperature=0.0
@@ -784,7 +787,7 @@ JSON으로 반환:
             })
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=VISION_MODEL,
         messages=[{"role": "user", "content": content}],
         max_tokens=800,
         temperature=0.0
