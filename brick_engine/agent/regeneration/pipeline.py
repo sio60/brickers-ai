@@ -209,13 +209,7 @@ async def regeneration_loop(
 
     final_success = bool(report.get("success", False))
     failure_ratio = float(final_metrics.get("failure_ratio", 1.0))
-    should_run_evolver = (
-        evolver_mode == "always"
-        or (
-            evolver_mode == "auto"
-            and (not final_success or failure_ratio > 0.0)
-        )
-    )
+    should_run_evolver = True
 
     if Path(output_ldr_path).exists():
         file_size = Path(output_ldr_path).stat().st_size
