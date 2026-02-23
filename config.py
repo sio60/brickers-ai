@@ -80,4 +80,9 @@ PLATE_HEIGHT_LDU = 8.0
 BRICK_HEIGHT_LDU = 24.0
 RENDER_FRAME_PAD_LDU = 10.0
 
-LDRAW_BASE_DIR = Path(r"C:\complete\ldraw")
+# ################################
+# # LDraw Library Path
+# ################################
+# # 개발 환경(Windows)이나 서버(Linux)에 맞춰 .env에서 설정 가능합니다.
+# # 기본값은 프로젝트 루트의 data/ldraw 폴더입니다.
+LDRAW_BASE_DIR = Path(os.getenv("LDRAW_BASE_DIR", str(BASE_DIR / "data" / "ldraw")))

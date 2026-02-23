@@ -118,73 +118,67 @@ def route_after_validation(state: LogAnalysisState) -> str:
 # ============================================================
 # GRAPH CONSTRUCTION
 # ============================================================
-workflow = StateGraph(LogAnalysisState)
 
-# ── Nodes 등록 ──
-workflow.add_node("fetch", fetch_logs_node)
-workflow.add_node("no_logs_report", no_logs_report_node)
-workflow.add_node("parse_error", parse_error_node)
-workflow.add_node("investigate", agent_investigate_node)
-workflow.add_node("investigate_infra", investigate_infra_node)
-workflow.add_node("simple_summary", simple_summary_node)
-workflow.add_node("generate_report", generate_report_node)
-workflow.add_node("validate_report", validate_report_node)
-workflow.add_node("alert_admin", alert_admin_node)
+def create_log_analyzer_graph():
+    """Log Analyzer 그래프를 생성하고 컴파일합니다."""
+    workflow = StateGraph(LogAnalysisState)
 
-# ── Entry Point ──
-workflow.set_entry_point("fetch")
+    # 1. 노드 등록
+    workflow.add_node("fetch", fetch_logs_node)
+    workflow.add_node("no_logs_report", no_logs_report_node)
+    workflow.add_node("parse_error", parse_error_node)
+    workflow.add_node("investigate", agent_investigate_node)
+    workflow.add_node("investigate_infra", investigate_infra_node)
+    workflow.add_node("simple_summary", simple_summary_node)
+    workflow.add_node("generate_report", generate_report_node)
+    workflow.add_node("validate_report", validate_report_node)
+    workflow.add_node("alert_admin", alert_admin_node)
 
-# ── 분기 1: 로그 확보 여부 ──
-workflow.add_conditional_edges(
-    "fetch",
-    route_after_fetch,
-    {
-        "has_logs": "parse_error",
-        "no_logs": "no_logs_report"
-    }
-)
+    # 2. 엣지 및 워크플로우 구성
+    workflow.set_entry_point("fetch")
 
-# ── 분기 2: 에러 카테고리별 조사 ──
-workflow.add_conditional_edges(
-    "parse_error",
-    route_by_category,
-    {
-        "code_bug": "investigate",
-        "infra_issue": "investigate_infra",
-        "no_error": "simple_summary"
-    }
-)
+    # [분기 1] 로그 수집 성공 여부
+    workflow.add_conditional_edges(
+        "fetch",
+        route_after_fetch,
+        {"has_logs": "parse_error", "no_logs": "no_logs_report"}
+    )
 
-# ── 분기 3: ReAct 루프 제어 (공통) ──
-workflow.add_conditional_edges(
-    "investigate",
-    should_continue,
-    {"continue": "investigate", "done": "generate_report"}
-)
-workflow.add_conditional_edges(
-    "investigate_infra",
-    should_continue,
-    {"continue": "investigate_infra", "done": "generate_report"}
-)
+    # [분기 2] 에러 성격 파싱 결과 (Infra vs Code vs No Error)
+    workflow.add_conditional_edges(
+        "parse_error",
+        route_by_category,
+        {"code_bug": "investigate", "infra_issue": "investigate_infra", "no_error": "simple_summary"}
+    )
 
-# ── 리포트 생성 및 검증 ──
-workflow.add_edge("generate_report", "validate_report")
+    # [분기 3] 조사 루프 (ReAct)
+    workflow.add_conditional_edges(
+        "investigate",
+        should_continue,
+        {"continue": "investigate", "done": "generate_report"}
+    )
+    workflow.add_conditional_edges(
+        "investigate_infra",
+        should_continue,
+        {"continue": "investigate_infra", "done": "generate_report"}
+    )
 
-# ── 분기 4-5: 검증 재시도 및 심각도 알림 ──
-workflow.add_conditional_edges(
-    "validate_report",
-    route_after_validation,
-    {
-        "retry": "generate_report",
-        "critical": "alert_admin",
-        "normal": END
-    }
-)
+    # 리포트 생성 섹션
+    workflow.add_edge("generate_report", "validate_report")
 
-# ── 단방향 엣지 ──
-workflow.add_edge("no_logs_report", END)
-workflow.add_edge("simple_summary", END)
-workflow.add_edge("alert_admin", END)
+    # [분기 4-5] 리포트 검증 및 심각도 전파
+    workflow.add_conditional_edges(
+        "validate_report",
+        route_after_validation,
+        {"retry": "generate_report", "critical": "alert_admin", "normal": END}
+    )
 
-# ── Compile ──
-app = workflow.compile()
+    # 종료 노드들
+    workflow.add_edge("no_logs_report", END)
+    workflow.add_edge("simple_summary", END)
+    workflow.add_edge("alert_admin", END)
+
+    return workflow.compile()
+
+# 메인 앱 익스포트
+app = create_log_analyzer_graph()
