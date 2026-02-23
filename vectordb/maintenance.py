@@ -58,7 +58,9 @@ def run_full_sync(background=False):
         global _sync_running
         _sync_running = True
         try:
-            if download_and_extract_ldraw_zip():
+            # zip 다운로드 부분 임시 비활성화 (이미 파일이 있다고 가정)
+            logger.info("Skipping LDraw ZIP download as requested. Using existing files...")
+            if True: # download_and_extract_ldraw_zip() 대신 True 반환으로 대체
                 ensure_indexes()
                 ingest_parts()
                 ingest_models()
