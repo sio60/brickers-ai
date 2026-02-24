@@ -2,6 +2,7 @@
 """조립설명서 PDF 생성 (fpdf2)"""
 from __future__ import annotations
 
+import logging
 import os
 from io import BytesIO
 from datetime import datetime
@@ -9,6 +10,8 @@ from typing import Dict, List, Optional
 
 from fpdf import FPDF
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 from service.ldr_parser import PartInfo, StepBOM
 from service.parts_catalog import get_color_name, get_part_size
@@ -40,7 +43,7 @@ class InstructionsPDF(FPDF):
                 self.add_font("Malgun", "B", font_bold_path, uni=True)
             self.korean_font = "Malgun"
         else:
-            print("[PDF] Warning: No Korean font found. Using Helvetica.")
+            logger.warning("No Korean font found. Using Helvetica.")
             self.korean_font = "Helvetica"
 
     def header(self):
@@ -94,8 +97,10 @@ def _draw_bom_row(
         try:
             img_io = BytesIO(thumb_data)
             pdf.image(img_io, x=x_start + 1, y=y_before + 1, w=_COL_IMG - 2, h=_ROW_H - 2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Thumb embed error: %s | %s", thumb_key, e)
+    else:
+        logger.debug("Thumb missing: %s (available keys: %s...)", thumb_key, list(thumbs.keys())[:5])
 
     pdf.cell(_COL_IMG, _ROW_H, "", border=1, fill=True)
     pdf.cell(_COL_SIZE, _ROW_H, get_part_size(part.id), border=1, fill=True, align="C")
@@ -136,7 +141,7 @@ def generate_pdf_with_images_and_bom(
             page_w = pdf.w - pdf.l_margin - pdf.r_margin
             pdf.image(img_io, x=pdf.l_margin + 20, w=page_w - 40)
         except Exception as e:
-            print(f"[PDF] Cover image error: {e}")
+            logger.error("Cover image error: %s", e)
 
     # ── 각 Step 페이지 ────────────────────────────────
     for step_idx, images in enumerate(step_images):
@@ -157,7 +162,7 @@ def generate_pdf_with_images_and_bom(
                 page_w = pdf.w - pdf.l_margin - pdf.r_margin
                 pdf.image(img_io, x=pdf.l_margin, w=page_w, h=90)
             except Exception as e:
-                print(f"[PDF] Step {step_no} main image error: {e}")
+                logger.error("Step %s main image error: %s", step_no, e)
 
         pdf.ln(95)
 
@@ -173,7 +178,7 @@ def generate_pdf_with_images_and_bom(
                         x_pos = pdf.l_margin + (i * (sub_w + 5))
                         pdf.image(img_io, x=x_pos, y=start_y, w=sub_w, h=55)
                     except Exception as e:
-                        print(f"[PDF] Step {step_no} sub image {i + 2} error: {e}")
+                        logger.error("Step %s sub image %s error: %s", step_no, i + 2, e)
 
             pdf.ln(60)
 

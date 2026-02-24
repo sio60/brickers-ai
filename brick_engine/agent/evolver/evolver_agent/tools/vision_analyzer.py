@@ -4,6 +4,7 @@
 - _extract_json(): 공통 JSON 파싱 헬퍼
 - _call_vision_api(): 공통 API 호출 헬퍼
 """
+import logging
 import os
 import json
 from typing import Dict, Any, List, Optional
@@ -12,6 +13,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
+
+logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -43,7 +46,7 @@ def _extract_json(text: str, is_array: bool = False) -> Optional[Dict | List]:
         if start >= 0 and end > start:
             return json.loads(text[start:end])
     except json.JSONDecodeError as e:
-        print(f"  [WARNING] JSON 파싱 실패: {e}")
+        logger.warning("  [WARNING] JSON 파싱 실패: %s", e)
     return None
 
 
@@ -67,7 +70,7 @@ def _call_vision_api(content: List[Dict], max_tokens: int = 1000) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"  [WARNING] Vision API 호출 실패: {e}")
+        logger.warning("  [WARNING] Vision API 호출 실패: %s", e)
         return ""
 
 

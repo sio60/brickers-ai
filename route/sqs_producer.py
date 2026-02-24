@@ -3,16 +3,18 @@ SQS Producer - AI Server에서 Backend로 RESULT 메시지 전송
 """
 from __future__ import annotations
 
+import logging
 import os
 import json
 from datetime import datetime
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 
 def log(msg: str) -> None:
-    """타임스탬프 포함 로그 출력"""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] {msg}")
+    """로그 출력"""
+    logger.info("%s", msg)
 
 
 def _is_truthy(v: str) -> bool:

@@ -2,7 +2,10 @@
 # Strategy 노드: 난이도에 따른 LLM 모델 선택
 # ============================================================================
 
+import logging
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 
 def node_strategy(graph, state) -> Dict[str, Any]:
@@ -21,7 +24,7 @@ def node_strategy(graph, state) -> Dict[str, Any]:
     else:
         reason = "일반 난이도"
 
-    print(f"\n[Strategy] 전략 결정: {model_selection} ({reason})")
+    logger.info("[Strategy] 전략 결정: %s (%s)", model_selection, reason)
 
     return {
         "llm_config": {"model": model_selection},

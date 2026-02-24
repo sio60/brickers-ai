@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from service.render_client import RENDER_ENABLED, render_custom_angles
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/render", tags=["render"])
 
@@ -46,7 +49,7 @@ async def render_multi_angle(req: MultiAngleRequest):
         if upper in ANGLE_MAP:
             angles_to_render[upper] = ANGLE_MAP[upper]
         else:
-            print(f"  [Render] Unknown angle '{name}', skipping")
+            logger.warning("Unknown angle '%s', skipping", name)
 
     if not angles_to_render:
         raise HTTPException(400, "No valid angles provided")

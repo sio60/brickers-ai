@@ -1,10 +1,13 @@
 # screenshot-server/service/background_composer.py
+import logging
 import os
 import io
 import asyncio
 import base64
 import httpx
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 # Google GenAI
 import google.genai as genai
@@ -72,7 +75,7 @@ def _generate_background_sync(subject: str) -> bytes:
             if resp.candidates:
                 break
         except Exception as e:
-            print(f"[Gemini] Attempt {attempt+1}/{max_retries} failed: {e}")
+            logger.warning("[Gemini] Attempt %s/%s failed: %s", attempt+1, max_retries, e)
             last_error = e
             import time
             time.sleep(1)

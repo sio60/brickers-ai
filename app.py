@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from datetime import datetime
 
@@ -15,6 +16,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import config
+
+# ============================================================================
+# 중앙 logging 설정
+# ============================================================================
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="[%(asctime)s] [%(name)s] %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# uvicorn 로거 레벨 동기화 (충돌 방지)
+for _uv_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    logging.getLogger(_uv_name).setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+logger = logging.getLogger(__name__)
 from route import kids_render
 from route.sqs_consumer import start_consumer
 from route import color_variant
@@ -35,9 +51,9 @@ app = FastAPI(title="Brickers AI API", version="0.2.0")
 # ✅ [DEBUG] 모든 요청을 강제로 찍어보는 미들웨어 (강력한 버전)
 @app.middleware("http")
 async def debug_middleware(request, call_next):
-    print(f"\n>>>> [DEBUG_IN] {request.method} {request.url.path} <<<<", flush=True)
+    logger.debug(">>> [IN] %s %s", request.method, request.url.path)
     response = await call_next(request)
-    print(f">>>> [DEBUG_OUT] {response.status_code} for {request.url.path} <<<<\n", flush=True)
+    logger.debug(">>> [OUT] %s for %s", response.status_code, request.url.path)
     return response
 
 # ============================================================================
@@ -106,9 +122,9 @@ def final_debug_no_prefix():
 @app.on_event("startup")
 async def startup():
     """서버 시작 시 초기화"""
-    print("=" * 70, flush=True)
-    print("[FastAPI] Application Startup", flush=True)
-    print("=" * 70, flush=True)
+    logger.info("=" * 70)
+    logger.info("Application Startup")
+    logger.info("=" * 70)
 
     # --- OpenAI/Gemini HTTP 클라이언트 초기화 ---
     openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -118,11 +134,11 @@ async def startup():
     base_url = "https://api.openai.com/v1/" if openai_key else "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     if not api_key:
-        print("[Warn] OPENAI_API_KEY/GEMINI_API_KEY 둘 다 없음. 챗봇 기능 비활성화.", flush=True)
+        logger.warning("OPENAI_API_KEY/GEMINI_API_KEY 둘 다 없음. 챗봇 기능 비활성화.")
         app.state.openai_http = None
         app.state.chat_service = None
     else:
-        print(f"[Startup] Using API at {base_url}", flush=True)
+        logger.info("Using API at %s", base_url)
         app.state.openai_http = httpx.AsyncClient(
             base_url=base_url,
             headers={
@@ -141,33 +157,33 @@ async def startup():
         # --- [NEW] Analytics Agent Service 초기화 ---
         from service.analytics_agent_service import AnalyticsAgentService
         app.state.analytics_agent = AnalyticsAgentService(http_client=app.state.openai_http)
-        print("[FastAPI] ✅ Analytics Agent Service Enabled", flush=True)
+        logger.info("✅ Analytics Agent Service Enabled")
 
         # --- [NEW] Admin Analyst LangGraph Agent LLM 주입 ---
         from admin_analyst import set_llm_client
         set_llm_client(app.state.openai_http)
-        print("[FastAPI] ✅ Admin Analyst LangGraph Agent Enabled", flush=True)
+        logger.info("✅ Admin Analyst LangGraph Agent Enabled")
 
     # --- [NEW] Global log capture ---
     try:
         from service.log_context import GlobalLogCapture
         glc = GlobalLogCapture() # 싱글톤이라 한번만 실행됨
         glc.start_flusher() # Start Start Smart Batching Flusher
-        print("[FastAPI] ✅ Global Logging Enabled", flush=True)
+        logger.info("✅ Global Logging Enabled")
     except ImportError as e:
-        print(f"⚠️ [Warn] GlobalLogCapture failed: {e}", flush=True)
+        logger.warning("⚠️ GlobalLogCapture failed: %s", e)
 
     # --- SQS Consumer 백그라운드 태스크 시작 ---
     asyncio.create_task(start_consumer())
-    print("[FastAPI] ✅ SQS Consumer 백그라운드 태스크 시작", flush=True)
+    logger.info("✅ SQS Consumer 백그라운드 태스크 시작")
 
     # --- 라우트 디버깅 (등록된 모든 API 주소 출력) ---
-    print("\n[Debug] Registered Routes:", flush=True)
+    logger.debug("Registered Routes:")
     for route in app.routes:
         if hasattr(route, "path"):
             methods = getattr(route, "methods", {"?"})
-            print(f"  - {methods} {route.path}", flush=True)
-    print("=" * 70, flush=True)
+            logger.debug("  - %s %s", methods, route.path)
+    logger.info("=" * 70)
 
 
 @app.on_event("shutdown")

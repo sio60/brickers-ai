@@ -6,8 +6,12 @@
 # 유틸리티 함수들을 제공합니다.
 # ============================================================================
 
+import logging
+
 from pymongo import MongoClient
 import config
+
+logger = logging.getLogger(__name__)
 
 _client = None
 
@@ -16,7 +20,7 @@ def get_client() -> MongoClient:
     if _client is None:
         if not config.MONGODB_URI:
             # DB가 없으면 에러 대신 None 반환 (챗봇 등 다른 기능은 살리기 위함)
-            print("⚠️ [Warn] MONGODB_URI is missing. DB features will be disabled.")
+            logger.warning("⚠️ [Warn] MONGODB_URI is missing. DB features will be disabled.")
             return None
         # DB가 다운되었거나 연결할 수 없는 경우 빠르게 실패하도록 짧은 타임아웃 설정
         _client = MongoClient(config.MONGODB_URI, serverSelectionTimeoutMS=2000)

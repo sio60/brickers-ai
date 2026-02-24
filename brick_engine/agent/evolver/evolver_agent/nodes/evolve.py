@@ -24,6 +24,9 @@ from ..tools import (
 from ..constants import MAX_REMOVAL_RATIO
 from ..config import get_config
 
+import logging
+logger = logging.getLogger(__name__)
+
 # Vision 분석용 5방향 (앞뒤좌우+아래)
 VISION_ANGLES = ["FRONT", "BACK", "LEFT", "RIGHT", "BOTTOM"]
 
@@ -46,7 +49,7 @@ def _get_vision_modules():
             _vision_modules["plan_rebuild"] = plan_rebuild
             _vision_modules["render_model_multi_angle"] = render_model_multi_angle
         except ImportError as e:
-            print(f"  [WARNING] Vision 모듈 로드 실패: {e}")
+            logger.warning("  [WARNING] Vision 모듈 로드 실패: %s", e)
     return _vision_modules
 
 
@@ -82,18 +85,18 @@ def handle_remove(state: AgentState, proposal: Dict, action: Dict, before_floati
             part_info = parts_db.get(brick.part_id.lower(), {})
             part_name = part_info.get("name", brick.part_id)
             pos = f"({int(brick.position.x)}, {int(brick.position.y)}, {int(brick.position.z)})"
-            print(f"  삭제됨: [{part_name}] {pos}")
+            logger.info("  삭제됨: [%s] %s", part_name, pos)
         else:
-            print(f"  삭제됨: {brick_id}")
+            logger.info("  삭제됨: %s", brick_id)
         return True
-    print(f"  실패: {result.get('error', 'unknown')}")
+    logger.info("  실패: %s", result.get('error', 'unknown'))
     return False
 
 
 def handle_add_support_candidates(state: AgentState, proposal: Dict, action: Dict, before_floating: int) -> bool:
     """지지대 추가 핸들러 (후보 목록)"""
     candidates = proposal["candidates"]
-    print(f"  {len(candidates)}개 후보 위치 시도...")
+    logger.info("  %s개 후보 위치 시도...", len(candidates))
 
     for i, candidate in enumerate(candidates):
         model_backup = copy.deepcopy(state["model"])
@@ -101,20 +104,20 @@ def handle_add_support_candidates(state: AgentState, proposal: Dict, action: Dic
 
         if result["success"]:
             new_floating = result["floating_count"]
-            print(f"    후보 {i+1}: floating {before_floating} -> {new_floating}")
+            logger.info("    후보 %s: floating %s -> %s", i+1, before_floating, new_floating)
 
             if new_floating < before_floating:
-                print(f"    [OK] 개선됨!")
+                logger.info("    [OK] 개선됨!")
                 action["brick_id"] = result["brick_id"]
                 action["position"] = candidate
                 return True
             else:
-                print(f"    [X] 개선 없음, 롤백")
+                logger.info("    [X] 개선 없음, 롤백")
                 state["model"] = model_backup
         else:
-            print(f"    후보 {i+1}: 추가 실패")
+            logger.info("    후보 %s: 추가 실패", i+1)
 
-    print(f"  모든 후보 실패")
+    logger.info("  모든 후보 실패")
     return False
 
 
@@ -133,7 +136,7 @@ def handle_add_support_single(state: AgentState, proposal: Dict, action: Dict, b
     )
     if result["success"]:
         action["brick_id"] = result["brick_id"]
-        print(f"  추가됨: {result['brick_id']} at ({pos['x']}, {pos['y']}, {pos['z']})")
+        logger.info("  추가됨: %s at (%s, %s, %s)", result['brick_id'], pos['x'], pos['y'], pos['z'])
         return True
     return False
 
@@ -141,7 +144,7 @@ def handle_add_support_single(state: AgentState, proposal: Dict, action: Dict, b
 def handle_bridge(state: AgentState, proposal: Dict, action: Dict, before_floating: int) -> bool:
     """연결 브릭 핸들러"""
     candidates = proposal.get("candidates", [])
-    print(f"  연결 브릭 시도: {len(candidates)}개 후보...")
+    logger.info("  연결 브릭 시도: %s개 후보...", len(candidates))
 
     for i, candidate in enumerate(candidates):
         model_backup = copy.deepcopy(state["model"])
@@ -149,20 +152,20 @@ def handle_bridge(state: AgentState, proposal: Dict, action: Dict, before_floati
 
         if result["success"]:
             new_floating = result["floating_count"]
-            print(f"    후보 {i+1}: floating {before_floating} -> {new_floating}")
+            logger.info("    후보 %s: floating %s -> %s", i+1, before_floating, new_floating)
 
             if new_floating < before_floating:
-                print(f"    [OK] 연결 성공!")
+                logger.info("    [OK] 연결 성공!")
                 action["brick_id"] = result["brick_id"]
                 action["position"] = candidate
                 return True
             else:
-                print(f"    [X] 개선 없음, 롤백")
+                logger.info("    [X] 개선 없음, 롤백")
                 state["model"] = model_backup
         else:
-            print(f"    후보 {i+1}: 추가 실패")
+            logger.info("    후보 %s: 추가 실패", i+1)
 
-    print(f"  모든 후보 실패")
+    logger.info("  모든 후보 실패")
     return False
 
 
@@ -171,14 +174,14 @@ def handle_rollback(state: AgentState, proposal: Dict, action: Dict, before_floa
     state["model"] = rollback_model(state["model_backup"])
     state["total_removed"] = 0
     state["action_history"] = []
-    print(f"  원본으로 복원: {state['original_brick_count']}개 브릭")
+    logger.info("  원본으로 복원: %s개 브릭", state['original_brick_count'])
     return True
 
 
 def handle_relocate(state: AgentState, proposal: Dict, action: Dict, before_floating: int) -> bool:
     """위치 이동 핸들러"""
     problem = proposal.get("problem", {})
-    print(f"  위치 이동: {problem.get('location')} - {problem.get('issue')}")
+    logger.info("  위치 이동: %s - %s", problem.get('location'), problem.get('issue'))
 
     modules = _get_vision_modules()
     if not modules:
@@ -190,14 +193,14 @@ def handle_relocate(state: AgentState, proposal: Dict, action: Dict, before_floa
 
     images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)
     if not images:
-        print(f"    이미지 렌더링 실패")
+        logger.info("    이미지 렌더링 실패")
         return False
 
     brick_list = _get_brick_list(state["model"])
     mapping = map_to_coordinates(images, {"problem_location": problem.get("location")}, brick_list)
 
     if not mapping.get("target_brick_ids") or mapping.get("confidence", 0) <= 50:
-        print(f"    신뢰도 낮음 ({mapping.get('confidence', 0)}), 스킵")
+        logger.info("    신뢰도 낮음 (%s), 스킵", mapping.get('confidence', 0))
         return False
 
     parts_db = get_config().parts_db
@@ -248,19 +251,19 @@ def handle_relocate(state: AgentState, proposal: Dict, action: Dict, before_floa
                 part_info = parts_db.get(brick.part_id.lower(), {})
                 part_name = part_info.get("name", brick.part_id)
                 if dx != 0 or dz != 0:
-                    print(f"    이동됨 [{part_name}] ({int(old_x)}, {int(old_y)}, {int(old_z)}) -> ({int(try_x)}, {int(new_y)}, {int(try_z)}) (nudge)")
+                    logger.info("    이동됨 [%s] (%s, %s, %s) -> (%s, %s, %s) (nudge)", part_name, int(old_x), int(old_y), int(old_z), int(try_x), int(new_y), int(try_z))
                 else:
-                    print(f"    이동됨 [{part_name}] ({int(old_x)}, {int(old_y)}, {int(old_z)}) -> ({int(try_x)}, {int(new_y)}, {int(try_z)})")
+                    logger.info("    이동됨 [%s] (%s, %s, %s) -> (%s, %s, %s)", part_name, int(old_x), int(old_y), int(old_z), int(try_x), int(new_y), int(try_z))
                 placed = True
                 break
 
         if not placed:
             part_info = parts_db.get(brick.part_id.lower(), {})
             part_name = part_info.get("name", brick.part_id)
-            print(f"    스킵 [{part_name}]: 주변에도 배치 불가")
+            logger.info("    스킵 [%s]: 주변에도 배치 불가", part_name)
 
     if moved_count > 0:
-        print(f"    {moved_count}개 브릭 이동 완료")
+        logger.info("    %s개 브릭 이동 완료", moved_count)
         return True
     return False
 
@@ -297,7 +300,7 @@ def _apply_y_rotation(brick, degrees: int):
 def handle_rotate(state: AgentState, proposal: Dict, action: Dict, before_floating: int) -> bool:
     """방향 회전 핸들러 (실제 회전 구현)"""
     problem = proposal.get("problem", {})
-    print(f"  방향 회전: {problem.get('location')} - {problem.get('issue')}")
+    logger.info("  방향 회전: %s - %s", problem.get('location'), problem.get('issue'))
 
     modules = _get_vision_modules()
     if not modules:
@@ -309,14 +312,14 @@ def handle_rotate(state: AgentState, proposal: Dict, action: Dict, before_floati
 
     images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)
     if not images:
-        print(f"    이미지 렌더링 실패")
+        logger.info("    이미지 렌더링 실패")
         return False
 
     brick_list = _get_brick_list(state["model"])
     mapping = map_to_coordinates(images, {"problem_location": problem.get("location"), "action": "rotate"}, brick_list)
 
     if not mapping.get("target_brick_ids") or mapping.get("confidence", 0) <= 50:
-        print(f"    신뢰도 낮음 ({mapping.get('confidence', 0)}), 스킵")
+        logger.info("    신뢰도 낮음 (%s), 스킵", mapping.get('confidence', 0))
         return False
 
     parts_db = get_config().parts_db
@@ -348,14 +351,14 @@ def handle_rotate(state: AgentState, proposal: Dict, action: Dict, before_floati
             part_info = parts_db.get(brick.part_id.lower(), {})
             part_name = part_info.get("name", brick.part_id)
             pos = f"({int(brick.position.x)}, {int(brick.position.y)}, {int(brick.position.z)})"
-            print(f"    회전 [{part_name}] {pos}: {old_rotation}° → {new_rotation}°")
+            logger.info("    회전 [%s] %s: %s° → %s°", part_name, pos, old_rotation, new_rotation)
 
     if rotated_count > 0:
         action["rotations"] = rotations_applied
-        print(f"    {rotated_count}개 브릭 회전 완료")
+        logger.info("    %s개 브릭 회전 완료", rotated_count)
         return True
 
-    print(f"    회전할 브릭 없음")
+    logger.info("    회전할 브릭 없음")
     return False
 
 
@@ -410,7 +413,7 @@ def _calculate_mirror_positions(reference_bricks: List[Dict], relationship: str,
             pos_key = (try_x, snap_y, try_z)
             if pos_key not in occupied:
                 if dx != 0 or dz != 0:
-                    print(f"      ({snap_x}, {snap_y}, {snap_z}) 충돌 → ({try_x}, {snap_y}, {try_z})로 이동")
+                    logger.info("      (%s, %s, %s) 충돌 → (%s, %s, %s)로 이동", snap_x, snap_y, snap_z, try_x, snap_y, try_z)
                 new_positions.append({
                     "part_id": ref.get("part_id", "3005"),
                     "x": try_x,
@@ -422,7 +425,7 @@ def _calculate_mirror_positions(reference_bricks: List[Dict], relationship: str,
                 break
 
         if not placed:
-            print(f"      스킵 ({snap_x}, {snap_y}, {snap_z}): 주변에도 빈 자리 없음")
+            logger.info("      스킵 (%s, %s, %s): 주변에도 빈 자리 없음", snap_x, snap_y, snap_z)
 
     return new_positions
 
@@ -430,7 +433,7 @@ def _calculate_mirror_positions(reference_bricks: List[Dict], relationship: str,
 def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_floating: int) -> bool:
     """재배치 핸들러 - LLM은 브릭 ID만 찾고, 좌표 계산은 알고리즘이 함"""
     problem = proposal.get("problem", {})
-    print(f"  재배치: {problem.get('location')} - {problem.get('issue')}")
+    logger.info("  재배치: %s - %s", problem.get('location'), problem.get('issue'))
 
     modules = _get_vision_modules()
     if not modules:
@@ -443,7 +446,7 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
 
     images = render_model_multi_angle(state["model"], get_config().parts_db, angles=VISION_ANGLES)
     if not images:
-        print(f"    이미지 렌더링 실패")
+        logger.info("    이미지 렌더링 실패")
         return False
 
     model_name = getattr(state["model"], "name", "unknown")
@@ -451,7 +454,7 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
     # 참조 부분 찾기 (LLM)
     ref = find_reference_part(images, problem.get("location"), model_name)
     if ref.get("confidence", 0) <= 50:
-        print(f"    적합한 참조 부분 없음")
+        logger.info("    적합한 참조 부분 없음")
         return False
 
     # 브릭 ID만 찾기 (LLM) - 좌표 계산 X
@@ -460,7 +463,7 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
                        ref.get("relationship", "mirror_x"), brick_list)
 
     if plan.get("error"):
-        print(f"    계획 생성 실패: {plan.get('error')}")
+        logger.info("    계획 생성 실패: %s", plan.get('error'))
         return False
 
     # 삭제할 브릭 처리
@@ -476,9 +479,9 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
                 part_info = parts_db.get(brick.part_id.lower(), {})
                 part_name = part_info.get("name", brick.part_id)
                 pos = f"({int(brick.position.x)}, {int(brick.position.y)}, {int(brick.position.z)})"
-                print(f"    삭제: [{part_name}] {pos}")
+                logger.info("    삭제: [%s] %s", part_name, pos)
             else:
-                print(f"    삭제: {brick_id}")
+                logger.info("    삭제: %s", brick_id)
 
     # 참조 브릭 정보 가져오기 (알고리즘)
     reference_brick_ids = plan.get("reference_brick_ids", [])
@@ -489,10 +492,10 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
             reference_bricks.append(brick_dict[ref_id])
 
     if not reference_bricks:
-        print(f"    참조 브릭을 찾을 수 없음")
+        logger.info("    참조 브릭을 찾을 수 없음")
         return len(deleted_backups) > 0  # 삭제만 했어도 변경은 됨
 
-    print(f"    참조 브릭 {len(reference_bricks)}개 발견")
+    logger.info("    참조 브릭 %s개 발견", len(reference_bricks))
 
     # 점유 맵 생성 (bbox 기반 - 회전/크기 반영)
     occupied = _build_occupancy_set(state["model"], parts_db)
@@ -501,7 +504,7 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
     relationship = plan.get("relationship", "mirror_x")
     new_positions = _calculate_mirror_positions(reference_bricks, relationship, occupied)
 
-    print(f"    새 위치 {len(new_positions)}개 계산됨 (relationship: {relationship})")
+    logger.info("    새 위치 %s개 계산됨 (relationship: %s)", len(new_positions), relationship)
 
     # 브릭 추가 (알고리즘)
     added_ids = []
@@ -532,18 +535,18 @@ def handle_rebuild(state: AgentState, proposal: Dict, action: Dict, before_float
                 part_info = parts_db.get(pos["part_id"].lower(), {})
                 part_name = part_info.get("name", pos["part_id"])
                 if dx != 0 or dz != 0:
-                    print(f"    추가: [{part_name}] ({pos['x']}, {pos['y']}, {pos['z']}) → nudge ({try_x}, {pos['y']}, {try_z})")
+                    logger.info("    추가: [%s] (%s, %s, %s) → nudge (%s, %s, %s)", part_name, pos['x'], pos['y'], pos['z'], try_x, pos['y'], try_z)
                 else:
-                    print(f"    추가: [{part_name}] ({try_x}, {pos['y']}, {try_z})")
+                    logger.info("    추가: [%s] (%s, %s, %s)", part_name, try_x, pos['y'], try_z)
                 placed = True
                 break
 
         if not placed:
-            print(f"      최종 스킵 ({pos['x']}, {pos['y']}, {pos['z']}): 주변에도 배치 불가")
+            logger.info("      최종 스킵 (%s, %s, %s): 주변에도 배치 불가", pos['x'], pos['y'], pos['z'])
 
     action["deleted_backups"] = deleted_backups
     action["added_ids"] = added_ids
-    print(f"    재배치 완료: 삭제 {len(deleted_backups)}개, 추가 {len(added_ids)}개")
+    logger.info("    재배치 완료: 삭제 %s개, 추가 %s개", len(deleted_backups), len(added_ids))
     return len(deleted_backups) > 0 or len(added_ids) > 0
 
 
@@ -571,7 +574,7 @@ def _filter_symmetry_by_vision(symmetry_issues: List[Dict], vision_problems: Lis
         if "leg" in loc:
             locations.add("leg")
 
-    print(f"    Vision 위치 키워드: {locations}")
+    logger.info("    Vision 위치 키워드: %s", locations)
 
     if not locations:
         return symmetry_issues[:5]
@@ -614,13 +617,13 @@ def handle_symmetry_fix(state: AgentState, proposal: Dict, action: Dict, before_
     vision_problems = state.get("vision_problems", [])
 
     if not symmetry_issues:
-        print(f"  대칭 문제 없음")
+        logger.info("  대칭 문제 없음")
         return False
 
     # Vision 문제 기반 필터링
     filtered_issues = _filter_symmetry_by_vision(symmetry_issues, vision_problems)
 
-    print(f"  대칭 수정: {len(filtered_issues)}/{len(symmetry_issues)}개 처리")
+    logger.info("  대칭 수정: %s/%s개 처리", len(filtered_issues), len(symmetry_issues))
     result = fix_symmetry(state["model"], get_config().parts_db, filtered_issues, delete_extras=True)
 
     deleted = result.get("deleted", 0)
@@ -629,10 +632,10 @@ def handle_symmetry_fix(state: AgentState, proposal: Dict, action: Dict, before_
     if deleted > 0 or added > 0:
         action["deleted"] = deleted
         action["added"] = added
-        print(f"  결과: 삭제 {deleted}개, 추가 {added}개")
+        logger.info("  결과: 삭제 %s개, 추가 %s개", deleted, added)
         return True
 
-    print(f"  대칭: 변경 없음")
+    logger.info("  대칭: 변경 없음")
     return False
 
 
@@ -662,10 +665,10 @@ def node_evolve(state: AgentState) -> AgentState:
     # TODO: 스터드 연결 판정 정확도 개선 후 재활성화
 
     if not strategy and not proposals:
-        print("\n[EVOLVE] 실행할 전략/제안 없음")
+        logger.info("[EVOLVE] 실행할 전략/제안 없음")
         return state
 
-    print(f"\n[EVOLVE] 전략: {strategy}")
+    logger.info("[EVOLVE] 전략: %s", strategy)
 
     before_floating = state["floating_count"]
     strategy_lower = strategy.lower()
@@ -685,7 +688,7 @@ def node_evolve(state: AgentState) -> AgentState:
         elif proposal.get("position"):
             action["success"] = handle_add_support_single(state, proposal, action, before_floating)
         else:
-            print(f"    add_support: candidates/position 없음")
+            logger.info("    add_support: candidates/position 없음")
     else:
         # Dispatch 테이블에서 핸들러 찾기
         handler = HANDLERS.get(strategy_lower)
@@ -693,11 +696,11 @@ def node_evolve(state: AgentState) -> AgentState:
             try:
                 action["success"] = handler(state, proposal, action, before_floating)
             except Exception as e:
-                print(f"    [ERROR] {strategy} 핸들러 예외: {e}")
+                logger.error("    [ERROR] %s 핸들러 예외: %s", strategy, e)
                 action["error"] = str(e)
                 action["success"] = False
         else:
-            print(f"    [WARNING] 알 수 없는 전략: {strategy}")
+            logger.warning("    [WARNING] 알 수 없는 전략: %s", strategy)
 
     state["action_history"].append(action)
 
@@ -705,14 +708,14 @@ def node_evolve(state: AgentState) -> AgentState:
     if state.get("selected_proposal"):
         selected = state["selected_proposal"]
         if selected["type"].lower() != strategy_lower:
-            print(f"\n  --- 선택된 제안 실행: {selected['id']} ---")
+            logger.info("  --- 선택된 제안 실행: %s ---", selected['id'])
             sel_action = {"type": selected["type"], "proposal": selected, "success": False}
             handler = HANDLERS.get(selected["type"].lower())
             if handler:
                 try:
                     sel_action["success"] = handler(state, selected, sel_action, before_floating)
                 except Exception as e:
-                    print(f"    [ERROR] 핸들러 예외: {e}")
+                    logger.error("    [ERROR] 핸들러 예외: %s", e)
             state["action_history"].append(sel_action)
 
     return state

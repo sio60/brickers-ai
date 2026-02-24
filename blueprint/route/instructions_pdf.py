@@ -2,6 +2,7 @@
 """조립설명서 PDF API 엔드포인트"""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import base64
@@ -15,6 +16,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 from service.s3_client import USE_S3, S3_BUCKET, upload_bytes_to_s3
 from service.ldr_parser import parse_ldr_step_boms
@@ -82,10 +85,10 @@ async def _fetch_image_bytes(url: str) -> Tuple[bytes, str]:
 async def create_pdf_with_bom(req: PdfWithBomRequest):
     """프론트엔드에서 캡처한 Step별 이미지와 LDR BOM을 합쳐 PDF 생성"""
     try:
-        print(f"[PDF] Fetching LDR from: {req.ldrUrl}")
+        logger.info("Fetching LDR from: %s", req.ldrUrl)
         ldr_text = await fetch_ldr_text(req.ldrUrl)
         step_boms = parse_ldr_step_boms(ldr_text)
-        print(f"[PDF] Parsed {len(step_boms)} steps from LDR")
+        logger.info("Parsed %s steps from LDR", len(step_boms))
 
         step_images: List[List[bytes]] = []
         for step_item in sorted(req.steps, key=lambda s: s.stepIndex):
@@ -94,34 +97,34 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
                 try:
                     images_bytes.append(decode_base64_image(img_b64))
                 except Exception as e:
-                    print(f"[PDF] Image decode error at step {step_item.stepIndex}: {e}")
+                    logger.error("Image decode error at step %s: %s", step_item.stepIndex, e)
                     images_bytes.append(b"")
             step_images.append(images_bytes)
 
-        print(f"[PDF] Decoded {len(step_images)} step image sets")
+        logger.info("Decoded %s step image sets", len(step_images))
 
         cover_bytes = None
         if req.coverImage:
             try:
                 cover_bytes = decode_base64_image(req.coverImage)
             except Exception as e:
-                print(f"[PDF] Cover image decode error: {e}")
+                logger.error("Cover image decode error: %s", e)
 
-        print(f"[PDF] Generating PDF for: {req.modelName}")
+        logger.info("Generating PDF for: %s", req.modelName)
         pdf_bytes = generate_pdf_with_images_and_bom(
             model_name=req.modelName,
             step_images=step_images,
             step_boms=step_boms,
             cover_image=cover_bytes,
         )
-        print(f"[PDF] Generated PDF: {len(pdf_bytes)} bytes")
+        logger.info("Generated PDF: %s bytes", len(pdf_bytes))
 
         if USE_S3 and S3_BUCKET:
             now = datetime.now()
             safe_name = re.sub(r'[\\/:*?"<>|]+', "_", req.modelName or "instructions")
             s3_key = f"{PDF_S3_PREFIX}/{now.year:04d}/{now.month:02d}/{uuid.uuid4().hex[:8]}_{safe_name}.pdf"
             pdf_url = upload_bytes_to_s3(pdf_bytes, s3_key, "application/pdf")
-            print(f"[PDF] Uploaded to S3: {pdf_url}")
+            logger.info("Uploaded to S3: %s", pdf_url)
             return PdfWithBomResponse(ok=True, pdfUrl=pdf_url)
         else:
             pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
@@ -134,9 +137,7 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"LDR fetch failed: {e.response.status_code}")
     except Exception as e:
-        print(f"[PDF] Error: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("PDF Error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

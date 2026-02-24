@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-from datetime import datetime
 from typing import Dict
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").strip().rstrip("/")
 INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "").strip()
@@ -17,8 +19,7 @@ INITIAL_DELAY = 5  # 초
 
 
 def _log(msg: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] [Screenshot] {msg}")
+    logger.info("%s", msg)
 
 
 async def _patch_with_retry(url: str, json_body: dict, label: str) -> None:

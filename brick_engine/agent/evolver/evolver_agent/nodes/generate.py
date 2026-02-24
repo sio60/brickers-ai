@@ -25,7 +25,10 @@ from ..prompts import GENERATE_SYSTEM, GENERATE_PROMPT
 from ..constants import LLM_MODEL, LLM_TIMEOUT
 from ..config import get_config
 
+import logging
 import sys
+
+logger = logging.getLogger(__name__)
 
 llm = ChatOpenAI(model=LLM_MODEL, temperature=0.7, timeout=LLM_TIMEOUT)
 
@@ -49,7 +52,7 @@ proposal_llm = llm.with_structured_output(ProposalList)
 
 def _flush_print(msg: str):
     """실시간 출력"""
-    print(msg)
+    logger.info(msg)
     sys.stdout.flush()
 
 
@@ -94,7 +97,7 @@ def _generate_multiple_proposals_llm(state: AgentState, base_context: str) -> li
             for p in result.proposals
         ]
     except Exception as e:
-        print(f"  [WARNING] LLM 제안 생성 실패: {e}")
+        logger.warning("  [WARNING] LLM 제안 생성 실패: %s", e)
 
     return []
 
@@ -256,15 +259,15 @@ def node_generate(state: AgentState) -> AgentState:
     target = state.get("target_brick")
 
     if not strategy:
-        print("\n[GENERATE] 전략 없음")
+        logger.info("[GENERATE] 전략 없음")
         return {**state, "proposals": []}
 
-    print(f"\n[GENERATE] 전략: {strategy}")
+    logger.info("[GENERATE] 전략: %s", strategy)
 
     proposals = _generate_for_strategy(state, strategy, target)
-    print(f"  {len(proposals)}개 제안 생성됨")
+    logger.info("  %s개 제안 생성됨", len(proposals))
     for p in proposals:
-        print(f"    - {p['id']}: {p['description']}")
+        logger.info("    - %s: %s", p['id'], p['description'])
 
     # 대화 기록
     proposals_summary = "\n".join([f"- {p['id']}: {p['description']}" for p in proposals])

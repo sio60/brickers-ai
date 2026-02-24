@@ -152,7 +152,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
                 ) if build_improvement else {"lesson_learned": lesson}
             )
         except Exception as e:
-            print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
+            logger.warning("⚠️ [Memory] 통합 로그 저장 실패: %s", e)
 
     logger.info("🎓 학습 데이터 기록 완료")
 

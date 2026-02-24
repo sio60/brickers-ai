@@ -1,4 +1,5 @@
 """대칭 분석 및 고립 브릭 탐지/삭제"""
+import logging
 from typing import Dict, Any, List, TYPE_CHECKING
 
 from ..constants import (
@@ -6,6 +7,8 @@ from ..constants import (
     SYMMETRY_TOLERANCE, SYMMETRY_CENTER_MARGIN, SPARSE_LAYER_THRESHOLD,
 )
 from .collision import _build_occupancy_set, _mark_occupied, _check_collision_simple
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ldr_converter import BrickModel
@@ -104,7 +107,7 @@ def analyze_symmetry(model: "BrickModel", parts_db: Dict) -> List[Dict]:
 
     # 오탐 방지: 오탐률 50% 초과 시 비대칭 모델로 판단
     if len(missing) > side_total * 0.5:
-        print(f"  [SYMMETRY] 오탐 감지: {len(missing)}/{side_total} ({len(missing)*100//side_total}%) → 비대칭 모델, 스킵")
+        logger.info("  [SYMMETRY] 오탐 감지: %s/%s (%s%%) → 비대칭 모델, 스킵", len(missing), side_total, len(missing)*100//side_total)
         return []
 
     return missing

@@ -3,6 +3,7 @@
 Color Variant API - 색상 테마 변경 엔드포인트
 """
 
+import logging
 import os
 import base64
 import tempfile
@@ -12,6 +13,8 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # 프로젝트 루트 찾기
 def _find_project_root(start: Path) -> Path:
@@ -91,7 +94,7 @@ async def apply_color_variant(req: ColorVariantRequest):
     """
     try:
         # 1. LDR 파일 다운로드
-        print(f"[ColorVariant] Downloading LDR from: {req.ldr_url}")
+        logger.info("Downloading LDR from: %s", req.ldr_url)
 
         async with httpx.AsyncClient() as client:
             response = await client.get(req.ldr_url, timeout=30.0)
@@ -102,7 +105,7 @@ async def apply_color_variant(req: ColorVariantRequest):
                 )
             ldr_text = response.text
 
-        print(f"[ColorVariant] Downloaded {len(ldr_text)} bytes")
+        logger.info("Downloaded %s bytes", len(ldr_text))
 
         # 2. 임시 파일로 저장
         with tempfile.NamedTemporaryFile(
@@ -123,14 +126,14 @@ async def apply_color_variant(req: ColorVariantRequest):
 
             # 모델 로드 (색상 분석용)
             model = ldr_to_brick_model(temp_input)
-            print(f"[ColorVariant] Model loaded: {len(model.bricks)} bricks")
+            logger.info("Model loaded: %s bricks", len(model.bricks))
 
             # 색상 분석
             analysis = analyze_model_colors(model)
             original_colors = analysis["unique_colors"]
             original_codes = [c["code"] for c in analysis["colors"]]
 
-            print(f"[ColorVariant] Original colors: {original_colors}")
+            logger.info("Original colors: %s", original_colors)
 
             # 색상 매핑 생성
             theme_name = req.theme.lower().strip()
@@ -161,7 +164,7 @@ async def apply_color_variant(req: ColorVariantRequest):
                         continue
                 new_lines.append(line)
 
-            print(f"[ColorVariant] Changed {changed} bricks")
+            logger.info("Changed %s bricks", changed)
 
             ldr_output = '\n'.join(new_lines)
             ldr_bytes = ldr_output.encode('utf-8')
@@ -183,6 +186,5 @@ async def apply_color_variant(req: ColorVariantRequest):
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.error("ColorVariant error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

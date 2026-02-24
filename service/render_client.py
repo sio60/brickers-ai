@@ -2,6 +2,7 @@
 """LDView를 로컬에서 직접 실행하여 LDR 스텝별 렌더링"""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import math
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import anyio
+
+logger = logging.getLogger(__name__)
 
 LDVIEW_BIN = os.environ.get("LDVIEW_BIN", "LDView")
 LDRAWDIR = os.environ.get("LDRAWDIR", "/usr/share/ldraw")
@@ -107,13 +110,13 @@ def _render_snapshot(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            print(f"[LDView] stderr: {result.stderr[:500]}")
+            logger.warning("[LDView] stderr: %s", result.stderr[:500])
         return Path(output_path).exists() and Path(output_path).stat().st_size > 0
     except subprocess.TimeoutExpired:
-        print(f"[LDView] Timeout rendering {ldr_path}")
+        logger.error("[LDView] Timeout rendering %s", ldr_path)
         return False
     except FileNotFoundError:
-        print(f"[LDView] Binary not found: {LDVIEW_BIN}")
+        logger.error("[LDView] Binary not found: %s", LDVIEW_BIN)
         return False
 
 
@@ -135,7 +138,7 @@ def _render_all_steps_sync(
 
     step_ldrs = _split_ldr_steps(ldr_content)
     total = len(step_ldrs)
-    print(f"[Renderer] {total} steps, {len(views)} views each")
+    logger.info("[Renderer] %s steps, %s views each", total, len(views))
 
     tmpdir = tempfile.mkdtemp(prefix="brickers_render_")
     step_images: List[List[bytes]] = []
@@ -162,10 +165,10 @@ def _render_all_steps_sync(
                 if ok:
                     with open(png_file, "rb") as pf:
                         view_bytes.append(pf.read())
-                    print(f"  [Step {step_idx+1}/{total}] View {view_idx+1}: OK")
+                    logger.info("  [Step %s/%s] View %s: OK", step_idx+1, total, view_idx+1)
                 else:
                     view_bytes.append(b"")
-                    print(f"  [Step {step_idx+1}/{total}] View {view_idx+1}: FAILED")
+                    logger.warning("  [Step %s/%s] View %s: FAILED", step_idx+1, total, view_idx+1)
 
             step_images.append(view_bytes)
     finally:

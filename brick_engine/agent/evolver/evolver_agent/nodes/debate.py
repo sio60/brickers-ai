@@ -8,6 +8,7 @@
 Enhanced: Structured Output (Pydantic)
 Note: 1라운드만 (성능 최적화 - 2라운드 토론 제거)
 """
+import logging
 import os
 import json
 import sys
@@ -18,6 +19,8 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from ..state import AgentState
 from ..prompts import DEBATE_SYSTEM, DEBATE_PROMPT, FIDELITY_SYSTEM, CREATIVE_SYSTEM
 from ..constants import AGENT_WEIGHTS, LLM_MODEL, LLM_TIMEOUT
+
+logger = logging.getLogger(__name__)
 
 llm = ChatOpenAI(model=LLM_MODEL, temperature=0.3, timeout=LLM_TIMEOUT)
 
@@ -44,7 +47,7 @@ AGENT_PROMPTS = {
 
 def _flush_print(msg: str):
     """실시간 출력"""
-    print(msg)
+    logger.info(msg)
     sys.stdout.flush()
 
 
