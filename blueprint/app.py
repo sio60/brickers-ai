@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from route import instructions_pdf
 from sqs_consumer import start_pdf_consumer
+
+# ============================================================================
+# Blueprint 서버 logging 설정
+# ============================================================================
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="[%(asctime)s] [%(name)s] %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+for _uv_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    logging.getLogger(_uv_name).setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Brickers Blueprint Server", version="0.1.0")
 
@@ -26,21 +42,21 @@ app.include_router(instructions_pdf.router)
 
 @app.on_event("startup")
 async def startup():
-    print("=" * 60)
-    print("[Blueprint] 🚀 Blueprint PDF Server Startup")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("🚀 Blueprint PDF Server Startup")
+    logger.info("=" * 60)
 
     # SQS 폴링 백그라운드 태스크 시작
     asyncio.create_task(start_pdf_consumer())
-    print("[Blueprint] ✅ PDF SQS Consumer 백그라운드 태스크 시작")
+    logger.info("✅ PDF SQS Consumer 백그라운드 태스크 시작")
 
     # 등록된 라우트 출력
-    print("\n[Blueprint] Registered Routes:")
+    logger.debug("Registered Routes:")
     for route in app.routes:
         if hasattr(route, "path"):
             methods = getattr(route, "methods", {"?"})
-            print(f"  - {methods} {route.path}")
-    print("=" * 60)
+            logger.debug("  - %s %s", methods, route.path)
+    logger.info("=" * 60)
 
 
 @app.get("/health")

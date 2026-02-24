@@ -5,6 +5,7 @@ PDF 생성 요청을 수신하여 LDR -> LDView 렌더링 -> PDF 생성 -> S3 �
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import json
@@ -23,10 +24,11 @@ from service.pdf_generator import generate_pdf_with_images_and_bom
 from service.s3_client import USE_S3, S3_BUCKET, upload_bytes_to_s3
 from service.backend_client import notify_pdf_complete
 
+logger = logging.getLogger(__name__)
+
 
 def _log(msg: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] [Blueprint] {msg}")
+    logger.info("%s", msg)
 
 
 def _is_truthy(v: str) -> bool:

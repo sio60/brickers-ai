@@ -2,7 +2,7 @@
 # 검증 피드백 변환/포맷 함수
 # ============================================================================
 
-from ..llm_state import VerificationFeedback
+from ..core.llm_state import VerificationFeedback
 
 
 def extract_verification_feedback(result, total_bricks: int) -> VerificationFeedback:

@@ -194,7 +194,7 @@ def merge_all_1x1(
             )
                 
         if not group_by_color:
-             print(f"      [Z-Merge] {len(z_groups)} rows processed.")
+             logger.info("      [Z-Merge] %s rows processed.", len(z_groups))
 
     # 병합되지 않은 나머지 브릭들도 결과에 포함
     for idx, brick in enumerate(bricks):
@@ -206,7 +206,7 @@ def merge_all_1x1(
     merge_count += count_rect
     
     if count_rect > 0:
-        print(f"   [Rectangular Merge] {count_rect} pairs of bricks merged into larger rectangles.")
+        logger.info("   [Rectangular Merge] %s pairs of bricks merged into larger rectangles.", count_rect)
 
     # 최종 LDR 라인 생성
     new_brick_lines = []

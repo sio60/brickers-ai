@@ -1,8 +1,12 @@
 
+import logging
+
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from typing import Optional
 import uuid
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from service.background_composer import generate_background_async, composite_images_async
 from service.s3_client import upload_bytes_to_s3
@@ -40,9 +44,9 @@ async def composite_background(
                 if step_images and step_images[-1] and step_images[-1][0]:
                     fg_bytes = step_images[-1][0]
                 else:
-                    print("[BG Composite] LDR render returned empty image, fallback to upload")
+                    logger.warning("LDR render returned empty image, fallback to upload")
             except Exception as e:
-                print(f"[BG Composite] LDR render failed, fallback to uploaded file: {e}")
+                logger.warning("LDR render failed, fallback to uploaded file: %s", e)
 
         # 2) fallback: 업로드된 PNG 사용
         if fg_bytes is None:
@@ -66,8 +70,8 @@ async def composite_background(
         raise he
     except Exception as e:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            print(f"[BG Composite] Rate Limit: {e}")
+            logger.warning("Rate Limit: %s", e)
             raise HTTPException(status_code=429, detail="AI Server Busy (Rate Limit Exceeded). Please try again later.")
 
-        print(f"[BG Composite] Error: {e}")
+        logger.error("BG Composite Error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

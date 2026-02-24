@@ -4,12 +4,15 @@ LDR Converter - LDR 파일 출력
 BrickModel → LDR 포맷 변환
 """
 
+import logging
 from datetime import datetime
 from typing import Dict
 
 from .models import PlacedBrick, BrickModel
 from .rotation import get_rotation_matrix
 from .validation import ValidationError, validate_model, validate_physics
+
+logger = logging.getLogger(__name__)
 
 
 # STEP 모드 옵션
@@ -96,7 +99,7 @@ def model_to_ldr(
                 l2_warnings.append(f"  ... 외 {len(physics_result.floating_bricks) - 3}개")
         # 경고 출력 (에러 아님)
         for w in l2_warnings:
-            print(w)
+            logger.warning("%s", w)
 
     lines = []
 
@@ -161,4 +164,4 @@ def save_ldr_file(content: str, filepath: str):
     """LDR 파일 저장"""
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(content)
-    print(f"LDR 파일 저장 완료: {filepath}")
+    logger.info("LDR 파일 저장 완료: %s", filepath)

@@ -1,10 +1,13 @@
 
+import logging
 import os
 import io
 import asyncio
 import base64
 import httpx
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 # Google GenAI
 import google.genai as genai
@@ -87,7 +90,7 @@ def _generate_background_sync(subject: str) -> bytes:
             if resp.candidates:
                 break
         except Exception as e:
-            print(f"[Gemini] Attempt {attempt+1}/{max_retries} failed: {e}")
+            logger.warning("[Gemini] Attempt %s/%s failed: %s", attempt+1, max_retries, e)
             last_error = e
             # Wait a bit before retry
             import time
@@ -117,7 +120,7 @@ def _generate_background_sync(subject: str) -> bytes:
         except Exception as e_verify:
             # If magic bytes look like an image, accept to let the browser handle formats Pillow lacks (e.g., HEIC/AVIF)
             if _looks_like_image(buf):
-                print(f"[Gemini] Pillow verify failed but magic looks like image (mime={mime}): {e_verify}")
+                logger.info("[Gemini] Pillow verify failed but magic looks like image (mime=%s): %s", mime, e_verify)
                 return buf
             # Try load (some formats need load)
             try:
@@ -151,7 +154,7 @@ def _generate_background_sync(subject: str) -> bytes:
                         try:
                             data = data.encode("utf-8", errors="ignore")
                         except Exception as e_enc:
-                            print(f"[Gemini] String encoding failed: {e_enc}")
+                            logger.error("[Gemini] String encoding failed: %s", e_enc)
                             continue
             elif isinstance(data, bytes):
                  # Check if it is valid image data
@@ -166,16 +169,16 @@ def _generate_background_sync(subject: str) -> bytes:
 
             # If mime is present and not image, skip
             if mime and not mime.startswith("image/"):
-                print(f"[Gemini] Non-image inline response skipped: mime={mime}")
+                logger.info("[Gemini] Non-image inline response skipped: mime=%s", mime)
                 continue
             # If mime missing, sniff bytes
             if not mime and not _looks_like_image(data):
-                print(f"[Gemini] Inline data without mime does not look like image, skipping (len={len(data)})")
+                logger.info("[Gemini] Inline data without mime does not look like image, skipping (len=%s)", len(data))
                 continue
             try:
                 return _validate_image_bytes(data, mime)
             except Exception as e:
-                print(f"[Gemini] Inline image validation failed: {e} (len={len(data)}, mime={mime})")
+                logger.warning("[Gemini] Inline image validation failed: %s (len=%s, mime=%s)", e, len(data), mime)
                 continue
 
         file_data = getattr(part, "file_data", None)
@@ -186,7 +189,7 @@ def _generate_background_sync(subject: str) -> bytes:
                 buf = r.content
                 return _validate_image_bytes(buf, getattr(file_data, "mime_type", None))
             except Exception as e:
-                print(f"[Gemini] Failed to fetch/validate file_uri: {e}")
+                logger.error("[Gemini] Failed to fetch/validate file_uri: %s", e)
                 continue
 
     raise ValueError("No valid image data found in Gemini response")
@@ -239,7 +242,7 @@ def _composite_sync(fg_bytes: bytes, bg_bytes: bytes) -> bytes:
         return out_io.getvalue()
         
     except Exception as e:
-        print(f"[Composite] Error: {e}")
+        logger.error("[Composite] Error: %s", e)
         # 실패 시 배경만이라도 반환? 아니면 에러?
         raise e
 

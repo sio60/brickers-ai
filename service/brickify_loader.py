@@ -21,7 +21,7 @@ def load_engine_convert():
 
     import importlib.util
 
-    engine_path = (PROJECT_ROOT / "brick_engine" / "glb_to_ldr_embedded.py").resolve()
+    engine_path = (PROJECT_ROOT / "brick_engine" / "exporter" / "ldr_converter" / "glb_to_ldr_embedded.py").resolve()
     if not engine_path.exists():
         raise RuntimeError(f"engine file missing: {engine_path}")
 
@@ -49,8 +49,8 @@ def load_agent_modules():
     if agent_dir not in sys.path:
         sys.path.insert(0, agent_dir)
 
-    from agent.llm_regeneration_agent import regeneration_loop
-    from agent.llm_clients import GeminiClient
+    from agent.regeneration import regeneration_loop
+    from agent.core.llm_clients import GeminiClient
 
     _REGEN_LOOP_FN = regeneration_loop
     _GEMINI_CLIENT_CLS = GeminiClient
