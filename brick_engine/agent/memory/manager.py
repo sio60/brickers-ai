@@ -20,15 +20,18 @@ except ImportError:
             return func
         return decorator
 
-# DB Connection (yang_db.py는 agent/ 디렉토리에 위치)
+# DB Connection (database_manager.py는 agent/core/ 디렉토리에 위치)
 try:
-    from yang_db import get_db
-except ImportError:
-    sys.path.append(str(Path(__file__).resolve().parent.parent))  # agent/
+    from ..core.database_manager import get_db
+except (ImportError, ValueError):
     try:
-        from yang_db import get_db
+        from core.database_manager import get_db
     except ImportError:
-        get_db = None
+        sys.path.append(str(Path(__file__).resolve().parent.parent))  # agent/ 디렉토리 추가
+        try:
+            from core.database_manager import get_db
+        except ImportError:
+            get_db = None
 
 # Config (config.py는 프로젝트 루트에 위치)
 try:
