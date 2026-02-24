@@ -38,7 +38,7 @@ from .parser import parse_ldr_string
 
 ISSUE_COLORS = {
     "top_only": "#0055FF",
-    "floating": "#00FF00",
+    "floating": "#4CAF50",
     "isolated": "#FFCC00",
 }
 
