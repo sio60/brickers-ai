@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Tuple
 from langchain_core.messages import AIMessage, ToolMessage
 
 from ..constants import MAX_TOOL_USES, MAX_REMOVE_FALLBACK
-from ... import ldr_modifier  # 네이티브 패키지 임포트
+from ... import merger as ldr_modifier  # 네이티브 패키지 임포트 (merger로 리팩토링됨)
 
 logger = logging.getLogger("agent.regeneration.tool_executor")
 
