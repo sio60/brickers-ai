@@ -193,22 +193,11 @@ def _tile_one_layer(
             bf = best_fit_at(x, z)
             
             if bf is None:
-                if avoid_1x1:
-                    used[z, x] = True
-                    continue
-
                 part, rot = one_by_one
                 x0 = x
                 z0 = z
                 w = l = 1
                 color = anchor_color
-                
-                # Drop unsupported residual 1x1 cells above the first layer.
-                if layer_index > 0:
-                    vertical_support = 1 if (prev_ids is not None and prev_ids[z, x] != -1) else 0
-                    if vertical_support == 0:
-                        used[z, x] = True
-                        continue
             else:
                 x0, z0, w, l, part, rot, color = bf
 

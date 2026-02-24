@@ -106,6 +106,18 @@ def _horizontal_neighbors(pos: Tuple[int, int, int]) -> Tuple[Tuple[int, int, in
     )
 
 
+def _neighbors6(pos: Tuple[int, int, int]) -> Tuple[Tuple[int, int, int], ...]:
+    x, y, z = pos
+    return (
+        (x + 1, y, z),
+        (x - 1, y, z),
+        (x, y + 1, z),
+        (x, y - 1, z),
+        (x, y, z + 1),
+        (x, y, z - 1),
+    )
+
+
 def _is_vertically_supported(
     pos: Tuple[int, int, int],
     occupied: Set[Tuple[int, int, int]],
@@ -159,6 +171,93 @@ def _build_horizontal_path(
         path.append((x, sy, z))
 
     return path
+
+
+def _connected_components_3d(
+    occupied: Set[Tuple[int, int, int]],
+) -> List[Set[Tuple[int, int, int]]]:
+    if not occupied:
+        return []
+
+    visited: Set[Tuple[int, int, int]] = set()
+    comps: List[Set[Tuple[int, int, int]]] = []
+
+    for seed in occupied:
+        if seed in visited:
+            continue
+        q: Deque[Tuple[int, int, int]] = deque([seed])
+        visited.add(seed)
+        comp: Set[Tuple[int, int, int]] = set()
+
+        while q:
+            cur = q.popleft()
+            comp.add(cur)
+            for nxt in _neighbors6(cur):
+                if nxt in occupied and nxt not in visited:
+                    visited.add(nxt)
+                    q.append(nxt)
+
+        comps.append(comp)
+
+    comps.sort(key=len, reverse=True)
+    return comps
+
+
+def add_vertical_connector_plugs(
+    vox: List[Dict[str, Any]],
+    *,
+    max_passes: int = 2,
+) -> List[Dict[str, Any]]:
+    """
+    Connect detached components to the largest component by inserting a single
+    voxel vertically (same x/z, one-cell y gap) when possible.
+    """
+    if not vox:
+        return []
+
+    voxel_map = {(v["x"], v["y"], v["z"]): int(v["color"]) for v in vox}
+    total_added = 0
+
+    for _ in range(max_passes):
+        occupied = set(voxel_map.keys())
+        comps = _connected_components_3d(occupied)
+        if len(comps) <= 1:
+            break
+
+        main = comps[0]
+        added_this_pass = 0
+
+        for comp in comps[1:]:
+            bridge_pos: Optional[Tuple[int, int, int]] = None
+            bridge_color: Optional[int] = None
+
+            # Prefer a one-voxel vertical plug (same x/z, y gap == 2).
+            for (x, y, z) in comp:
+                for dy in (-2, 2):
+                    target = (x, y + dy, z)
+                    mid = (x, y + (dy // 2), z)
+                    if target in main and mid not in occupied:
+                        bridge_pos = mid
+                        bridge_color = voxel_map.get((x, y, z), voxel_map.get(target, 4))
+                        break
+                if bridge_pos is not None:
+                    break
+
+            if bridge_pos is None:
+                continue
+
+            voxel_map[bridge_pos] = int(bridge_color if bridge_color is not None else 4)
+            occupied.add(bridge_pos)
+            added_this_pass += 1
+
+        total_added += added_this_pass
+        if added_this_pass == 0:
+            break
+
+    if total_added > 0:
+        logger.info(f"[Step] Vertical connector plugs added: {total_added}")
+
+    return [{"x": x, "y": y, "z": z, "color": c} for (x, y, z), c in voxel_map.items()]
 
 
 def embed_floating_parts(
@@ -488,6 +587,11 @@ def _single_conversion(
             max_iters=int(kwargs.get("support_repair_iters", 3)),
             max_bridge_len=int(kwargs.get("max_bridge_len", 6)),
         )
+        if bool(kwargs.get("vertical_connector_plug", True)):
+            bricks_data = add_vertical_connector_plugs(
+                bricks_data,
+                max_passes=int(kwargs.get("vertical_connector_passes", 2)),
+            )
 
     # Optimize (Greedy Packing)
     logger.info("[Step] Optimization (Greedy Packing) starting...")
