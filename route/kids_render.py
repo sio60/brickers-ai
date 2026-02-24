@@ -2,6 +2,7 @@
 """Kids Mode 라우터 + 오케스트레이션 (리팩토링 버전)"""
 from __future__ import annotations
 
+import logging
 import os
 import json
 import re
@@ -16,6 +17,8 @@ import sys
 import io
 import asyncio
 from typing import TextIO
+
+logger = logging.getLogger(__name__)
 
 from service.log_context import JobLogContext
 
@@ -82,10 +85,8 @@ _CONVERT_FN = None
 
 def log(msg: str, user_email: str = "System") -> None:
     """타임스탬프 및 사용자 정보 포함 로그 출력"""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    # 긴 이메일은 앞부분만 출력
     user_tag = f"[{user_email}]" if user_email else "[System]"
-    print(f"[{ts}] {user_tag} {msg}", flush=True)
+    logger.info("%s %s", user_tag, msg)
 
 
 # --------------- helpers ---------------
@@ -677,6 +678,7 @@ async def process_kids_request_internal(
                         "bom_unique_parts": len(bom_data["parts"]),
                         "est_cost": result.get("est_cost"), # [NEW]
                         "token_count": result.get("token_count"), # [NEW]
+                        "stability_score": result.get("stability_score", 100), # [NEW]
                     },
                 }
                 # CoScientist 사용 시 추가 정보 (Fallback이어도 기록이 있으면 포함)

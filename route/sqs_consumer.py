@@ -8,12 +8,15 @@ SQS Consumer - AI Server에서 Backend로부터 REQUEST 메시지 수신
 """
 from __future__ import annotations
 
+import logging
 import os
 import json
 import asyncio
 import anyio
 from datetime import datetime
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 from route.kids_render import process_kids_request_internal
 from route.sqs_producer import send_result_message
@@ -24,9 +27,8 @@ from brick_engine.agent.log_analyzer.persistence import archive_job_logs
 
 def log(msg: str, user_email: str = "System") -> None:
     """타임스탬프 및 사용자 정보 포함 로그 출력"""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     user_tag = f"[{user_email}]" if user_email else "[System]"
-    print(f"[{ts}] {user_tag} {msg}", flush=True)
+    logger.info("%s %s", user_tag, msg)
 
 
 def _is_truthy(v: str) -> bool:

@@ -5,6 +5,7 @@ SQS Consumer - brickers-screenshots-queue 폴링
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import json
@@ -20,16 +21,17 @@ import httpx
 from service.render_client import render_6_views, RENDER_ENABLED
 from service.s3_client import USE_S3, S3_BUCKET, upload_bytes_to_s3
 from service.backend_client import (
-    notify_screenshots_complete, 
+    notify_screenshots_complete,
     notify_gallery_screenshots_complete,
     notify_background_complete
 )
 from service.background_composer import generate_background_async
 
+logger = logging.getLogger(__name__)
+
 
 def _log(msg: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] [Screenshot] {msg}")
+    logger.info("%s", msg)
 
 
 def _is_truthy(v: str) -> bool:

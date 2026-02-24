@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Dict, Any
 
@@ -16,13 +17,13 @@ from service.backend_client import (
 )
 from service.background_composer import generate_background_async
 
+logger = logging.getLogger(__name__)
 
 SCREENSHOT_S3_PREFIX = "uploads/screenshots"
 
 
 def _log(msg: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] [CeleryTask] {msg}")
+    logger.info("%s", msg)
 
 
 async def _process_screenshot_async(

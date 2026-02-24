@@ -10,7 +10,7 @@ from . import admin_analytics, admin_moderation, admin_logs
 logger = logging.getLogger("api.admin")
 router = APIRouter(tags=["admin"])
 
-print("[Admin] Initializing unified admin routes...", flush=True)
+logger.info("Initializing unified admin routes...")
 
 @router.get("/ai-admin/ping")
 def ping_admin():

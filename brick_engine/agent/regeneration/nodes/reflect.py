@@ -14,7 +14,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
     회고 노드: 검증 결과를 분석하고 성공/실패를 Memory에 기록합니다.
     Co-Scientist의 핵심 학습 메커니즘입니다.
     """
-    from ...memory_utils import (
+    from ...core.memory_utils import (
         memory_manager, build_hypothesis, build_experiment,
         build_verification, build_improvement,
     )
@@ -152,7 +152,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
                 ) if build_improvement else {"lesson_learned": lesson}
             )
         except Exception as e:
-            print(f"⚠️ [Memory] 통합 로그 저장 실패: {e}")
+            logger.warning("⚠️ [Memory] 통합 로그 저장 실패: %s", e)
 
     logger.info("🎓 학습 데이터 기록 완료")
 

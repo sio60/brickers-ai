@@ -4,6 +4,8 @@
 OpenAPI 스펙을 통해 GPT, Gemini, Claude 등 모든 LLM에서 사용 가능.
 """
 
+import logging
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
@@ -13,6 +15,8 @@ from typing import List, Dict, Optional
 from pathlib import Path
 import time
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # OpenAPI 메타데이터
 app = FastAPI(
@@ -24,9 +28,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.middleware("http")
 async def log_requests(request, call_next):
-    print(f"[DEBUG] Request: {request.method} {request.url.path}")
+    logger.debug("Request: %s %s", request.method, request.url.path)
     response = await call_next(request)
-    print(f"[DEBUG] Response status: {response.status_code}")
+    logger.debug("Response status: %s", response.status_code)
     return response
 
 from .physics import full_judge, calc_score_from_issues, get_backend_info
@@ -419,7 +423,7 @@ async def test_all(req: LdrRequest):
     # 디버그: unstable_base 이슈의 data 확인
     for i in issues:
         if i.issue_type.value == "unstable_base":
-            print(f"Python Debug: unstable_base issue data = {i.data}")
+            logger.debug("unstable_base issue data = %s", i.data)
     
     score = calc_score_from_issues(issues, len(model.bricks))
     elapsed = (time.perf_counter() - start) * 1000
@@ -454,7 +458,7 @@ async def test_all(req: LdrRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"\n🧱 brick_judge 서버")
-    print(f"   백엔드: {get_backend_info()['backend'].upper()}")
-    print(f"   URL: http://localhost:8888\n")
+    logger.info("🧱 brick_judge 서버")
+    logger.info("   백엔드: %s", get_backend_info()['backend'].upper())
+    logger.info("   URL: http://localhost:8888")
     uvicorn.run(app, host="0.0.0.0", port=8888)

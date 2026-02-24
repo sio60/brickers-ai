@@ -9,9 +9,9 @@ from typing import Dict, Any, Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from ..llm_clients import BaseLLMClient
-from ..llm_state import AgentState
-from ..memory_utils import memory_manager
+from ..core.llm_clients import BaseLLMClient
+from ..core.llm_state import AgentState
+from ..core.memory_utils import memory_manager
 
 from .constants import DEFAULT_PARAMS
 from .graph import RegenerationGraph
@@ -221,7 +221,7 @@ async def regeneration_loop(
     if should_run_evolver:
         # Pre-Evolver merge pass (optional)
         try:
-            from ..ldr_modifier import merge_small_bricks
+            from ..merger import merge_small_bricks
             logger.info("[Pre-Processing] Try merging 1x1 bricks before Evolver...")
             merge_stats = merge_small_bricks(output_ldr_path, min_merge_count=2)
             if merge_stats.get("merged", 0) > 0:

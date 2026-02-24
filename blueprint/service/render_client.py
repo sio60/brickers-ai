@@ -2,6 +2,7 @@
 """LDView를 로컬에서 직접 실행하여 LDR 스텝별 렌더링"""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import math
@@ -15,6 +16,8 @@ from typing import Dict, List, Optional, Tuple
 
 import anyio
 from PIL import Image, ImageOps
+
+logger = logging.getLogger(__name__)
 
 LDVIEW_BIN = os.environ.get("LDVIEW_BIN", "LDView")
 LDRAWDIR = os.environ.get("LDRAWDIR", "/usr/share/ldraw")
@@ -111,20 +114,20 @@ def _render_snapshot(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            print(f"[LDView] exit={result.returncode} | {Path(ldr_path).name}")
+            logger.warning("[LDView] exit=%s | %s", result.returncode, Path(ldr_path).name)
             if result.stderr:
-                print(f"[LDView] stderr: {result.stderr[:500]}")
+                logger.warning("[LDView] stderr: %s", result.stderr[:500])
             if result.stdout:
-                print(f"[LDView] stdout: {result.stdout[:300]}")
+                logger.debug("[LDView] stdout: %s", result.stdout[:300])
         exists = Path(output_path).exists() and Path(output_path).stat().st_size > 0
         if not exists and result.returncode == 0:
-            print(f"[LDView] No output file despite exit=0 | {Path(ldr_path).name}")
+            logger.warning("[LDView] No output file despite exit=0 | %s", Path(ldr_path).name)
         return exists
     except subprocess.TimeoutExpired:
-        print(f"[LDView] Timeout rendering {Path(ldr_path).name}")
+        logger.error("[LDView] Timeout rendering %s", Path(ldr_path).name)
         return False
     except FileNotFoundError:
-        print(f"[LDView] Binary not found: {LDVIEW_BIN}")
+        logger.error("[LDView] Binary not found: %s", LDVIEW_BIN)
         return False
 
 
@@ -146,7 +149,7 @@ def _render_all_steps_sync(
 
     step_ldrs = _split_ldr_steps(ldr_content)
     total = len(step_ldrs)
-    print(f"[Renderer] {total} steps, {len(views)} views each")
+    logger.info("[Renderer] %s steps, %s views each", total, len(views))
 
     tmpdir = tempfile.mkdtemp(prefix="brickers_render_")
     step_images: List[List[bytes]] = []
@@ -182,10 +185,10 @@ def _render_all_steps_sync(
                     buf = BytesIO()
                     padded.save(buf, format="PNG")
                     view_bytes.append(buf.getvalue())
-                    print(f"  [Step {step_idx+1}/{total}] View {view_idx+1}: OK")
+                    logger.info("  [Step %s/%s] View %s: OK", step_idx+1, total, view_idx+1)
                 else:
                     view_bytes.append(b"")
-                    print(f"  [Step {step_idx+1}/{total}] View {view_idx+1}: FAILED")
+                    logger.warning("  [Step %s/%s] View %s: FAILED", step_idx+1, total, view_idx+1)
 
             step_images.append(view_bytes)
     finally:
@@ -254,9 +257,9 @@ def _render_part_thumbnails_sync(
             else:
                 thumbnails[key] = b""
                 fail_count += 1
-                print(f"  [Thumb] FAILED: {key} (part={part_id}.dat, color={color})")
+                logger.warning("  [Thumb] FAILED: %s (part=%s.dat, color=%s)", key, part_id, color)
 
-        print(f"[Thumb] Done: {ok_count} OK, {fail_count} FAILED out of {len(parts)} parts")
+        logger.info("[Thumb] Done: %s OK, %s FAILED out of %s parts", ok_count, fail_count, len(parts))
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
