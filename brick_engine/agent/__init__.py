@@ -3,7 +3,7 @@
 # GLB → LDR 변환 후 물리 검증 실패 시 LLM을 활용해 재생성하는 시스템
 # ============================================================================
 
-from .llm_regeneration_agent import regeneration_loop, RegenerationGraph
+from .regeneration.shim import regeneration_loop, RegenerationGraph
 from .core.llm_clients import GroqClient, GeminiClient, BaseLLMClient
 
 __all__ = [

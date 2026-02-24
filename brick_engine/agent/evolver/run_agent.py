@@ -10,23 +10,24 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Setup paths
-EVOLVER_DIR = Path(__file__).parent
-EXPORTER_DIR = EVOLVER_DIR.parent
-sys.path.insert(0, str(EXPORTER_DIR))
-PROJECT_ROOT = EXPORTER_DIR.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+EVOLVER_DIR = Path(__file__).parent  # agent/evolver
+AGENT_DIR = EVOLVER_DIR.parent       # agent
+PROJECT_ROOT = AGENT_DIR.parent      # brick_engine
+EXPORTER_DIR = PROJECT_ROOT / "exporter"
 
-load_dotenv(EXPORTER_DIR.parent.parent / ".env")
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(EXPORTER_DIR))
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 from ldr_converter import ldr_to_brick_model, model_to_ldr  # noqa: E402
 from evolver_agent import build_graph, AgentState  # noqa: E402
 from evolver_agent.tools import get_model_state, analyze_glb  # noqa: E402
 from evolver_agent.config import init_config  # noqa: E402
 
-# Memory Utils Import
-import config  # This registers AGENT_DIR (brick_engine/agent/) in sys.path
-from memory.manager import memory_manager
-from memory.builders import build_hypothesis, build_experiment, build_verification, build_improvement
+# Memory Utils Import (agent.memory 참조)
+from agent.memory.manager import memory_manager
+from agent.memory.builders import build_hypothesis, build_experiment, build_verification, build_improvement
 
 def run_agent(ldr_path: str, glb_path: str = None):
     # ... (print headers) ...
@@ -36,13 +37,17 @@ def run_agent(ldr_path: str, glb_path: str = None):
 
     # Initialize - parts_db 로드
     parts_db = {}
-    cache = EXPORTER_DIR / "parts_cache.json"
+    cache = EXPORTER_DIR / "data" / "parts_cache.json"
+    if not cache.exists():
+        # Fallback for legacy path
+        cache = EXPORTER_DIR / "parts_cache.json"
+        
     if cache.exists():
         with open(cache, 'r', encoding='utf-8') as f:
             parts_db = json.load(f)
 
     if not parts_db:
-        print("ERROR: parts_cache.json not found!")
+        print(f"ERROR: parts_cache.json not found in {cache}!")
         sys.exit(1)
 
     init_config(parts_db, EXPORTER_DIR)

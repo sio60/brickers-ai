@@ -21,7 +21,7 @@ def load_engine_convert():
 
     import importlib.util
 
-    engine_path = (PROJECT_ROOT / "brick_engine" / "glb_to_ldr_embedded.py").resolve()
+    engine_path = (PROJECT_ROOT / "brick_engine" / "exporter" / "ldr_converter" / "glb_to_ldr_embedded.py").resolve()
     if not engine_path.exists():
         raise RuntimeError(f"engine file missing: {engine_path}")
 
