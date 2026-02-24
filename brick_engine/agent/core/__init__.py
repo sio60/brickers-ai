@@ -14,7 +14,7 @@ from .memory_utils import (
     build_verification,
     build_improvement,
 )
-from .yang_db import get_client, get_parts_collection, get_db
+from .database_manager import get_client, get_parts_collection, get_db
 from .s3_utils import download_from_s3, upload_to_s3
 
 __all__ = [
