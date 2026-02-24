@@ -4,6 +4,7 @@ Enhanced:
 - Memory Summarize (lessons 10개 초과 시 요약)
 - LLM 기반 lesson 생성 (REFLECT_PROMPT 템플릿 사용)
 """
+import logging
 import sys
 import copy
 from pathlib import Path
@@ -19,6 +20,8 @@ from ..prompts import (
     REFLECT_SYSTEM, REFLECT_PROMPT
 )
 from ..config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 # ===== Structured Output for Reflect =====
@@ -91,7 +94,7 @@ def _generate_lesson_llm(
         )
         return result.lesson, result.lesson_tag
     except Exception as e:
-        print(f"  [WARNING] LLM 회고 실패: {e}")
+        logger.warning("  [WARNING] LLM 회고 실패: %s", e)
 
     # fallback: 규칙 기반 lesson (한글 수치 포함)
     STRATEGY_KR = {
@@ -114,7 +117,7 @@ def _summarize_lessons(lessons: list) -> list:
     if len(lessons) <= LESSONS_THRESHOLD:
         return lessons
 
-    print(f"  [MEMORY] Lessons {len(lessons)}개 → 요약 중...")
+    logger.info("  [MEMORY] Lessons %s개 → 요약 중...", len(lessons))
 
     # prompts.py의 템플릿 사용
     lessons_text = '\n'.join(f'- {l}' for l in lessons)
@@ -138,10 +141,10 @@ def _summarize_lessons(lessons: list) -> list:
                 summarized.append(line)
 
         if summarized:
-            print(f"  [MEMORY] 요약 완료: {len(lessons)}개 → {len(summarized)}개")
+            logger.info("  [MEMORY] 요약 완료: %s개 → %s개", len(lessons), len(summarized))
             return summarized
     except Exception as e:
-        print(f"  [MEMORY] 요약 실패: {e}")
+        logger.warning("  [MEMORY] 요약 실패: %s", e)
 
     # 실패 시 최근 5개만 유지
     return lessons[-5:]
@@ -153,7 +156,7 @@ def node_reflect(state: AgentState) -> AgentState:
     """Analyze results and update memory (물리 + Vision 통합 검증 + 롤백)"""
     from ..config import log_sse
     log_sse("EVOLVER_CHECK", "수정 전후를 비교해서 더 나아졌는지 확인하고 있어요.")
-    print(f"\n[REFLECT] Analyzing...")
+    logger.info("[REFLECT] Analyzing...")
 
     # Get new state
     new_state = get_model_state(state["model"], get_config().parts_db)
@@ -180,7 +183,7 @@ def node_reflect(state: AgentState) -> AgentState:
 
     # Vision 전략이면 Vision 검증 필요
     if is_vision_strategy:
-        print(f"  [Vision Strategy] Re-rendering for quality check...")
+        logger.info("  [Vision Strategy] Re-rendering for quality check...")
 
         # Vision 검증 (re-render + re-analyze)
         try:
@@ -201,7 +204,7 @@ def node_reflect(state: AgentState) -> AgentState:
             before_problems = len(state.get("vision_problems", []))
             before_quality = state.get("vision_quality_score") or 0
 
-            print(f"  Vision: problems {before_problems} → {after_problems}, quality {before_quality} → {after_quality}")
+            logger.info("  Vision: problems %s → %s, quality %s → %s", before_problems, after_problems, before_quality, after_quality)
 
             # Vision 기준 성공 판정
             vision_improved = (after_problems < before_problems) or (after_quality > before_quality)
@@ -228,16 +231,16 @@ def node_reflect(state: AgentState) -> AgentState:
                 memory["successful_patterns"].append(action_type)
                 memory["consecutive_failures"] = 0
                 vision_check_completed = True
-                print(f"  {lesson}")
+                logger.info("  %s", lesson)
             else:
                 memory["failed_approaches"].append(action_type)
                 memory["consecutive_failures"] += 1
                 should_rollback = True
-                print(f"  {lesson}")
-                print(f"  [ROLLBACK] 원본으로 복원합니다.")
+                logger.info("  %s", lesson)
+                logger.info("  [ROLLBACK] 원본으로 복원합니다.")
 
         except Exception as e:
-            print(f"  WARNING: Vision check failed - {e}")
+            logger.warning("  WARNING: Vision check failed - %s", e)
             # Vision 실패 시 물리 검증으로 폴백
             lesson = f"NEUTRAL: {action_type} (vision check failed)"
             after_problems = before_problems
@@ -267,18 +270,18 @@ def node_reflect(state: AgentState) -> AgentState:
         if lesson_tag == "SUCCESS":
             memory["successful_patterns"].append(action_type)
             memory["consecutive_failures"] = 0
-            print(f"  {lesson}")
+            logger.info("  %s", lesson)
         elif lesson_tag == "FAILED":
             memory["failed_approaches"].append(action_type)
             memory["consecutive_failures"] += 1
             should_rollback = True
-            print(f"  {lesson}")
-            print(f"  [ROLLBACK] 물리 상태 악화로 원본 복원")
+            logger.info("  %s", lesson)
+            logger.info("  [ROLLBACK] 물리 상태 악화로 원본 복원")
         else:  # INSIGHT
-            print(f"  {lesson}")
+            logger.info("  %s", lesson)
 
     if memory["consecutive_failures"] >= 3:
-        print(f"  WARNING: 3 consecutive failures!")
+        logger.warning("  WARNING: 3 consecutive failures!")
 
     memory["lessons"].append(lesson)
 
@@ -295,7 +298,7 @@ def node_reflect(state: AgentState) -> AgentState:
             snapshot_path = snapshot_dir / f"iter{iteration}_before_rollback.ldr"
             ldr_text = model_to_ldr(state["model"], get_config().parts_db, skip_validation=True, skip_physics=True)
             snapshot_path.write_text(ldr_text, encoding="utf-8")
-            print(f"  [SNAPSHOT] 롤백 전 모델 저장: {snapshot_path}")
+            logger.info("  [SNAPSHOT] 롤백 전 모델 저장: %s", snapshot_path)
 
             # S3 업로드
             try:
@@ -307,13 +310,13 @@ def node_reflect(state: AgentState) -> AgentState:
                     s3_key = f"{S3_PREFIX}/evolver-snapshots/{now:%Y-%m-%d}/{model_name}_iter{iteration}_before_rollback.ldr"
                     s3_url = upload_to_s3(snapshot_path, s3_key, "text/plain")
                     if s3_url:
-                        print(f"  [SNAPSHOT] S3 업로드 완료: {s3_url}")
+                        logger.info("  [SNAPSHOT] S3 업로드 완료: %s", s3_url)
             except Exception as s3_err:
-                print(f"  [SNAPSHOT] S3 업로드 실패 (무시): {s3_err}")
+                logger.warning("  [SNAPSHOT] S3 업로드 실패 (무시): %s", s3_err)
         except Exception as e:
-            print(f"  [SNAPSHOT] 저장 실패 (무시): {e}")
+            logger.warning("  [SNAPSHOT] 저장 실패 (무시): %s", e)
 
-        print(f"  [ROLLBACK] 모델을 원본으로 복원")
+        logger.info("  [ROLLBACK] 모델을 원본으로 복원")
         restored_model = copy.deepcopy(state["model_backup"])
         restored_state = get_model_state(restored_model, get_config().parts_db)
 

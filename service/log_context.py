@@ -1,8 +1,11 @@
+import logging
 import sys
 import asyncio
 from contextvars import ContextVar
 from typing import Optional, List, TextIO
 from brick_engine.agent.log_analyzer.persistence import archive_system_logs
+
+logger = logging.getLogger(__name__)
 
 # 1. ContextVar 정의 (각 요청/Job별 로그 버퍼를 저장)
 job_log_buffer_var: ContextVar[Optional[List[str]]] = ContextVar("job_log_buffer", default=None)
@@ -38,7 +41,7 @@ class GlobalLogCapture:
         
         self._initialized = True
         
-        print(f"[GlobalLogCapture] System stdout/stderr hooked globally. SessionID={self.session_id}", flush=True)
+        logger.info("[GlobalLogCapture] System stdout/stderr hooked globally. SessionID=%s", self.session_id)
 
     def start_flusher(self):
         """[DISABLED] Periodic flusher removed as per user request. (Legacy logic preserved below)"""

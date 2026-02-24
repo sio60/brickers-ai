@@ -29,11 +29,14 @@ from evolver_agent.config import init_config  # noqa: E402
 from agent.memory.manager import memory_manager
 from agent.memory.builders import build_hypothesis, build_experiment, build_verification, build_improvement
 
+import logging
+logger = logging.getLogger(__name__)
+
 def run_agent(ldr_path: str, glb_path: str = None):
     # ... (print headers) ...
-    print("=" * 60)
-    print("LangGraph + CoScientist Evolver Agent")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("LangGraph + CoScientist Evolver Agent")
+    logger.info("=" * 60)
 
     # Initialize - parts_db 로드
     parts_db = {}
@@ -47,7 +50,7 @@ def run_agent(ldr_path: str, glb_path: str = None):
             parts_db = json.load(f)
 
     if not parts_db:
-        print(f"ERROR: parts_cache.json not found in {cache}!")
+        logger.error("ERROR: parts_cache.json not found in %s!", cache)
         sys.exit(1)
 
     init_config(parts_db, EXPORTER_DIR)
@@ -58,22 +61,22 @@ def run_agent(ldr_path: str, glb_path: str = None):
     # 색상 분포 디버깅 출력
     from collections import Counter
     color_dist = Counter(b.color_code for b in model.bricks)
-    print(f"\n[COLOR DEBUG] 입력 LDR 색상 분포:")
+    logger.debug("[COLOR DEBUG] 입력 LDR 색상 분포:")
     for color, count in color_dist.most_common():
-        print(f"  color_code={color}: {count}개")
+        logger.debug("  color_code=%s: %s개", color, count)
     if len(color_dist) == 1 and 15 in color_dist:
-        print("  ⚠️ 모든 브릭이 흰색(15)! → 입력 LDR에 이미 색상 정보 없음")
-        print("  → GLB→LDR 변환 시 색상 추출 실패 가능성 높음")
+        logger.warning("  ⚠️ 모든 브릭이 흰색(15)! → 입력 LDR에 이미 색상 정보 없음")
+        logger.warning("  → GLB→LDR 변환 시 색상 추출 실패 가능성 높음")
 
     # GLB 분석 (있으면)
     glb_ref = None
     if glb_path and Path(glb_path).exists():
-        print(f"\n[GLB Reference] Analyzing {glb_path}...")
+        logger.info("[GLB Reference] Analyzing %s...", glb_path)
         glb_ref = analyze_glb(glb_path)
         if glb_ref.get("available"):
-            print(f"  Model: {glb_ref.get('name')} ({glb_ref.get('model_type')})")
-            print(f"  Legs: {glb_ref.get('legs')}")
-            print(f"  Features: {glb_ref.get('key_features')}")
+            logger.info("  Model: %s (%s)", glb_ref.get('name'), glb_ref.get('model_type'))
+            logger.info("  Legs: %s", glb_ref.get('legs'))
+            logger.info("  Features: %s", glb_ref.get('key_features'))
 
     # Session ID 생성
     session_id = "offline_evolver"
@@ -117,20 +120,20 @@ def run_agent(ldr_path: str, glb_path: str = None):
         "messages": []  # LangSmith 트레이싱용 대화 기록
     }
 
-    print(f"\nLoaded: {ldr_path}")
-    print(f"Bricks: {initial_state['original_brick_count']}")
-    print(f"Removal limit: {int(initial_state['original_brick_count'] * 0.10)} (10%)")
+    logger.info("Loaded: %s", ldr_path)
+    logger.info("Bricks: %s", initial_state['original_brick_count'])
+    logger.info("Removal limit: %s (10%%)", int(initial_state['original_brick_count'] * 0.10))
 
     # Run graph
-    print("\n[실행중...] 에이전트 시작")
+    logger.info("[실행중...] 에이전트 시작")
     graph = build_graph()
-    print("[실행중...] LLM 호출 대기중...")
+    logger.info("[실행중...] LLM 호출 대기중...")
 
     # Checkpointer 사용 시 thread_id 필요
     import uuid
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     final_state = graph.invoke(initial_state, config=config)
-    print("[완료] 에이전트 종료")
+    logger.info("[완료] 에이전트 종료")
 
     # Save result
     output = Path(ldr_path).parent / f"{Path(ldr_path).stem}_evolved.ldr"
@@ -140,26 +143,26 @@ def run_agent(ldr_path: str, glb_path: str = None):
 
     # 에이전트 실행 후 색상 분포 출력
     after_color_dist = Counter(b.color_code for b in final_state["model"].bricks)
-    print(f"\n[COLOR DEBUG] 에이전트 실행 후 색상 분포:")
+    logger.debug("[COLOR DEBUG] 에이전트 실행 후 색상 분포:")
     for color, count in after_color_dist.most_common():
-        print(f"  color_code={color}: {count}개")
+        logger.debug("  color_code=%s: %s개", color, count)
 
     # Print summary
     initial_floating = get_model_state(initial_state["model_backup"], parts_db)["floating_count"]
 
-    print("\n" + "=" * 60)
-    print("RESULT")
-    print("=" * 60)
-    print(f"Floating: {initial_floating} -> {final_state['floating_count']}")
-    print(f"Removed: {final_state['total_removed']}")
-    print(f"Iterations: {final_state['iteration']}")
-    print(f"Reason: {final_state['finish_reason']}")
-    print(f"Saved: {output}")
+    logger.info("=" * 60)
+    logger.info("RESULT")
+    logger.info("=" * 60)
+    logger.info("Floating: %s -> %s", initial_floating, final_state['floating_count'])
+    logger.info("Removed: %s", final_state['total_removed'])
+    logger.info("Iterations: %s", final_state['iteration'])
+    logger.info("Reason: %s", final_state['finish_reason'])
+    logger.info("Saved: %s", output)
 
     # Log Success if fixed
     if final_state['floating_count'] == 0 and final_state['finish_reason'] == "All fixed!":
         success_lesson = "SUCCESS: Model is valid. No floating bricks or collisions found."
-        print(f"\n[Lessons Learned]\n  - {success_lesson}")
+        logger.info("[Lessons Learned]\n  - %s", success_lesson)
         
         # Log to DB
         if memory_manager:
@@ -193,13 +196,13 @@ def run_agent(ldr_path: str, glb_path: str = None):
                     )
                 )
             except Exception as e:
-                print(f"⚠️ [Run Agent] Log failed: {e}")
+                logger.warning("⚠️ [Run Agent] Log failed: %s", e)
 
-    print("\n[Lessons Learned History]")
+    logger.info("[Lessons Learned History]")
     for lesson in final_state["memory"]["lessons"]:
-        print(f"  - {lesson}")
+        logger.info("  - %s", lesson)
 
-    print("=" * 60)
+    logger.info("=" * 60)
 
 def run_evolver_direct(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
     """직접 호출용 (subprocess 없이). pipeline.py에서 사용.
@@ -278,14 +281,13 @@ def run_evolver_direct(ldr_path: str, glb_path: str = None, log_callback=None) -
         with open(output, 'w', encoding='utf-8') as f:
             f.write(ldr)
 
-        print(f"[Evolver Direct] Saved: {output}")
-        print(f"[Evolver Direct] Floating: {final_state.get('floating_count', '?')}, Removed: {final_state.get('total_removed', 0)}")
+        logger.info("[Evolver Direct] Saved: %s", output)
+        logger.info("[Evolver Direct] Floating: %s, Removed: %s", final_state.get('floating_count', '?'), final_state.get('total_removed', 0))
 
         return {"success": True}
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.error("[Evolver Direct] Exception occurred: %s", e, exc_info=True)
         return {"success": False, "reason": str(e)}
 
 
@@ -293,8 +295,8 @@ def print_mermaid():
     """LangGraph 그래프를 Mermaid 코드로 출력"""
     graph = build_graph()
     mermaid = graph.get_graph().draw_mermaid()
-    print(mermaid)
-    print("\nhttps://mermaid.live 에 붙여넣기")
+    logger.info("%s", mermaid)
+    logger.info("https://mermaid.live 에 붙여넣기")
 
 
 if __name__ == "__main__":

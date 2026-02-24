@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import base64
@@ -27,6 +28,8 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from fpdf import FPDF
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/instructions", tags=["instructions"])
@@ -154,7 +157,7 @@ class InstructionsPDF(FPDF):
                 self.add_font("Malgun", "B", font_bold_path, uni=True)
             self.korean_font = "Malgun"
         else:
-            print("[PDF] Warning: No Korean font found. Using Helvetica.")
+            logger.warning("No Korean font found. Using Helvetica.")
             self.korean_font = "Helvetica"
     
     def header(self):
@@ -199,7 +202,7 @@ def generate_pdf_with_images_and_bom(
             page_w = pdf.w - pdf.l_margin - pdf.r_margin
             pdf.image(img_io, x=pdf.l_margin + 20, w=page_w - 40)
         except Exception as e:
-            print(f"[PDF] Cover image error: {e}")
+            logger.error("Cover image error: %s", e)
     
     # 각 Step 페이지
     for step_idx, images in enumerate(step_images):
@@ -220,7 +223,7 @@ def generate_pdf_with_images_and_bom(
                 page_w = pdf.w - pdf.l_margin - pdf.r_margin
                 pdf.image(img_io, x=pdf.l_margin, w=page_w, h=90)
             except Exception as e:
-                print(f"[PDF] Step {step_no} main image error: {e}")
+                logger.error("Step %s main image error: %s", step_no, e)
         
         pdf.ln(95)
         
@@ -236,7 +239,7 @@ def generate_pdf_with_images_and_bom(
                         x_pos = pdf.l_margin + (i * (sub_w + 5))
                         pdf.image(img_io, x=x_pos, y=start_y, w=sub_w, h=55)
                     except Exception as e:
-                        print(f"[PDF] Step {step_no} sub image {i+2} error: {e}")
+                        logger.error("Step %s sub image %s error: %s", step_no, i+2, e)
             
             pdf.ln(60)
         
@@ -369,10 +372,10 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
     """
     try:
         # 1. LDR 파일 다운로드 및 BOM 파싱
-        print(f"[PDF] Fetching LDR from: {req.ldrUrl}")
+        logger.info("Fetching LDR from: %s", req.ldrUrl)
         ldr_text = await fetch_ldr_text(req.ldrUrl)
         step_boms = parse_ldr_step_boms(ldr_text)
-        print(f"[PDF] Parsed {len(step_boms)} steps from LDR")
+        logger.info("Parsed %s steps from LDR", len(step_boms))
         
         # 2. Base64 이미지 디코딩
         step_images: List[List[bytes]] = []
@@ -383,11 +386,11 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
                     img_bytes = decode_base64_image(img_b64)
                     images_bytes.append(img_bytes)
                 except Exception as e:
-                    print(f"[PDF] Image decode error at step {step_item.stepIndex}: {e}")
+                    logger.error("Image decode error at step %s: %s", step_item.stepIndex, e)
                     images_bytes.append(b"")
             step_images.append(images_bytes)
         
-        print(f"[PDF] Decoded {len(step_images)} step image sets")
+        logger.info("Decoded %s step image sets", len(step_images))
         
         # 3. 커버 이미지 디코딩
         cover_bytes = None
@@ -395,17 +398,17 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
             try:
                 cover_bytes = decode_base64_image(req.coverImage)
             except Exception as e:
-                print(f"[PDF] Cover image decode error: {e}")
+                logger.error("Cover image decode error: %s", e)
         
         # 4. PDF 생성
-        print(f"[PDF] Generating PDF for: {req.modelName}")
+        logger.info("Generating PDF for: %s", req.modelName)
         pdf_bytes = generate_pdf_with_images_and_bom(
             model_name=req.modelName,
             step_images=step_images,
             step_boms=step_boms,
             cover_image=cover_bytes
         )
-        print(f"[PDF] Generated PDF: {len(pdf_bytes)} bytes")
+        logger.info("Generated PDF: %s bytes", len(pdf_bytes))
         
         # 5. S3 업로드
         if USE_S3 and S3_BUCKET:
@@ -414,7 +417,7 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
             s3_key = f"{PDF_S3_PREFIX}/{now.year:04d}/{now.month:02d}/{uuid.uuid4().hex[:8]}_{safe_name}.pdf"
 
             pdf_url = upload_bytes_to_s3(pdf_bytes, s3_key, "application/pdf")
-            print(f"[PDF] Uploaded to S3: {pdf_url}")
+            logger.info("Uploaded to S3: %s", pdf_url)
             
             return PdfWithBomResponse(ok=True, pdfUrl=pdf_url)
         else:
@@ -429,9 +432,9 @@ async def create_pdf_with_bom(req: PdfWithBomRequest):
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"LDR fetch failed: {e.response.status_code}")
     except Exception as e:
-        print(f"[PDF] Error: {e}")
+        logger.error("PDF Error: %s", e)
         import traceback
-        traceback.print_exc()
+        logger.error("PDF Error traceback", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

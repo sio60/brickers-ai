@@ -3,13 +3,15 @@ Celery Screenshot Producer - AI Server에서 Screenshot Server로 Celery 태스�
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
+
 
 def _log(msg: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[{ts}] [CeleryProducer] {msg}")
+    logger.info("%s", msg)
 
 
 def _is_truthy(v: str) -> bool:

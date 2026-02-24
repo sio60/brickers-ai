@@ -2,9 +2,12 @@
 """S3 업로드 / 다운로드 / URL 생성 유틸리티"""
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from service.kids_config import _is_truthy, GENERATED_DIR, STATIC_PREFIX
 
@@ -153,7 +156,7 @@ def to_generated_url(p: Path, out_dir: Path) -> str:
             if s3_url:
                 return s3_url
         except Exception as e:
-            print(f"[S3 upload failed, fallback to local] {e}")
+            logger.warning("[S3 upload failed, fallback to local] %s", e)
 
     url = f"{STATIC_PREFIX}/" + rel.as_posix()
     if AI_PUBLIC_BASE_URL:

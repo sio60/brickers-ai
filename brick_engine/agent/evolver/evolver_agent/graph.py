@@ -3,6 +3,7 @@ Enhanced with:
 1. Checkpointer (Time Travel)
 2. Send() API ready (parallel proposals)
 """
+import logging
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 from .state import AgentState
@@ -17,6 +18,8 @@ from .nodes import (
     node_finish
 )
 
+logger = logging.getLogger(__name__)
+
 def route_after_supervisor(state: AgentState) -> str:
     """Route after supervisor decision"""
     if state.get("should_finish"):
@@ -29,11 +32,11 @@ def route_after_reflect(state: AgentState) -> str:
 
     # 3회 다 돌았으면 종료
     if iteration >= FIXED_ITERATIONS:
-        print(f"  [COMPLETE] {FIXED_ITERATIONS}회 반복 완료")
+        logger.info("  [COMPLETE] %s회 반복 완료", FIXED_ITERATIONS)
         return "finish"
 
     # 아직 3회 안 됐으면 계속
-    print(f"  [CONTINUE] {iteration}/{FIXED_ITERATIONS}회 완료, 계속 진행")
+    logger.info("  [CONTINUE] %s/%s회 완료, 계속 진행", iteration, FIXED_ITERATIONS)
     return "observe"
 
 def build_graph() -> StateGraph:

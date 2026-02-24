@@ -7,10 +7,13 @@ LDR 파일 파싱 → JSON 구조 변환
 - 일반: X(좌우), Y(앞뒤), Z(+가 위)
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================
@@ -280,7 +283,7 @@ def parse_brick_line(line: str, line_num: int, brick_id: int) -> Optional[Brick]
         )
 
     except (ValueError, IndexError) as e:
-        print(f"[Parser] 라인 {line_num} 파싱 실패: {e}")
+        logger.warning("[Parser] 라인 %s 파싱 실패: %s", line_num, e)
         return None
 
 

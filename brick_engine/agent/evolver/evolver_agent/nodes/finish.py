@@ -1,11 +1,14 @@
 """FINISH Node - Complete and save"""
+import logging
 from ..state import AgentState
 # from ..path_utils import setup_db_paths
+
+logger = logging.getLogger(__name__)
 
 
 def node_finish(state: AgentState) -> AgentState:
     """Finish the agent run and save memory to MongoDB"""
-    print(f"\n[FINISH] {state['finish_reason']}")
+    logger.info("[FINISH] %s", state['finish_reason'])
 
     # MongoDB에 학습 결과 저장
     try:
@@ -18,7 +21,7 @@ def node_finish(state: AgentState) -> AgentState:
         try:
             mongo_uri = os.getenv("MONGODB_URI")
             if not mongo_uri:
-                print(f"  [MongoDB] MONGODB_URI not set, skip save")
+                logger.info("  [MongoDB] MONGODB_URI not set, skip save")
                 return state
 
             client = MongoClient(mongo_uri, serverSelectionTimeoutMS=3000)
@@ -65,17 +68,17 @@ def node_finish(state: AgentState) -> AgentState:
                 upsert=True
             )
 
-            print(f"  [MongoDB] Memory saved: {model_id}")
-            print(f"    - Lessons: {len(state['memory']['lessons'])}")
-            print(f"    - Success: {len(state['memory']['successful_patterns'])}")
-            print(f"    - Failed: {len(state['memory']['failed_approaches'])}")
+            logger.info("  [MongoDB] Memory saved: %s", model_id)
+            logger.info("    - Lessons: %s", len(state['memory']['lessons']))
+            logger.info("    - Success: %s", len(state['memory']['successful_patterns']))
+            logger.info("    - Failed: %s", len(state['memory']['failed_approaches']))
 
         except ImportError as e:
-            print(f"  [MongoDB] Skip save (DB module not found): {e}")
+            logger.info("  [MongoDB] Skip save (DB module not found): %s", e)
         except Exception as e:
-            print(f"  [MongoDB] Save failed: {e}")
+            logger.error("  [MongoDB] Save failed: %s", e)
 
     except Exception as e:
-        print(f"  [FINISH] Warning - Memory save error: {e}")
+        logger.warning("  [FINISH] Warning - Memory save error: %s", e)
 
     return state

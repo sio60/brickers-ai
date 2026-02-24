@@ -2,6 +2,7 @@
 """LDView를 사용하여 LDR 완성 모델의 6면 스크린샷 렌더링"""
 from __future__ import annotations
 
+import logging
 import os
 import math
 import shutil
@@ -13,6 +14,8 @@ from typing import Dict
 
 import anyio
 from PIL import Image, ImageOps
+
+logger = logging.getLogger(__name__)
 
 LDVIEW_BIN = os.environ.get("LDVIEW_BIN", "LDView")
 LDRAWDIR = os.environ.get("LDRAWDIR", "/usr/share/ldraw")
@@ -63,16 +66,16 @@ def _render_snapshot(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            print(f"[LDView] exit={result.returncode} | {Path(ldr_path).name}")
+            logger.warning("[LDView] exit=%s | %s", result.returncode, Path(ldr_path).name)
             if result.stderr:
-                print(f"[LDView] stderr: {result.stderr[:500]}")
+                logger.warning("[LDView] stderr: %s", result.stderr[:500])
         exists = Path(output_path).exists() and Path(output_path).stat().st_size > 0
         return exists
     except subprocess.TimeoutExpired:
-        print(f"[LDView] Timeout rendering {Path(ldr_path).name}")
+        logger.error("[LDView] Timeout rendering %s", Path(ldr_path).name)
         return False
     except FileNotFoundError:
-        print(f"[LDView] Binary not found: {LDVIEW_BIN}")
+        logger.error("[LDView] Binary not found: %s", LDVIEW_BIN)
         return False
 
 
@@ -115,12 +118,12 @@ def _render_6_views_sync(
                 padded.save(buf, format="PNG")
                 screenshots[view_name] = buf.getvalue()
                 ok_count += 1
-                print(f"  [Screenshot] {view_name}: OK ({len(screenshots[view_name])} bytes)")
+                logger.info("[Screenshot] %s: OK (%s bytes)", view_name, len(screenshots[view_name]))
             else:
                 screenshots[view_name] = b""
-                print(f"  [Screenshot] {view_name}: FAILED")
+                logger.warning("[Screenshot] %s: FAILED", view_name)
 
-        print(f"[Screenshot] Done: {ok_count}/{total} views rendered")
+        logger.info("[Screenshot] Done: %s/%s views rendered", ok_count, total)
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -181,12 +184,12 @@ def _render_custom_angles_sync(
                 with open(png_file, "rb") as pf:
                     results[name] = pf.read()
                 ok_count += 1
-                print(f"  [Render] {name}: OK")
+                logger.info("[Render] %s: OK", name)
             else:
                 results[name] = b""
-                print(f"  [Render] {name}: FAILED")
+                logger.warning("[Render] %s: FAILED", name)
 
-        print(f"[Render] Done: {ok_count}/{len(angles)} angles rendered")
+        logger.info("[Render] Done: %s/%s angles rendered", ok_count, len(angles))
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

@@ -8,6 +8,7 @@
 
 Enhanced: Structured Output (Pydantic) + Dynamic Strategy Pooling
 """
+import logging
 import json
 import sys
 from typing import List, Set, Dict
@@ -19,6 +20,8 @@ from ..prompts import SUPERVISOR_SYSTEM
 from ..constants import (
     MAX_REMOVAL_RATIO, FIXED_ITERATIONS, SKIP_SYMMETRY_TYPES, LLM_MODEL, LLM_TIMEOUT
 )
+
+logger = logging.getLogger(__name__)
 
 llm = ChatOpenAI(model=LLM_MODEL, temperature=0.3, timeout=LLM_TIMEOUT)
 
@@ -227,7 +230,7 @@ def _match_target_to_strategy(strategy: str, vision_problems: List[Dict], reason
 
 def _flush_print(msg: str):
     """실시간 출력"""
-    print(msg)
+    logger.info(msg)
     sys.stdout.flush()
 
 
@@ -246,7 +249,7 @@ def node_supervisor(state: AgentState) -> AgentState:
     """전략 결정 - 동적 전략 풀링"""
     from ..config import log_sse
     log_sse("EVOLVER_PLAN", "어디를 고치면 더 자연스러워질지 분석하고 있어요.")
-    print(f"\n[SUPERVISOR] 전략 결정 중... (반복 {state['iteration']}/{FIXED_ITERATIONS})")
+    logger.info("[SUPERVISOR] 전략 결정 중... (반복 %s/%s)", state['iteration'], FIXED_ITERATIONS)
 
     # 삭제 한도 체크
     limit = int(state["original_brick_count"] * MAX_REMOVAL_RATIO)
@@ -265,9 +268,9 @@ def node_supervisor(state: AgentState) -> AgentState:
     symmetry_count = len(state.get("symmetry_issues", []))
     floating_count = state["floating_count"]
 
-    print(f"  [모델] {model_type}")
-    print(f"  [상태] vision={vision_count}, symmetry={symmetry_count}, floating={floating_count}")
-    print(f"  [전략 풀] {valid}")
+    logger.info("  [모델] %s", model_type)
+    logger.info("  [상태] vision=%s, symmetry=%s, floating=%s", vision_count, symmetry_count, floating_count)
+    logger.info("  [전략 풀] %s", valid)
 
     # 동적 컨텍스트 생성
     context = _build_context(state, valid)
@@ -293,9 +296,9 @@ def node_supervisor(state: AgentState) -> AgentState:
         reasoning = decision.reasoning
 
         if not strategy:
-            print(f"  [WARNING] 유효한 전략 없음, fallback 사용")
+            logger.warning("  [WARNING] 유효한 전략 없음, fallback 사용")
     except Exception as e:
-        print(f"  [WARNING] LLM 에러: {e}")
+        logger.warning("  [WARNING] LLM 에러: %s", e)
 
     # Fallback - 첫 번째 유효 전략 사용
     if not strategy:
@@ -303,8 +306,8 @@ def node_supervisor(state: AgentState) -> AgentState:
         confidence = 50
         reasoning = f"fallback: {strategy}"
 
-    print(f"  전략: {strategy} (확신도: {confidence}%)")
-    print(f"  이유: {_safe_truncate(reasoning, 200)}")
+    logger.info("  전략: %s (확신도: %s%%)", strategy, confidence)
+    logger.info("  이유: %s", _safe_truncate(reasoning, 200))
 
     # 대상 선택
     target = None

@@ -11,8 +11,8 @@ logger = logging.getLogger("HypothesisMakerNodes")
 # 1. RAG 기반 성공/실패 사례 검색 노드 (대량 검색)
 async def node_search_cases(state: HypothesisState) -> Dict[str, Any]:
     """과거의 성공 및 실패 사례를 메모리에서 대량으로 검색합니다."""
-    print("\n" + "🔍" * 20)
-    print(" [Hypothesis Search] 토론을 위한 맞춤형 사례 데이터베이스 검색 중...")
+    logger.info("🔍" * 20)
+    logger.info("[Hypothesis Search] 토론을 위한 맞춤형 사례 데이터베이스 검색 중...")
     
     # [LOG]
     job_id = state.get("job_id", "offline")
@@ -39,7 +39,7 @@ async def node_search_cases(state: HypothesisState) -> Dict[str, Any]:
     success_cases = rag_results.get("success", [])[:5]
     failure_cases = rag_results.get("failure", [])[:15]
     
-    print(f"  📚 검색 완료: 성공 사례 {len(success_cases)}건, 실패 사례 {len(failure_cases)}건 확보")
+    logger.info("  📚 검색 완료: 성공 사례 %s건, 실패 사례 %s건 확보", len(success_cases), len(failure_cases))
     
     await send_agent_log(job_id, "search_cases", f"검색 완료: 성공 사례 {len(success_cases)}건, 실패 사례 {len(failure_cases)}건을 찾았습니다.")
 
@@ -58,9 +58,9 @@ async def node_draft_creator(state: HypothesisState) -> Dict[str, Any]:
     round_num = state.get("round_count", 0) + 1
     job_id = state.get("job_id", "offline")
     
-    print("\n" + "━" * 60)
-    print(f" 🚩 [Round {round_num}] Gemini 전문가의 가설 수립 및 정교화 단계")
-    print("━" * 60)
+    logger.info("━" * 60)
+    logger.info("🚩 [Round %s] Gemini 전문가의 가설 수립 및 정교화 단계", round_num)
+    logger.info("━" * 60)
     
     if round_num == 1:
         await send_agent_log(job_id, "draft_hypothesis", "Gemini 전문가가 초기 가설을 수립하고 있습니다...")
@@ -92,17 +92,17 @@ async def node_draft_creator(state: HypothesisState) -> Dict[str, Any]:
     internal_score = result.get("internal_score", 70)
     hypothesis = result.get("hypothesis", "가설 생성 실패")
     
-    print(f"  💭 Gemini: \"{hypothesis[:100]}...\"")
+    logger.info("  💭 Gemini: \"%s...\"", hypothesis[:100])
     if round_num > 1:
         score_diff = internal_score - previous_score
         sign = "+" if score_diff >= 0 else ""
-        print(f"  ✨ 개선 포인트: {result.get('improvement_points', 'N/A')}")
-        print(f"  📈 점수 변화: {previous_score} -> {internal_score} ({sign}{score_diff}점)")
-        print(f"  ℹ️ 점수 산정 이유: {result.get('score_rationale', 'N/A')}")
+        logger.info("  ✨ 개선 포인트: %s", result.get('improvement_points', 'N/A'))
+        logger.info("  📈 점수 변화: %s -> %s (%s%s점)", previous_score, internal_score, sign, score_diff)
+        logger.info("  ℹ️ 점수 산정 이유: %s", result.get('score_rationale', 'N/A'))
         
         await send_agent_log(job_id, "refine_hypothesis", f"가설 수정 완료 (점수: {previous_score} -> {internal_score})")
     else:
-        print(f"  🎯 가설 점수: {internal_score}점")
+        logger.info("  🎯 가설 점수: %s점", internal_score)
         await send_agent_log(job_id, "draft_hypothesis", f"초기 가설 수립 완료 (점수: {internal_score}점)")
     
     history = state.get("debate_history", [])
@@ -118,7 +118,7 @@ async def node_draft_creator(state: HypothesisState) -> Dict[str, Any]:
 # 4. 최종 확정 노드
 async def node_refiner(state: HypothesisState) -> Dict[str, Any]:
     """모든 토론 결과를 종합하여 최종 실행 가설을 확정합니다."""
-    print("\n[Finalize] 토론을 마치고 최종 실행 계획을 확정합니다.")
+    logger.info("[Finalize] 토론을 마치고 최종 실행 계획을 확정합니다.")
     
     job_id = state.get("job_id", "offline")
     await send_agent_log(job_id, "finalize_hypothesis", "토론을 마치고 최종 가설을 확정하여 실행 준비 중입니다.")

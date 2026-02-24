@@ -2,10 +2,13 @@
 """Gemini 이미지 보정 + 메타데이터(Subject/Tags) 파싱"""
 from __future__ import annotations
 
+import logging
 import os
 import base64
 
 import anyio
+
+logger = logging.getLogger(__name__)
 from google import genai
 from google.genai import types as genai_types
 
@@ -109,7 +112,7 @@ def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") ->
         ):
             out_bytes = meta_text.strip()
         else:
-            print(f"[Gemini] Warning: No image returned from model (meta_text len: {len(meta_text)}). Falling back to original image.")
+            logger.warning("No image returned from model (meta_text len: %s). Falling back to original image.", len(meta_text))
             out_bytes = img_bytes
 
     out_bytes = _decode_if_base64_image(out_bytes)
@@ -136,7 +139,7 @@ def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") ->
 
     try:
         if meta_text:
-            print(f"[Gemini Meta] Raw extraction text: {meta_text[:100]}...")
+            logger.debug("Raw extraction text: %s...", meta_text[:100])
 
         if "SUBJECT:" in meta_text:
             s_part = meta_text.split("SUBJECT:")[1].split("|")[0].strip()
@@ -150,7 +153,7 @@ def _render_one_image_sync(img_bytes: bytes, mime: str, language: str = "en") ->
             t_part = meta_text.split("TAGS:")[1].strip()
             tags = [t.strip() for t in t_part.replace("#", "").split(",") if t.strip()]
     except Exception as e:
-        print(f"[Gemini Meta] Tag parse error: {e}")
+        logger.warning("Tag parse error: %s", e)
 
     # [NEW] Token Usage Extraction
     usage = {"input_tokens": 0, "output_tokens": 0}

@@ -6,6 +6,7 @@
 - X 음수 = 왼쪽 (LEFT)
 - X 양수 = 오른쪽 (RIGHT)
 """
+import logging
 import os
 import subprocess
 import shutil
@@ -15,12 +16,14 @@ import io
 from pathlib import Path
 from typing import Optional, List, Dict
 
+logger = logging.getLogger(__name__)
+
 try:
     from PIL import Image, ImageDraw, ImageFont
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
-    print("[WARNING] PIL not available, direction labels disabled")
+    logger.warning("PIL not available, direction labels disabled")
 
 # 로컬 LDView 경로: 환경변수 우선, 없으면 시스템 PATH에서 탐색
 LDVIEW_BIN = os.environ.get("LDVIEW_BIN", "LDView")
@@ -152,7 +155,7 @@ def render_ldr_multi_angle(
     results = {}
     for angle in angles:
         if angle not in CAMERA_ANGLES:
-            print(f"Warning: Unknown angle '{angle}', skipping")
+            logger.warning("Unknown angle '%s', skipping", angle)
             continue
 
         lat, lon, label = CAMERA_ANGLES[angle]
@@ -160,7 +163,7 @@ def render_ldr_multi_angle(
             b64 = render_ldr_to_base64(ldr_path, width, height, lat, lon, label)
             results[angle] = b64
         except Exception as e:
-            print(f"Error rendering {angle}: {e}")
+            logger.error("Error rendering %s: %s", angle, e)
             results[angle] = None
 
     return results
@@ -176,7 +179,7 @@ def _render_via_http(ldr_text: str, angles: List[str],
     import httpx
 
     url = f"{SCREENSHOT_SERVER_URL}/render/multi-angle"
-    print(f"  [Render] HTTP fallback → {url}")
+    logger.info("[Render] HTTP fallback → %s", url)
 
     resp = httpx.post(
         url,
@@ -221,7 +224,7 @@ def render_model_multi_angle(model, parts_db, angles: List[str] = None,
 
     # 전략 1: 로컬 LDView
     if LDVIEW_LOCAL_AVAILABLE:
-        print(f"  [Render] Local LDView: {LDVIEW_BIN}")
+        logger.info("[Render] Local LDView: %s", LDVIEW_BIN)
         with tempfile.NamedTemporaryFile(suffix=".ldr", delete=False, mode='w', encoding='utf-8') as f:
             f.write(ldr_content)
             ldr_path = f.name
@@ -232,11 +235,11 @@ def render_model_multi_angle(model, parts_db, angles: List[str] = None,
             Path(ldr_path).unlink(missing_ok=True)
 
     # 전략 2: screenshot-server HTTP 폴백
-    print(f"  [Render] LDView not found locally, using HTTP fallback")
+    logger.info("[Render] LDView not found locally, using HTTP fallback")
     try:
         return _render_via_http(ldr_content, angles, width, height)
     except Exception as e:
-        print(f"  [Render] HTTP fallback failed: {e}")
+        logger.error("[Render] HTTP fallback failed: %s", e)
         return {}
 
 

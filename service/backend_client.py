@@ -2,9 +2,12 @@
 """Backend 연동 (Stage 업데이트, Tags 저장, Agent 로그 전송)"""
 from __future__ import annotations
 
+import logging
 import os
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8080").rstrip("/")
 
@@ -18,9 +21,9 @@ async def update_job_stage(job_id: str, stage: str) -> None:
                 json={"stage": stage},
                 headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
             )
-        print(f"   \u2705 [Stage Update] {stage}")
+        logger.info("✅ [Stage Update] %s", stage)
     except Exception as e:
-        print(f"   \u26a0\ufe0f [Stage Update] \uc2e4\ud328 (\ubb34\uc2dc) | stage={stage} | error={str(e)}")
+        logger.warning("⚠️ [Stage Update] 실패 (무시) | stage=%s | error=%s", stage, e)
 
 
 async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
@@ -35,11 +38,11 @@ async def update_job_suggested_tags(job_id: str, tags: list[str]) -> None:
                 headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
             )
             if resp.status_code >= 400:
-                print(f"   \u26a0\ufe0f [Suggested Tags] Backend 응답 에러: Status={resp.status_code} | Body={resp.text}")
+                logger.warning("⚠️ [Suggested Tags] Backend 응답 에러: Status=%s | Body=%s", resp.status_code, resp.text)
             else:
-                print(f"   \u2705 [Suggested Tags] 저장 성공: Status={resp.status_code} | Tags={tags}")
+                logger.info("✅ [Suggested Tags] 저장 성공: Status=%s | Tags=%s", resp.status_code, tags)
     except Exception as e:
-        print(f"   \u26a0\ufe0f [Suggested Tags] 저장 실패 (통신 오류) | tags={tags} | error={str(e)}")
+        logger.warning("⚠️ [Suggested Tags] 저장 실패 (통신 오류) | tags=%s | error=%s", tags, e)
 
 
 async def update_job_category(job_id: str, category: str) -> None:
@@ -54,11 +57,11 @@ async def update_job_category(job_id: str, category: str) -> None:
                 headers={"X-Internal-Token": os.environ.get("INTERNAL_API_TOKEN", "")},
             )
             if resp.status_code >= 400:
-                print(f"   \u26a0\ufe0f [Category] Backend 응답 에러: Status={resp.status_code} | Body={resp.text}")
+                logger.warning("⚠️ [Category] Backend 응답 에러: Status=%s | Body=%s", resp.status_code, resp.text)
             else:
-                print(f"   \u2705 [Category] 저장 성공: Status={resp.status_code} | Category={category}")
+                logger.info("✅ [Category] 저장 성공: Status=%s | Category=%s", resp.status_code, category)
     except Exception as e:
-        print(f"   \u26a0\ufe0f [Category] 저장 실패 (통신 오류) | category={category} | error={str(e)}")
+        logger.warning("⚠️ [Category] 저장 실패 (통신 오류) | category=%s | error=%s", category, e)
 
 
 def make_agent_log_sender(job_id: str):
@@ -76,11 +79,11 @@ def make_agent_log_sender(job_id: str):
                 timeout=5.0,
             )
             if resp.status_code == 200:
-                print(f"  [AgentLog] \u2705 sent: [{step}] {message[:50]}...")
+                logger.info("[AgentLog] ✅ sent: [%s] %s...", step, message[:50])
             else:
-                print(f"  [AgentLog] \u26a0\ufe0f HTTP {resp.status_code} | url={url} | body={resp.text[:100]}")
+                logger.warning("[AgentLog] ⚠️ HTTP %s | url=%s | body=%s", resp.status_code, url, resp.text[:100])
         except Exception as e:
-            print(f"  [AgentLog] \u274c failed: {e} | url={url}")
+            logger.error("[AgentLog] ❌ failed: %s | url=%s", e, url)
 
     return send_log
 
@@ -97,11 +100,11 @@ async def check_job_canceled(job_id: str) -> bool:
                 data = resp.json()
                 status = data.get("status", "")
                 if status == "CANCELED":
-                    print(f"   🚫 [Job Status] Job is CANCELED | jobId={job_id}")
+                    logger.warning("🚫 [Job Status] Job is CANCELED | jobId=%s", job_id)
                     return True
             return False
     except Exception as e:
-        print(f"   ⚠️ [Job Status] 상태 확인 실패 (진행) | jobId={job_id} | error={str(e)}")
+        logger.warning("⚠️ [Job Status] 상태 확인 실패 (진행) | jobId=%s | error=%s", job_id, e)
         return False  # 확인 실패 시 계속 진행
 
 
@@ -117,11 +120,11 @@ async def send_agent_log(job_id: str, step: str, message: str) -> None:
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
-                print(f"  [AgentLog] \u2705 sent: [{step}] {message[:50]}...")
+                logger.info("[AgentLog] ✅ sent: [%s] %s...", step, message[:50])
             else:
-                print(f"  [AgentLog] \u26a0\ufe0f HTTP {resp.status_code} | url={url} | body={resp.text[:100]}")
+                logger.warning("[AgentLog] ⚠️ HTTP %s | url=%s | body=%s", resp.status_code, url, resp.text[:100])
     except Exception as e:
-        print(f"  [AgentLog] \u274c failed: {e} | url={url}")
+        logger.error("[AgentLog] ❌ failed: %s | url=%s", e, url)
 
 
 async def send_agent_trace(
@@ -172,9 +175,9 @@ async def send_agent_trace(
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code != 200:
-                 print(f"  [Trace] \u26a0\ufe0f HTTP {resp.status_code} | body={resp.text[:100]}")
+                 logger.warning("[Trace] ⚠️ HTTP %s | body=%s", resp.status_code, resp.text[:100])
     except Exception as e:
-        print(f"  [Trace] \u274c failed: {type(e).__name__}: {e}")
+        logger.error("[Trace] ❌ failed: %s: %s", type(e).__name__, e)
 
 
 async def get_analytics_summary(days: int = 7) -> dict | None:
@@ -189,9 +192,9 @@ async def get_analytics_summary(days: int = 7) -> dict | None:
             )
             if resp.status_code == 200:
                 return resp.json()
-            print(f"  ⚠️ [BackendClient] Analytics Summary Error: {resp.status_code}")
+            logger.warning("⚠️ [BackendClient] Analytics Summary Error: %s", resp.status_code)
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Analytics Summary Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Analytics Summary Fail: %s", e)
     return None
 
 
@@ -208,7 +211,7 @@ async def get_daily_users(days: int = 30) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Daily Users Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Daily Users Fail: %s", e)
     return None
 
 
@@ -225,7 +228,7 @@ async def get_event_stats(event_name: str, days: int = 7) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Event Stats Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Event Stats Fail: %s", e)
     return None
 
 
@@ -242,7 +245,7 @@ async def get_user_activity(user_id: str, days: int = 30) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] User Activity Fail: {e}")
+        logger.warning("⚠️ [BackendClient] User Activity Fail: %s", e)
     return None
 
 
@@ -259,7 +262,7 @@ async def get_top_tags(days: int = 30, limit: int = 10) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Top Tags Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Top Tags Fail: %s", e)
     return None
 
 
@@ -278,7 +281,7 @@ async def get_heavy_users(days: int = 30, limit: int = 10) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  \u26a0\ufe0f [BackendClient] Heavy Users Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Heavy Users Fail: %s", e)
     return None
 
 
@@ -295,7 +298,7 @@ async def get_recent_contents(days: int = 1, limit: int = 50) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  \u26a0\ufe0f [BackendClient] Recent Contents Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Recent Contents Fail: %s", e)
     return None
 
 
@@ -315,7 +318,7 @@ async def hide_content(target_type: str, target_id: str, reason: str) -> bool:
             )
             return resp.status_code == 200
     except Exception as e:
-        print(f"  \u26a0\ufe0f [BackendClient] Hide Content Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Hide Content Fail: %s", e)
     return False
 
 
@@ -334,7 +337,7 @@ async def restore_content(target_type: str, target_id: str) -> bool:
             )
             return resp.status_code == 200
     except Exception as e:
-        print(f"  \u26a0\ufe0f [BackendClient] Restore Content Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Restore Content Fail: %s", e)
     return False
 
 
@@ -351,7 +354,7 @@ async def get_top_posts(days: int = 7, limit: int = 5) -> list | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        print(f"  \u26a0\ufe0f [BackendClient] Top Posts Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Top Posts Fail: %s", e)
     return None
 
 
@@ -367,11 +370,11 @@ async def get_full_report(days: int = 7) -> dict | None:
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
-                print("  ✅ [BackendClient] Full Report Fetched Successfully")
+                logger.info("✅ [BackendClient] Full Report Fetched Successfully")
                 return resp.json()
-            print(f"  ⚠️ [BackendClient] Full Report Error: {resp.status_code} | {resp.text[:100]}")
+            logger.warning("⚠️ [BackendClient] Full Report Error: %s | %s", resp.status_code, resp.text[:100])
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Full Report Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Full Report Fail: %s", e)
     return None
 
 
@@ -387,10 +390,10 @@ async def get_product_intelligence(days: int = 7) -> dict | None:
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
-                print("  ✅ [BackendClient] Product Intelligence Fetched")
+                logger.info("✅ [BackendClient] Product Intelligence Fetched")
                 return resp.json()
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Product Intelligence Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Product Intelligence Fail: %s", e)
     return None
 
 
@@ -405,9 +408,9 @@ async def get_performance_summary(days: int = 7) -> dict | None:
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
-                print("  ✅ [BackendClient] Performance Summary Fetched")
+                logger.info("✅ [BackendClient] Performance Summary Fetched")
                 return resp.json()
-            print(f"  ⚠️ [BackendClient] Performance Summary Error: {resp.status_code}")
+            logger.warning("⚠️ [BackendClient] Performance Summary Error: %s", resp.status_code)
     except Exception as e:
-        print(f"  ⚠️ [BackendClient] Performance Summary Fail: {e}")
+        logger.warning("⚠️ [BackendClient] Performance Summary Fail: %s", e)
     return None
