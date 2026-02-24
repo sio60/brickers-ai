@@ -9,10 +9,12 @@ from .core.llm_clients import GroqClient, GeminiClient, BaseLLMClient
 # 2. 개별 에이전트 패키지 노출
 from .regeneration import regeneration_loop, RegenerationGraph
 from .color_variant import run_color_variant
-from .evolver import run_agent as run_evolver_agent
 
 # 3. 브릭 조작 및 분석 도구
 from .merger import structural_merge
+
+# Note: evolver.run_agent는 sys.path 조작 + evolver_agent 의존성이 있어
+# 직접 import하면 ModuleNotFoundError 발생. evolver_runner.py에서 lazy import로 사용.
 
 __all__ = [
     "GroqClient",
@@ -21,7 +23,6 @@ __all__ = [
     "regeneration_loop",
     "RegenerationGraph",
     "run_color_variant",
-    "run_evolver_agent",
     "structural_merge",
 ]
 
