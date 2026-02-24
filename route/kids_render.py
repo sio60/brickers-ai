@@ -678,6 +678,7 @@ async def process_kids_request_internal(
                         "bom_unique_parts": len(bom_data["parts"]),
                         "est_cost": result.get("est_cost"), # [NEW]
                         "token_count": result.get("token_count"), # [NEW]
+                        "stability_score": result.get("stability_score", 100), # [NEW]
                     },
                 }
                 # CoScientist 사용 시 추가 정보 (Fallback이어도 기록이 있으면 포함)
