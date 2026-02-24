@@ -11,7 +11,7 @@ from ..rag_ranker import rerank_and_filter_cases
 
 async def node_hypothesize(graph, state) -> Dict[str, Any]:
     """가설 생성 노드: RAG 검색 및 Dual-Model 협업 가설 수립"""
-    from ...memory_utils import memory_manager
+    from ...core.memory_utils import memory_manager
 
     print("\n[Hypothesize] 가설 수립 및 RAG 검색 중 (Dual-Model)...")
     graph._log("HYPOTHESIZE", "유사한 브릭 구조를 참고해서 가능한 형태를 가정하고 있어요.")

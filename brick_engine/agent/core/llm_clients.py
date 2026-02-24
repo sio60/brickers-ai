@@ -29,7 +29,7 @@ try:
     from dotenv import load_dotenv
     
     _THIS_DIR = Path(__file__).resolve().parent
-    _PROJECT_ROOT = _THIS_DIR.parent.parent
+    _PROJECT_ROOT = _THIS_DIR.parent.parent.parent
     _ENV_PATH = _PROJECT_ROOT / ".env"
     
     if _ENV_PATH.exists():

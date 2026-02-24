@@ -49,7 +49,7 @@ from .prompts import (
     get_investigation_round_prompt,
     get_insight_generation_prompt,
 )
-from ..llm_clients import GeminiClient
+from ..core.llm_clients import GeminiClient
 
 logger = logging.getLogger("agent.log_analyzer.nodes")
 

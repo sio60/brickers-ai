@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 
 def node_generator(graph, state) -> Dict[str, Any]:
     """GLB -> LDR 변환 노드"""
-    from glb_to_ldr_embedded import convert_glb_to_ldr
+    from ....exporter.ldr_converter.glb_to_ldr_embedded import convert_glb_to_ldr
 
     print(f"\n[Generator] 변환 시도 {state['attempts'] + 1}/{state['max_retries']}")
     graph._log("GENERATE", f"설계안을 하나씩 구현해 보는 중이에요. ({state['attempts'] + 1}/{state['max_retries']})")

@@ -12,9 +12,13 @@ from typing import Dict, List, Tuple
 from dataclasses import dataclass, asdict
 from collections import Counter
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from ldr_converter import BrickModel, load_parts_db
+# 상위 디렉토리의 ldr_converter 참조
+try:
+    from ..ldr_converter import BrickModel, load_parts_db
+except (ImportError, ValueError):
+    # 직접 실행 시를 위한 폴백
+    sys.path.append(str(Path(__file__).parent.parent))
+    from ldr_converter import BrickModel, load_parts_db
 
 
 # LDraw 색상 코드 → 이름 매핑
@@ -37,7 +41,7 @@ LDRAW_COLOR_NAMES = {
     15: "White",
     19: "Tan",
     25: "Orange",
-    28: "Dark Green",
+    40: "Dark Green",
     70: "Reddish Brown",
     71: "Light Bluish Gray",
     72: "Dark Bluish Gray",

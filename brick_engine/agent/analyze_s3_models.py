@@ -7,7 +7,7 @@ from pathlib import Path
 # 프로젝트 루트 추가
 sys.path.append(str(Path(__file__).parent.parent))
 
-from agent.memory_utils import memory_manager
+from agent.core.memory_utils import memory_manager
 from physical_verification.ldr_loader import LdrLoader
 from physical_verification.pybullet_verifier import PyBulletVerifier
  

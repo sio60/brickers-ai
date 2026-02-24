@@ -70,7 +70,6 @@ class InstructionsPDF(FPDF):
 # Helpers
 # ---------------------------
 def _part_label(item: Dict[str, Any]) -> str:
-    # 의미매핑: name 우선. 없으면 canonicalFile/partFile
     return (
         item.get("name")
         or item.get("canonicalFile")
@@ -80,7 +79,6 @@ def _part_label(item: Dict[str, Any]) -> str:
 
 
 def _color_label(item: Dict[str, Any]) -> str:
-    # 구조: import_to_mongo에서 colorName 넣어둠
     return item.get("colorName") or f"Color_{item.get('color')}"
 
 
@@ -90,25 +88,18 @@ def _shorten(s: str, n: int = 60) -> str:
 
 
 def _print_kv(pdf: InstructionsPDF, k: str, v: str, size: int = 11):
-    # 왼쪽 마진으로 강제 복귀 (가로폭 부족 방지)
     pdf.set_x(pdf.l_margin)
-
     label_w = 35
-
     pdf.set_font(pdf.korean_font, "B", size)
     pdf.cell(label_w, 7, str(k), border=0)
-
     pdf.set_font(pdf.korean_font, "", size)
-
-    # ✅ 현재 X가 label_w 만큼 이동된 상태에서, 남은 폭을 직접 계산해서 multi_cell에 넣기
     remaining_w = pdf.w - pdf.r_margin - pdf.get_x()
     if remaining_w < 10:
-        # 혹시라도 너무 좁으면 줄바꿈하고 다시 출력
         pdf.ln(7)
         pdf.set_x(pdf.l_margin)
         remaining_w = pdf.w - pdf.r_margin - pdf.get_x()
-
     pdf.multi_cell(remaining_w, 7, str(v))
+
 
 def _try_add_step_image(
     pdf: InstructionsPDF,
@@ -116,24 +107,14 @@ def _try_add_step_image(
     model_stem: str,
     step_no: int,
 ) -> bool:
-    """
-    step_no: 1-based
-    이미지 파일 규칙: {model_stem}_step_{step_no:02d}.png
-    """
     if not step_images_dir:
         return False
-
     img_path = Path(step_images_dir) / f"{model_stem}_step_{step_no:02d}.png"
     if not img_path.exists():
         return False
-
-    # 페이지 가용 폭
     usable_w = pdf.w - pdf.l_margin - pdf.r_margin
-
-    # 이미지 삽입 (현재 커서 위치에)
     pdf.set_x(pdf.l_margin)
     pdf.image(str(img_path), x=pdf.l_margin, w=usable_w)
-
     pdf.ln(5)
     return True
 
@@ -180,7 +161,6 @@ def add_step_page(
     items: List[Dict[str, Any]] = step_doc.get("items") or []
 
     pdf.add_page()
-
     pdf.set_font(pdf.korean_font, "B", 14 if pdf.mode == "pro" else 18)
     pdf.cell(0, 10, f"STEP {step_no}", new_x="LMARGIN", new_y="NEXT")
 
@@ -194,20 +174,9 @@ def add_step_page(
     )
     pdf.ln(2)
 
-    # ✅ STEP 이미지 넣기
     if step_images_dir:
-        ok = _try_add_step_image(pdf, step_images_dir, model_stem, step_no)
-        if not ok:
-            pdf.set_font(pdf.korean_font, "", 10)
-            pdf.cell(
-                0,
-                6,
-                f"(이미지 없음) {model_stem}_step_{step_no:02d}.png",
-                new_x="LMARGIN",
-                new_y="NEXT",
-            )
+        _try_add_step_image(pdf, step_images_dir, model_stem, step_no)
 
-    # Table header
     pdf.set_font(pdf.korean_font, "B", 10 if pdf.mode == "pro" else 13)
     pdf.set_fill_color(60, 60, 60)
     pdf.set_text_color(255, 255, 255)
@@ -220,17 +189,14 @@ def add_step_page(
     pdf.cell(col_color, 8, "Color", border=1, fill=True, align="C")
     pdf.cell(col_qty, 8, "Qty", border=1, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
 
-    # rows
     pdf.set_text_color(0, 0, 0)
     pdf.set_font(pdf.korean_font, "", 10 if pdf.mode == "pro" else 13)
 
     for i, it in enumerate(items):
         pdf.set_fill_color(255, 255, 255 if i % 2 == 0 else 248)
-
         part = _shorten(_part_label(it), 70 if pdf.mode == "pro" else 55)
         color = _shorten(_color_label(it), 25)
         qty = it.get("qty", 0)
-
         pdf.cell(col_part, 7, str(part), border=1, fill=True)
         pdf.cell(col_color, 7, str(color), border=1, fill=True, align="C")
         pdf.cell(col_qty, 7, str(qty), border=1, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
@@ -240,42 +206,31 @@ def add_overall_bom_page(pdf: InstructionsPDF, boms_doc: Dict[str, Any]):
     items: List[Dict[str, Any]] = boms_doc.get("items") or []
     if not items:
         return
-
     pdf.add_page()
     pdf.set_font(pdf.korean_font, "B", 14 if pdf.mode == "pro" else 18)
     pdf.cell(0, 10, "전체 부품 목록 (Overall BOM)", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
-
     pdf.set_font(pdf.korean_font, "B", 10 if pdf.mode == "pro" else 13)
     pdf.set_fill_color(231, 76, 60)
     pdf.set_text_color(255, 255, 255)
-
     col_part = 115 if pdf.mode == "pro" else 95
     col_color = 45
     col_qty = 25 if pdf.mode == "pro" else 30
-
     pdf.cell(col_part, 8, "Part", border=1, fill=True)
     pdf.cell(col_color, 8, "Color", border=1, fill=True, align="C")
     pdf.cell(col_qty, 8, "Qty", border=1, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
-
     pdf.set_text_color(0, 0, 0)
     pdf.set_font(pdf.korean_font, "", 10 if pdf.mode == "pro" else 13)
-
     for i, it in enumerate(items):
         pdf.set_fill_color(255, 255, 255 if i % 2 == 0 else 248)
-
         part = _shorten(_part_label(it), 70 if pdf.mode == "pro" else 55)
         color = _shorten(_color_label(it), 25)
         qty = it.get("qty", 0)
-
         pdf.cell(col_part, 7, str(part), border=1, fill=True)
         pdf.cell(col_color, 7, str(color), border=1, fill=True, align="C")
         pdf.cell(col_qty, 7, str(qty), border=1, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
 
 
-# ---------------------------
-# Public API
-# ---------------------------
 def generate_instructions_pdf_from_boms_doc(
     boms_doc: Dict[str, Any],
     output_path: str,
@@ -286,25 +241,18 @@ def generate_instructions_pdf_from_boms_doc(
     job_id = boms_doc.get("jobId", "unknown_job")
     source_path = (boms_doc.get("source") or {}).get("path") or ""
     model_stem = Path(source_path).stem if source_path else "model"
-
     model_name = (
         boms_doc.get("modelName")
         or (Path(source_path).stem if source_path else "Model")
     )
-
     pdf = InstructionsPDF(model_name=model_name, job_id=job_id, mode=mode)
-
     add_cover(pdf, boms_doc)
-
     steps = boms_doc.get("steps") or []
     for s in steps:
         if s.get("items"):
             add_step_page(pdf, s, step_images_dir=step_images_dir, model_stem=model_stem)
-
     if include_overall_bom:
         add_overall_bom_page(pdf, boms_doc)
-
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     pdf.output(output_path)
     return output_path
-

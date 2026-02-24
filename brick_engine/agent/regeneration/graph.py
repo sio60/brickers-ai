@@ -6,11 +6,11 @@ from typing import Optional
 
 from langgraph.graph import StateGraph, END
 
-from ..llm_state import AgentState
-from ..llm_clients import BaseLLMClient, GeminiClient
+from ..core.llm_state import AgentState
+from ..core.llm_clients import BaseLLMClient, GeminiClient
 from ..hypothesis_maker.core import HypothesisMaker
 from ..hypothesis_maker import build_hypothesis_graph
-from ..memory_utils import memory_manager
+from ..core.memory_utils import memory_manager
 
 from .prompts import SYSTEM_PROMPT
 from .utils import trace_node

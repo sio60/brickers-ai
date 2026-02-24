@@ -55,18 +55,6 @@ def generate_bom_pdf(
 ) -> str:
     """
     BOM PDF 생성
-
-    Args:
-        model_name: 모델 이름
-        bom_entries: BOM 항목 리스트
-        total_parts: 총 부품 수
-        color_summary: 색상별 요약
-        output_path: 출력 파일 경로
-        mode: "pro" 또는 "kids"
-        age_group: Kids 모드일 때 연령대 (예: "4-6")
-
-    Returns:
-        생성된 파일 경로
     """
     pdf = BomPDF(model_name, mode)
     pdf.add_page()
@@ -167,8 +155,6 @@ def generate_bom_pdf(
 def generate_pdf_from_bom_report(bom_report, output_path: str, mode: str = "pro", age_group: Optional[str] = None) -> str:
     """
     BomReport 객체에서 PDF 생성
-
-    bom_generator.py의 BomReport 또는 dict 사용 가능
     """
     # dict인 경우
     if isinstance(bom_report, dict):
@@ -200,42 +186,3 @@ def generate_pdf_from_bom_report(bom_report, output_path: str, mode: str = "pro"
         mode=mode,
         age_group=age_group
     )
-
-
-# ============================================
-# 테스트
-# ============================================
-
-if __name__ == "__main__":
-    # 테스트용 BOM 데이터
-    test_bom = {
-        "model_name": "Simple Tower",
-        "total_parts": 17,
-        "entries": [
-            {"part_name": "Brick 2x4", "color_name": "Red", "count": 5},
-            {"part_name": "Brick 2x4", "color_name": "Light Gray", "count": 2},
-            {"part_name": "Brick 1x4", "color_name": "Red", "count": 4},
-            {"part_name": "Brick 1x2", "color_name": "Red", "count": 2},
-            {"part_name": "Slope 45 2x2", "color_name": "Brown", "count": 6},
-        ],
-        "color_summary": {
-            "Red": 11,
-            "Brown": 6,
-            "Light Gray": 2
-        }
-    }
-
-    output_dir = os.path.join(os.path.dirname(__file__), "output")
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Pro 모드
-    output_path = os.path.join(output_dir, "test_bom_pro.pdf")
-    generate_pdf_from_bom_report(test_bom, output_path, mode="pro")
-
-    # Kids 모드
-    output_path_kids = os.path.join(output_dir, "test_bom_kids.pdf")
-    generate_pdf_from_bom_report(test_bom, output_path_kids, mode="kids", age_group="4-6")
-
-    print("\n테스트 완료!")
-    print(f"Pro PDF: {output_path}")
-    print(f"Kids PDF: {output_path_kids}")
