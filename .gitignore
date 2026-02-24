@@ -28,3 +28,6 @@ brick_judge/rust/target/
 *.so
 *.dylib
 Cargo.lock
+
+# UI Viewer
+brick_judge/brick_judge_viewer.html
