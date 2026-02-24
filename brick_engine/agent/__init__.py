@@ -4,7 +4,7 @@
 # ============================================================================
 
 from .llm_regeneration_agent import regeneration_loop, RegenerationGraph
-from .llm_clients import GroqClient, GeminiClient, BaseLLMClient
+from .core.llm_clients import GroqClient, GeminiClient, BaseLLMClient
 
 __all__ = [
     "regeneration_loop",

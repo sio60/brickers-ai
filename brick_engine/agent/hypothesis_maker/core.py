@@ -12,15 +12,15 @@ import numpy as np
 
 # Project Modules
 try:
-    from ..llm_clients import OpenAIClient
-    from ..memory_utils import MemoryUtils, build_hypothesis
+    from ..core.llm_clients import OpenAIClient
+    from ..core.memory_utils import MemoryUtils, build_hypothesis
     import config
 except ImportError:
     # For standalone testing
     import sys
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
-    from llm_clients import OpenAIClient
-    from memory_utils import MemoryUtils, build_hypothesis
+    from core.llm_clients import OpenAIClient
+    from core.memory_utils import MemoryUtils, build_hypothesis
     import config
 
 from . import prompts

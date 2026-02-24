@@ -14,7 +14,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
     회고 노드: 검증 결과를 분석하고 성공/실패를 Memory에 기록합니다.
     Co-Scientist의 핵심 학습 메커니즘입니다.
     """
-    from ...memory_utils import (
+    from ...core.memory_utils import (
         memory_manager, build_hypothesis, build_experiment,
         build_verification, build_improvement,
     )

@@ -12,7 +12,7 @@ logger = logging.getLogger("agent.regeneration.verifier")
 
 from langchain_core.messages import HumanMessage
 
-from ...llm_state import VerificationFeedback
+from ...core.llm_state import VerificationFeedback
 from ..feedback import format_feedback
 
 

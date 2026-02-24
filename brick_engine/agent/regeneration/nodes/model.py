@@ -27,7 +27,7 @@ def _select_forced_tool(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     Returns:
         {"forced_tool": str, "tools": list, "end": bool} 또는 None
     """
-    from ...agent_tools import TuneParameters, RemoveBricks, MergeBricks
+    from ...tools.agent_tools import TuneParameters, RemoveBricks, MergeBricks
 
     tool_usage_count = state.get('tool_usage_count', {})
     current_metrics = state.get('current_metrics', {})
@@ -305,12 +305,9 @@ def _handle_no_tool_response(response, state: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 메인 노드 함수
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# 메인 노드 함수
-# ---------------------------------------------------------------------------
 def node_model(graph, state) -> Dict[str, Any]:
     """LLM이 상황을 분석하고 도구를 선택하는 노드"""
-    from ...agent_tools import TuneParameters, RemoveBricks, MergeBricks
+    from ...tools.agent_tools import TuneParameters, RemoveBricks, MergeBricks
 
     logger.info("\n[Co-Scientist] 상황 분석 중...")
     graph._log("ANALYZE", "불필요한 복잡성이 있는지 검토하고 있어요.")

@@ -9,9 +9,9 @@ from typing import Dict, Any, Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from ..llm_clients import BaseLLMClient
-from ..llm_state import AgentState
-from ..memory_utils import memory_manager
+from ..core.llm_clients import BaseLLMClient
+from ..core.llm_state import AgentState
+from ..core.memory_utils import memory_manager
 
 from .constants import DEFAULT_PARAMS
 from .graph import RegenerationGraph

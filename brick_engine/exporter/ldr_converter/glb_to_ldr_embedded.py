@@ -1,4 +1,4 @@
-﻿"""
+"""
 glb_to_ldr_embedded.py - Enhanced Brickify Engine
 - automatic stability detection and repair
 - floating brick pre-repair (structural reinforcement)
@@ -21,16 +21,19 @@ from typing import Dict, List, Any, Optional, Tuple, Literal, Set, Deque
 from collections import deque
 from pathlib import Path
 
-# Add current dir to path for pylego3d imports
+# Add project root to path for pylego3d imports
+# Now located in exporter/ldr_converter/, so root is two levels up
 _curr_dir = os.path.dirname(os.path.abspath(__file__))
-if _curr_dir not in sys.path:
-    sys.path.insert(0, _curr_dir)
+_project_root = os.path.abspath(os.path.join(_curr_dir, "..", ".."))
+
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 try:
     from pylego3d.optimizer import optimize_bricks
     from pylego3d.write_ldr import write_ldr
 except ImportError:
-    sys.path.append(_curr_dir)
+    sys.path.append(_project_root)
     from pylego3d.optimizer import optimize_bricks
     from pylego3d.write_ldr import write_ldr
 
@@ -671,4 +674,3 @@ if __name__ == "__main__":
         surface_only=False,
         support_direction=args.support_direction,
     )
-
