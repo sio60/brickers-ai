@@ -90,9 +90,12 @@ def _draw_bom_row(
     bg = 255 if row_idx % 2 == 0 else 245
     pdf.set_fill_color(bg, bg, bg)
 
-    # 파츠 썸네일
+    # 파츠 썸네일 — 셀 테두리를 먼저 그리고 이미지를 위에 올림
     thumb_key = f"{part.id}_{part.color}"
     thumb_data = thumbs.get(thumb_key, b"")
+
+    pdf.cell(_COL_IMG, _ROW_H, "", border=1, fill=True)
+
     if thumb_data:
         try:
             img_io = BytesIO(thumb_data)
@@ -101,8 +104,6 @@ def _draw_bom_row(
             logger.error("Thumb embed error: %s | %s", thumb_key, e)
     else:
         logger.debug("Thumb missing: %s (available keys: %s...)", thumb_key, list(thumbs.keys())[:5])
-
-    pdf.cell(_COL_IMG, _ROW_H, "", border=1, fill=True)
     pdf.cell(_COL_SIZE, _ROW_H, get_part_size(part.id), border=1, fill=True, align="C")
     pdf.cell(_COL_COLOR, _ROW_H, get_color_name(part.color), border=1, fill=True, align="C")
     pdf.set_font(pdf.korean_font, "B", 11)
