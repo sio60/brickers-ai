@@ -186,12 +186,13 @@ async def get_analytics_summary(days: int = 7) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/summary",
+                f"{BACKEND_URL}/api/admin/analytics/basic/summary-package",
                 params={"days": days},
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                return data.get("summary")
             logger.warning("⚠️ [BackendClient] Analytics Summary Error: %s", resp.status_code)
     except Exception as e:
         logger.warning("⚠️ [BackendClient] Analytics Summary Fail: %s", e)
@@ -204,12 +205,13 @@ async def get_daily_users(days: int = 30) -> list | None:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/daily-users",
+                f"{BACKEND_URL}/api/admin/analytics/basic/summary-package",
                 params={"days": days},
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                return data.get("dailyUsers", [])
     except Exception as e:
         logger.warning("⚠️ [BackendClient] Daily Users Fail: %s", e)
     return None
@@ -221,8 +223,8 @@ async def get_event_stats(event_name: str, days: int = 7) -> list | None:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/event-stats",
-                params={"event": event_name, "days": days},
+                f"{BACKEND_URL}/api/admin/analytics/deep/generation-trend",
+                params={"days": days},
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
@@ -255,12 +257,14 @@ async def get_top_tags(days: int = 30, limit: int = 10) -> list | None:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/top-tags",
-                params={"days": days, "limit": limit},
+                f"{BACKEND_URL}/api/admin/analytics/basic/summary-package",
+                params={"days": days},
                 headers={"X-Internal-Token": token},
             )
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                tags = data.get("topTags", [])
+                return tags[:limit] if tags else []
     except Exception as e:
         logger.warning("⚠️ [BackendClient] Top Tags Fail: %s", e)
     return None
@@ -274,7 +278,7 @@ async def get_heavy_users(days: int = 30, limit: int = 10) -> list | None:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/heavy-users",
+                f"{BACKEND_URL}/api/admin/analytics/basic/heavy-users",
                 params={"days": days, "limit": limit},
                 headers={"X-Internal-Token": token},
             )
@@ -365,7 +369,7 @@ async def get_full_report(days: int = 7) -> dict | None:
         # [CHANGE] Timeout reduced 120.0 -> 20.0 to prevent 502 Gateway Timeout
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/full-report",
+                f"{BACKEND_URL}/api/admin/analytics/deep/deep-insights",
                 params={"days": days},
                 headers={"X-Internal-Token": token},
             )
@@ -385,7 +389,7 @@ async def get_product_intelligence(days: int = 7) -> dict | None:
         # [CHANGE] Timeout reduced 60.0 -> 15.0
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/product-intelligence",
+                f"{BACKEND_URL}/api/admin/analytics/deep/product-intelligence",
                 params={"days": days},
                 headers={"X-Internal-Token": token},
             )
@@ -403,7 +407,7 @@ async def get_performance_summary(days: int = 7) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.get(
-                f"{BACKEND_URL}/api/admin/analytics/performance",
+                f"{BACKEND_URL}/api/admin/analytics/deep/performance",
                 params={"days": days},
                 headers={"X-Internal-Token": token},
             )
