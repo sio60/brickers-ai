@@ -204,8 +204,8 @@ def run_agent(ldr_path: str, glb_path: str = None):
 
     logger.info("=" * 60)
 
-def run_evolver_direct(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
-    """직접 호출용 (subprocess 없이). pipeline.py에서 사용.
+async def run_evolver_direct(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
+    """직접 호출용 (subprocess 없이). pipeline.py에서 사용. (async)
 
     Returns:
         {"success": True} or {"success": False, "reason": "..."}
@@ -273,7 +273,7 @@ def run_evolver_direct(ldr_path: str, glb_path: str = None, log_callback=None) -
         import uuid
         graph = build_graph()
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-        final_state = graph.invoke(initial_state, config=config)
+        final_state = await graph.ainvoke(initial_state, config=config)
 
         # Save evolved LDR
         output = Path(ldr_path).parent / f"{Path(ldr_path).stem}_evolved.ldr"

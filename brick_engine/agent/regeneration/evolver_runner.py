@@ -13,8 +13,8 @@ _BRICK_ENGINE_DIR = _AGENT_DIR.parent
 _EVOLVER_DIR = _BRICK_ENGINE_DIR / "exporter" / "evolver"
 
 
-def run_evolver(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
-    """Evolver 에이전트를 직접 호출로 실행 (형태 개선)
+async def run_evolver(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
+    """Evolver 에이전트를 async로 실행 (형태 개선)
 
     메인 에이전트 완료 후 후처리로 실행.
     실패해도 원본 LDR은 보존됨.
@@ -29,7 +29,7 @@ def run_evolver(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
 
     try:
         from run_agent import run_evolver_direct
-        result = run_evolver_direct(ldr_path, glb_path, log_callback=log_callback)
+        result = await run_evolver_direct(ldr_path, glb_path, log_callback=log_callback)
 
         if not result.get("success"):
             return result
