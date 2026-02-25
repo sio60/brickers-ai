@@ -3,7 +3,7 @@
 # ============================================================================
 
 # --- 도구 사용 제한 (model.py, tool_executor.py에서 공유) ---
-MAX_TOOL_USES = 5           # TuneParameters, MergeBricks 각각의 최대 사용 횟수
+MAX_TOOL_USES = 2           # TuneParameters, MergeBricks 각각의 최대 사용 횟수
 MAX_REMOVE_FALLBACK = 1     # RemoveBricks 최대 사용 횟수 (마지막 수단)
 
 DEFAULT_PARAMS = {
