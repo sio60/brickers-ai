@@ -9,8 +9,7 @@ from pathlib import Path
 
 _THIS_DIR = Path(__file__).resolve().parent
 _AGENT_DIR = _THIS_DIR.parent
-_BRICK_ENGINE_DIR = _AGENT_DIR.parent
-_EVOLVER_DIR = _BRICK_ENGINE_DIR / "exporter" / "evolver"
+_EVOLVER_DIR = _AGENT_DIR / "evolver"
 
 
 async def run_evolver(ldr_path: str, glb_path: str = None, log_callback=None) -> dict:
