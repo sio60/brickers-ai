@@ -7,7 +7,6 @@
 from .agent import (
     regeneration_loop,
     RegenerationGraph,
-    run_color_variant,
     structural_merge,
     GroqClient,
     GeminiClient,
@@ -33,7 +32,6 @@ except ImportError:
 __all__ = [
     "regeneration_loop",
     "RegenerationGraph",
-    "run_color_variant",
     "structural_merge",
     "GroqClient",
     "GeminiClient",
