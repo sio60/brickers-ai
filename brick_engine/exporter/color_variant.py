@@ -9,9 +9,6 @@ import json
 import logging
 from typing import Dict, List
 
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
-
 logger = logging.getLogger(__name__)
 
 # ========================================
@@ -105,19 +102,16 @@ COLOR_THEMES = {
 }
 
 # ========================================
-# LLM (커스텀 테마용)
+# LLM (커스텀 테마용) - openai 직접 호출
 # ========================================
-_llm = None
+_client = None
 
-def _get_llm():
-    global _llm
-    if _llm is None:
-        _llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.7,
-            api_key=os.getenv("OPENAI_API_KEY"),
-        )
-    return _llm
+def _get_client():
+    global _client
+    if _client is None:
+        from openai import OpenAI
+        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _client
 
 
 # ========================================
@@ -186,9 +180,13 @@ def get_color_mapping_from_llm(model_analysis: Dict, prompt: str) -> Dict[int, i
 ## Available LDraw Colors
 {available_colors}
 Map original color codes to new ones (JSON format). Only use provided codes."""
-    response = _get_llm().invoke([HumanMessage(content=llm_prompt)])
+    response = _get_client().chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.7,
+        messages=[{"role": "user", "content": llm_prompt}],
+    )
     try:
-        content = response.content.strip()
+        content = response.choices[0].message.content.strip()
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         result = json.loads(content)
