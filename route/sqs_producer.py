@@ -126,7 +126,7 @@ async def send_result_message(
                 "parts": parts,
                 "finalTarget": final_target,
                 "tags": tags or [],
-                "backgroundUrl": background_url or "",
+                **({"backgroundUrl": background_url} if background_url else {}),
             })
             log("   - success=True")
             log(f"   - ldrUrl: {ldr_url[:60]}..." if ldr_url else "   - ldrUrl: (empty)")

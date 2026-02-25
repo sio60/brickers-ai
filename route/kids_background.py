@@ -54,7 +54,7 @@ async def composite_background(
                 raise HTTPException(status_code=400, detail="file or ldrUrl is required")
             fg_bytes = await file.read()
 
-        # 3) 배경 생성
+        # 3)    
         bg_bytes = await generate_background_async(subject)
 
         # 4) 합성
