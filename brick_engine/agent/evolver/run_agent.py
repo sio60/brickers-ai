@@ -213,7 +213,9 @@ async def run_evolver_direct(ldr_path: str, glb_path: str = None, log_callback=N
     try:
         # parts_db 로드
         parts_db = {}
-        cache = EXPORTER_DIR / "parts_cache.json"
+        cache = EXPORTER_DIR / "data" / "parts_cache.json"
+        if not cache.exists():
+            cache = EXPORTER_DIR / "parts_cache.json"
         if cache.exists():
             with open(cache, 'r', encoding='utf-8') as f:
                 parts_db = json.load(f)
