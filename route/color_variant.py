@@ -75,7 +75,7 @@ class ThemesResponse(BaseModel):
 @router.get("/color-variant/themes", response_model=ThemesResponse)
 async def get_themes():
     """사용 가능한 색상 테마 목록"""
-    from agent.color_variant import COLOR_THEMES
+    from color_variant import COLOR_THEMES
 
     themes = [
         ThemeInfo(name=name, description=theme["description"])
@@ -116,7 +116,7 @@ async def apply_color_variant(req: ColorVariantRequest):
 
         try:
             # 3. color_variant 실행
-            from agent.color_variant import (
+            from color_variant import (
                 analyze_model_colors,
                 get_color_mapping_from_theme,
                 get_color_mapping_from_llm,

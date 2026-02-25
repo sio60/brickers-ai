@@ -8,7 +8,6 @@ from .core.llm_clients import GroqClient, GeminiClient, BaseLLMClient
 
 # 2. 개별 에이전트 패키지 노출
 from .regeneration import regeneration_loop, RegenerationGraph
-from .color_variant import run_color_variant
 
 # 3. 브릭 조작 및 분석 도구
 from .merger import structural_merge
@@ -22,7 +21,6 @@ __all__ = [
     "BaseLLMClient",
     "regeneration_loop",
     "RegenerationGraph",
-    "run_color_variant",
     "structural_merge",
 ]
 
