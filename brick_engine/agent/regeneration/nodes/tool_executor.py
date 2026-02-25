@@ -228,9 +228,16 @@ def node_tool_executor(graph, state) -> Dict[str, Any]:
         logger.info(f"  결과: {result_content}")
         tool_results.append(ToolMessage(content=result_content, tool_call_id=tool_call_id))
 
+    # MergeBricks/RemoveBricks는 generator를 거치지 않고 직접 verifier로 가므로
+    # attempts를 여기서 증가시켜야 max_retries 체크에 걸림
+    updated_attempts = state['attempts']
+    if next_step == "verifier":
+        updated_attempts += 1
+
     return {
         "messages": tool_results,
         "next_action": next_step,
+        "attempts": updated_attempts,
         "params": updated_params,
         "merged": updated_merged,
         "tool_usage_count": tool_usage_count,
