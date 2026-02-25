@@ -40,17 +40,19 @@ def load_engine_convert():
 
 
 def load_agent_modules():
-    """brick_engine/agent 에서 regeneration_loop, GeminiClient 동적 로드 (lazy singleton)"""
+    """brick_engine.agent 에서 regeneration_loop, GeminiClient 로드 (lazy singleton)
+
+    NOTE: brick_engine/ 를 sys.path에 넣고 `from agent.*` 로 임포트하면
+    agent 가 top-level 패키지가 되어, 내부 `from ....exporter` 같은
+    4-level 상대 임포트가 "attempted relative import beyond top-level package" 에러 발생.
+    반드시 `brick_engine.agent.*` 정규 패키지 경로로 임포트해야 함.
+    """
     global _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
     if _REGEN_LOOP_FN is not None:
         return _REGEN_LOOP_FN, _GEMINI_CLIENT_CLS
 
-    agent_dir = str((PROJECT_ROOT / "brick_engine").resolve())
-    if agent_dir not in sys.path:
-        sys.path.insert(0, agent_dir)
-
-    from agent.regeneration import regeneration_loop
-    from agent.core.llm_clients import GeminiClient
+    from brick_engine.agent.regeneration import regeneration_loop
+    from brick_engine.agent.core.llm_clients import GeminiClient
 
     _REGEN_LOOP_FN = regeneration_loop
     _GEMINI_CLIENT_CLS = GeminiClient
