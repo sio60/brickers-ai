@@ -106,7 +106,7 @@ def _inject_rag_context(
     graph, state: Dict[str, Any], messages: List, current_observation: str
 ) -> None:
     """RAG 기반 유사 사례 검색 후 메시지에 주입."""
-    from ...memory_utils import memory_manager
+    from ...core.memory_utils import memory_manager
 
     if not memory_manager:
         return
@@ -162,7 +162,7 @@ def _inject_rag_context(
 # ---------------------------------------------------------------------------
 def _inject_memory_and_rag(graph, state: Dict[str, Any], messages: List) -> None:
     """레거시 메모리 및 고속 RAG 사례를 메시지에 주입."""
-    from ...memory_utils import memory_manager
+    from ...core.memory_utils import memory_manager
 
     # 1. 고속 RAG (사용자 요청: Reranking 제외하여 지연시간 단축)
     if memory_manager:

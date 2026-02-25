@@ -237,7 +237,7 @@ async def regeneration_loop(
             logger.error(f"[Pre-Processing] Merge failed (continue): {e}")
 
         logger.info("[Evolver] Running Evolver post-processing...")
-        evolver_result = run_evolver(output_ldr_path, glb_path, log_callback=log_callback)
+        evolver_result = await run_evolver(output_ldr_path, glb_path, log_callback=log_callback)
         if evolver_result.get("success"):
             logger.info("[Evolver] Post-processing completed")
         else:
