@@ -72,7 +72,7 @@ def node_reflect(graph, state) -> Dict[str, Any]:
         # Baseline 기록 후 다음 단계로
         # 첫 라운드만 가설 수립, 이후는 바로 도구 선택으로
         round_count = state.get("round_count", 0) + 1
-        if round_count >= 2:
+        if round_count >= 1:
             next_step = "model"
             logger.info(f"[Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
         else:
@@ -166,9 +166,9 @@ def node_reflect(graph, state) -> Dict[str, Any]:
             "next_action": "end"
         }
 
-    # 2라운드 이상이면 가설 수립 건너뛰고 바로 도구 선택으로
+    # 1라운드 이상이면 가설 수립 건너뛰고 바로 도구 선택으로
     round_count = state.get('round_count', 0)
-    if round_count >= 2:
+    if round_count >= 1:
         logger.info(f"[Reflect] 라운드 {round_count}: 가설 이미 수립됨 → 바로 도구 선택으로")
         next_step = "model"
     else:
