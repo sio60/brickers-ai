@@ -179,13 +179,15 @@ def get_color_mapping_from_llm(model_analysis: Dict, prompt: str) -> Dict[int, i
 "{prompt}"
 ## Available LDraw Colors
 {available_colors}
-Map original color codes to new ones (JSON format). Only use provided codes."""
-    response = _get_client().chat.completions.create(
-        model="gpt-4o-mini",
-        temperature=0.7,
-        messages=[{"role": "user", "content": llm_prompt}],
-    )
+Map each original color code to a new one matching the user's request.
+Respond with ONLY valid JSON: {{"mapping": {{"original_code": new_code, ...}}}}"""
     try:
+        response = _get_client().chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": llm_prompt}],
+        )
         content = response.choices[0].message.content.strip()
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
