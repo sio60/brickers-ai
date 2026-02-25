@@ -77,7 +77,7 @@ async def regeneration_loop(
     output_ldr_path: str,
     subject_name: str = "Unknown Object",
     llm_client: Optional[BaseLLMClient] = None,
-    max_retries: int = 5,  # 도구별 한도: TuneParameters(1) + MergeBricks(1) + RemoveBricks(1)
+    max_retries: int = 3,  # 도구별 한도: TuneParameters(1) + MergeBricks(1) + RemoveBricks(1)
     acceptable_failure_ratio: float = 0.1,
     gui: bool = False,
     params: Optional[Dict[str, Any]] = None,
